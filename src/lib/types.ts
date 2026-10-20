@@ -138,11 +138,25 @@ export interface FunctionNameEntry {
   updatedAt: string;
 }
 
+export interface ManualFunction {
+  address: string;
+  createdAt: string;
+}
+
 export interface ProjectSnapshot {
   project: ProjectInfo;
   annotations: Annotation[];
   functionNames: FunctionNameEntry[];
+  manualFunctions: ManualFunction[];
+  viewState: string | null;
   binaryStatus: "unchanged" | "modified" | "missing" | string;
+}
+
+export interface ExportSummary {
+  path: string;
+  annotationCount: number;
+  functionNameCount: number;
+  manualFunctionCount: number;
 }
 
 export interface AnalysisDiagnostic {
@@ -155,6 +169,7 @@ export interface AnalysisSummary {
   functionCount: number;
   blockCount: number;
   xrefCount: number;
+  dataXrefCount: number;
   cancelled: boolean;
   truncated: boolean;
   diagnosticsDropped: number;
@@ -255,7 +270,9 @@ export interface FunctionCfg {
 export interface XrefView {
   from: string;
   to: string;
-  kind: "call" | "jump" | "conditionalJump" | string;
+  kind: "call" | "jump" | "conditionalJump" | "data" | string;
+  dataKind: "ripRelative" | "absolute" | null;
+  targetSection: string | null;
   sourceFunction: FunctionRef | null;
   targetFunction: FunctionRef | null;
 }

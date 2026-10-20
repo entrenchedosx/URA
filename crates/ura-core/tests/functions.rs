@@ -2,9 +2,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use ura_core::analysis::{
-    analyze_binary, analyze_image, seeds_for_binary, AnalysisControl, AnalysisOptions,
-    AnalysisProgress, AnalysisStage, CodeImage, CodeRegion, EdgeKind, FunctionOrigin,
-    InstructionFlow, XrefKind,
+    analyze_binary, analyze_image, analyze_image_mapped, seeds_for_binary, AnalysisControl,
+    AnalysisOptions, AnalysisProgress, AnalysisStage, CodeImage, CodeRegion, DataReferenceKind,
+    EdgeKind, FunctionOrigin, InstructionFlow, XrefKind,
 };
 use ura_core::{analyze_path, AnalysisSeed};
 
@@ -247,6 +247,95 @@ fn no_entry_or_seeds_produces_an_empty_result() {
     assert_eq!(analysis.report.function_count, 0);
     assert_eq!(analysis.report.instruction_count, 0);
     assert!(analysis.functions.is_empty());
+}
+
+#[test]
+fn records_rip_relative_data_references_without_immediate_noise() {
+    #[rustfmt::skip]
+    let bytes = [
+        0x48, 0x8D, 0x05, 0x00, 0x10, 0x00, 0x00,
+        0x48, 0x8B, 0x0D, 0x00, 0x10, 0x00, 0x00,
+        0x48, 0xC7, 0xC0, 0x34, 0x12, 0x00, 0x00,
+        0xC3,
+    ];
+    let image = CodeImage::new(vec![CodeRegion {
+        start: 0x1000,
+        bytes: &bytes,
+    }]);
+    let analysis = analyze_image_mapped(
+        &image,
+        64,
+        Some(0x1000),
+        &[],
+        &AnalysisOptions::default(),
+        &[(0x1000, 0x1017), (0x2000, 0x2100)],
+        &(),
+    );
+    let references: Vec<_> = analysis
+        .instructions
+        .values()
+        .flat_map(|instruction| instruction.data_references.iter())
+        .collect();
+    assert_eq!(references.len(), 2);
+    assert_eq!(references[0].target, 0x2007);
+    assert_eq!(references[0].kind, DataReferenceKind::RipRelative);
+    assert_eq!(references[1].target, 0x200e);
+    assert_eq!(references[1].kind, DataReferenceKind::RipRelative);
+    let data_xrefs: Vec<_> = analysis
+        .xrefs
+        .iter()
+        .filter(|xref| xref.kind == XrefKind::Data)
+        .collect();
+    assert_eq!(data_xrefs.len(), 2);
+    assert!(data_xrefs
+        .iter()
+        .all(|xref| xref.data_kind == Some(DataReferenceKind::RipRelative)));
+    assert_eq!(analysis.report.data_xref_count, 2);
+}
+
+#[test]
+fn records_absolute_data_references_and_filters_unmapped_targets() {
+    #[rustfmt::skip]
+    let mapped_bytes = [
+        0x48, 0xA1, 0x00, 0x20, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0xC3,
+    ];
+    let image = CodeImage::new(vec![CodeRegion {
+        start: 0x1000,
+        bytes: &mapped_bytes,
+    }]);
+    let analysis = analyze_image_mapped(
+        &image,
+        64,
+        Some(0x1000),
+        &[],
+        &AnalysisOptions::default(),
+        &[(0x1000, 0x100b), (0x402000, 0x402100)],
+        &(),
+    );
+    assert_eq!(analysis.report.data_xref_count, 1);
+    let xref = analysis
+        .xrefs
+        .iter()
+        .find(|xref| xref.kind == XrefKind::Data)
+        .expect("absolute data xref");
+    assert_eq!(xref.to, 0x402000);
+    assert_eq!(xref.data_kind, Some(DataReferenceKind::Absolute));
+
+    let unmapped = analyze_image_mapped(
+        &image,
+        64,
+        Some(0x1000),
+        &[],
+        &AnalysisOptions::default(),
+        &[(0x1000, 0x100b)],
+        &(),
+    );
+    assert_eq!(unmapped.report.data_xref_count, 0);
+    assert!(unmapped
+        .xrefs
+        .iter()
+        .all(|xref| xref.kind != XrefKind::Data));
 }
 
 #[test]

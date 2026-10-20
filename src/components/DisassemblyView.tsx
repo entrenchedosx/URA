@@ -9,7 +9,9 @@ import {
   Cpu,
   Hash,
   Loader2,
+  Plus,
   RefreshCw,
+  Trash2,
   TriangleAlert,
 } from "lucide-react";
 import { disassemble, errorMessage } from "../lib/api";
@@ -44,6 +46,9 @@ export function DisassemblyView() {
     openXrefs,
     requestRename,
     projectPath,
+    currentFunction,
+    createUserFunction,
+    deleteUserFunction,
   } = useSession();
   const { log } = useMessages();
   const { settings } = useSettings();
@@ -303,6 +308,23 @@ export function DisassemblyView() {
           disabled: !projectPath,
           onSelect: () => requestRename(address),
         },
+        {
+          label: "Define function here",
+          icon: Plus,
+          disabled: !projectPath,
+          onSelect: () => createUserFunction(address),
+        },
+        ...(projectPath &&
+        currentFunction?.origin === "user" &&
+        normalizeAddress(currentFunction.address) === address
+          ? [
+              {
+                label: "Delete user-defined function",
+                icon: Trash2,
+                onSelect: () => deleteUserFunction(address),
+              },
+            ]
+          : []),
         { label: "-", onSelect: () => undefined },
         {
           label: "Add annotation",
@@ -332,6 +354,10 @@ export function DisassemblyView() {
     openXrefs,
     requestRename,
     projectPath,
+    currentFunction?.address,
+    currentFunction?.origin,
+    createUserFunction,
+    deleteUserFunction,
   ]);
 
   const startAddress =
@@ -499,6 +525,9 @@ export function DisassemblyView() {
             const targetSection = targetValue
               ? sectionForAddress(binary.sections, targetValue)
               : null;
+            const indirectControl =
+              instruction.flow === "indirect-jump" ||
+              instruction.flow === "indirect-call";
 
             return (
               <div
@@ -524,9 +553,11 @@ export function DisassemblyView() {
                   });
                 }}
                 title={
-                  instruction.fileOffset
-                    ? `file offset ${instruction.fileOffset}`
-                    : undefined
+                  indirectControl
+                    ? "Indirect transfer: the target is computed at runtime and is not resolved by URA."
+                    : instruction.fileOffset
+                      ? `file offset ${instruction.fileOffset}`
+                      : undefined
                 }
               >
                 <span className="flex min-w-0 items-center gap-1 text-ink-500">
@@ -595,6 +626,13 @@ export function DisassemblyView() {
                         {instruction.targetName ?? formatHex(targetValue)}
                       </span>
                     </button>
+                  ) : indirectControl ? (
+                    <span
+                      className="truncate rounded bg-amber-500/10 px-1 text-[9.5px] text-amber-300"
+                      title="Target is computed at runtime; URA does not resolve this indirect transfer."
+                    >
+                      indirect
+                    </span>
                   ) : (
                     <span className="truncate text-[9.5px] text-ink-600">
                       {instructionSection?.name ?? ""}

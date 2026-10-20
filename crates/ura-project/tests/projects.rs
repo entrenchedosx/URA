@@ -2,8 +2,10 @@ use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 use ura_core::analyze_path;
 use ura_project::{
-    create_project, delete_annotation, delete_function_name, open_project, save_annotation,
-    save_function_name, BinaryIdentity, ProjectError, SCHEMA_VERSION,
+    add_manual_function, create_project, delete_annotation, delete_function_name,
+    delete_manual_function, export_annotations, load_view_state_for_path, open_project,
+    save_annotation, save_function_name, save_view_state, BinaryIdentity, ProjectError,
+    SCHEMA_VERSION,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -146,6 +148,97 @@ fn persists_and_deletes_function_names() {
     delete_function_name(&project_path, "0x140001020").unwrap();
     let snapshot = open_project(&project_path).unwrap();
     assert!(snapshot.function_names.is_empty());
+}
+
+#[test]
+fn persists_manual_functions_and_view_state() {
+    let (_directory, project_path) = setup();
+    let binary_path = fixture("ura64.exe");
+    create_project(&project_path, "Manual", &identity(&binary_path)).unwrap();
+
+    add_manual_function(&project_path, "0x140001020").unwrap();
+    add_manual_function(&project_path, "0x140001000").unwrap();
+    add_manual_function(&project_path, "0x140001020").unwrap();
+    let snapshot = open_project(&project_path).unwrap();
+    assert_eq!(snapshot.manual_functions.len(), 2);
+    assert_eq!(snapshot.manual_functions[0].address, "0x140001000");
+    assert_eq!(snapshot.manual_functions[1].address, "0x140001020");
+    assert!(snapshot.view_state.is_none());
+
+    let state = r#"{"version":1,"address":"0x140001020","history":[]}"#;
+    save_view_state(&project_path, state).unwrap();
+    assert_eq!(
+        load_view_state_for_path(&project_path).unwrap().as_deref(),
+        Some(state)
+    );
+    let snapshot = open_project(&project_path).unwrap();
+    assert_eq!(snapshot.view_state.as_deref(), Some(state));
+
+    assert!(save_view_state(&project_path, "not json").is_err());
+    assert!(save_view_state(&project_path, &"x".repeat(600 * 1024)).is_err());
+
+    assert!(delete_manual_function(&project_path, "0x140001020").unwrap());
+    assert!(!delete_manual_function(&project_path, "0x140001020").unwrap());
+    let snapshot = open_project(&project_path).unwrap();
+    assert_eq!(snapshot.manual_functions.len(), 1);
+}
+
+#[test]
+fn exports_annotations_with_binary_identity_and_counts() {
+    let (directory, project_path) = setup();
+    let binary_path = fixture("ura64.elf");
+    create_project(&project_path, "Export", &identity(&binary_path)).unwrap();
+    save_annotation(&project_path, "0x401000", Some("entry"), "Entry note").unwrap();
+    save_function_name(&project_path, "0x401020", "loop").unwrap();
+    add_manual_function(&project_path, "0x401020").unwrap();
+
+    let destination = directory.path().join("annotations.json");
+    let summary = export_annotations(&project_path, &destination).unwrap();
+    assert_eq!(summary.annotation_count, 1);
+    assert_eq!(summary.function_name_count, 1);
+    assert_eq!(summary.manual_function_count, 1);
+
+    let raw = std::fs::read_to_string(&destination).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(value["format"], "ura-annotations");
+    assert_eq!(value["version"], 1);
+    assert_eq!(value["binary"]["architecture"], "x86-64");
+    assert_eq!(value["annotations"][0]["address"], "0x401000");
+    assert_eq!(value["functionNames"][0]["name"], "loop");
+    assert_eq!(value["manualFunctions"][0]["address"], "0x401020");
+
+    let error = export_annotations(&project_path, &project_path).unwrap_err();
+    assert!(matches!(error, ProjectError::InvalidExport(_)));
+    let error = export_annotations(&project_path, &binary_path).unwrap_err();
+    assert!(matches!(error, ProjectError::InvalidExport(_)));
+}
+
+#[test]
+fn migrates_version_two_projects_to_manual_functions_and_view_state() {
+    let (_directory, project_path) = setup();
+    let binary_path = fixture("ura64.elf");
+    create_project(&project_path, "Legacy v2", &identity(&binary_path)).unwrap();
+
+    let connection = rusqlite::Connection::open(&project_path).unwrap();
+    connection
+        .execute_batch(
+            "DROP TABLE manual_functions; \
+             DROP TABLE view_state; \
+             PRAGMA user_version = 2;",
+        )
+        .unwrap();
+    drop(connection);
+
+    let snapshot = open_project(&project_path).unwrap();
+    assert_eq!(snapshot.project.schema_version, SCHEMA_VERSION);
+    assert!(snapshot.manual_functions.is_empty());
+    assert!(snapshot.view_state.is_none());
+
+    add_manual_function(&project_path, "0x401020").unwrap();
+    save_view_state(&project_path, "{\"version\":1}").unwrap();
+    let snapshot = open_project(&project_path).unwrap();
+    assert_eq!(snapshot.manual_functions.len(), 1);
+    assert!(snapshot.view_state.is_some());
 }
 
 #[test]

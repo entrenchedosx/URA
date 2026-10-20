@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "URA",
-  "version": "0.1.0",
+  "version": "0.4.0",
   "identifier": "dev.ura.reverse-engineer",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "URA — Ultimate Reverse Engineer",
+        "title": "URA",
         "width": 1480,
         "height": 920,
         "minWidth": 1100,
@@ -32,7 +32,7 @@
     "targets": "all",
     "category": "DeveloperTool",
     "shortDescription": "Ultimate Reverse Engineer",
-    "longDescription": "A native binary inspection and x86/x64 disassembly workbench.",
+    "longDescription": "Static binary analysis and x86/x64 disassembly.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

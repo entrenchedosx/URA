@@ -18,6 +18,8 @@ interface WorkspaceContextValue {
   resetNonce: number;
   activePanelId: WorkspacePanelId | null;
   openPanels: WorkspacePanelId[];
+  layoutScope: string | null;
+  setLayoutScope: (scope: string | null) => void;
   focusView: (view: ViewKind) => void;
   showPanel: (panel: WorkspacePanelId) => void;
   togglePanel: (panel: WorkspacePanelId) => void;
@@ -38,6 +40,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [resetNonce, setResetNonce] = useState(0);
   const [activePanelId, setActivePanel] = useState<WorkspacePanelId | null>(null);
   const [openPanels, setOpenPanels] = useState<WorkspacePanelId[]>([]);
+  const [layoutScope, setLayoutScope] = useState<string | null>(null);
 
   const requestPanel = useCallback((panel: WorkspacePanelId) => {
     counter.current += 1;
@@ -68,6 +71,8 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       resetNonce,
       activePanelId,
       openPanels,
+      layoutScope,
+      setLayoutScope,
       focusView,
       showPanel: requestPanel,
       togglePanel: togglePanelById,
@@ -84,6 +89,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
       resetNonce,
       activePanelId,
       openPanels,
+      layoutScope,
       focusView,
       requestPanel,
       togglePanelById,

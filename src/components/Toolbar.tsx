@@ -1,4 +1,6 @@
 import {
+  ArrowLeft,
+  ArrowRight,
   Binary,
   CircleStop,
   Crosshair,
@@ -9,6 +11,7 @@ import {
   Loader2,
   RotateCcw,
   ScanSearch,
+  Search,
   Settings,
   X,
 } from "lucide-react";
@@ -17,10 +20,15 @@ import { useWorkspace } from "../state/workspace";
 
 interface ToolbarProps {
   onOpenPalette: () => void;
+  onOpenGoTo: () => void;
   onOpenSettings: () => void;
 }
 
-export function Toolbar({ onOpenPalette, onOpenSettings }: ToolbarProps) {
+export function Toolbar({
+  onOpenPalette,
+  onOpenGoTo,
+  onOpenSettings,
+}: ToolbarProps) {
   const {
     binary,
     project,
@@ -35,22 +43,21 @@ export function Toolbar({ onOpenPalette, onOpenSettings }: ToolbarProps) {
     analysisProgress,
     startAnalysis,
     cancelAnalysis,
+    canGoBack,
+    canGoForward,
+    goBack,
+    goForward,
   } = useSession();
   const { resetLayout } = useWorkspace();
 
   return (
     <header className="flex h-11 shrink-0 items-center gap-1.5 border-b border-edge bg-obsidian-900 px-2.5">
       <div className="flex select-none items-center gap-2 pr-1">
-        <div className="flex size-7 items-center justify-center rounded-md border border-accent-500/40 bg-gradient-to-br from-accent-500/30 to-accent-600/10 shadow-[0_0_18px_rgba(77,143,232,0.18)]">
+        <div className="flex size-7 items-center justify-center rounded-md border border-accent-500/40 bg-gradient-to-br from-accent-500/30 to-accent-600/10">
           <Binary className="size-4 text-accent-300" strokeWidth={2.2} />
         </div>
-        <div className="leading-none">
-          <div className="text-[14px] font-bold tracking-[0.22em] text-ink-100">
-            URA
-          </div>
-          <div className="mt-0.5 text-[8px] font-semibold tracking-[0.16em] text-ink-500">
-            ULTIMATE REVERSE ENGINEER
-          </div>
+        <div className="text-[14px] font-bold tracking-[0.22em] text-ink-100">
+          URA
         </div>
       </div>
 
@@ -62,7 +69,7 @@ export function Toolbar({ onOpenPalette, onOpenSettings }: ToolbarProps) {
         title="Open binary (Ctrl+O)"
       >
         <FolderOpen className="size-3.5 text-accent-300" />
-        Open Binary
+        Open
       </button>
 
       {binary && (
@@ -104,8 +111,8 @@ export function Toolbar({ onOpenPalette, onOpenSettings }: ToolbarProps) {
             disabled={analysisRunning}
             title={
               analysis
-                ? `Re-analyze functions — ${analysis.functionCount} functions, ${analysis.blockCount} blocks`
-                : "Discover functions, basic blocks and cross-references"
+                ? `Re-analyze binary (${analysis.functionCount} functions, ${analysis.blockCount} blocks)`
+                : "Analyze current binary"
             }
           >
             {analysisRunning ? (
@@ -119,8 +126,8 @@ export function Toolbar({ onOpenPalette, onOpenSettings }: ToolbarProps) {
             <button
               className="icon-btn"
               onClick={cancelAnalysis}
-              title="Cancel function analysis"
-              aria-label="Cancel function analysis"
+              title="Cancel analysis"
+              aria-label="Cancel analysis"
             >
               <CircleStop className="size-3.5 text-red-400" />
             </button>
@@ -166,14 +173,44 @@ export function Toolbar({ onOpenPalette, onOpenSettings }: ToolbarProps) {
         </div>
       )}
 
+      <div className="flex overflow-hidden rounded-md border border-edge-strong">
+        <button
+          className="icon-btn h-7 w-7 rounded-none border-0 disabled:opacity-35"
+          onClick={goBack}
+          disabled={!canGoBack}
+          title="Back (Alt+Left)"
+          aria-label="Back"
+        >
+          <ArrowLeft className="size-3.5" />
+        </button>
+        <button
+          className="icon-btn h-7 w-7 rounded-none border-0 border-l border-edge-strong disabled:opacity-35"
+          onClick={goForward}
+          disabled={!canGoForward}
+          title="Forward (Alt+Right)"
+          aria-label="Forward"
+        >
+          <ArrowRight className="size-3.5" />
+        </button>
+      </div>
+
       <button
         className="btn"
-        onClick={onOpenPalette}
-        title="Go to address or symbol (Ctrl+K)"
+        onClick={onOpenGoTo}
+        title="Go to address or symbol (Ctrl+G)"
       >
         <Crosshair className="size-3.5" />
         Go to
-        <span className="kbd ml-0.5">Ctrl K</span>
+        <span className="kbd ml-0.5">Ctrl G</span>
+      </button>
+
+      <button
+        className="icon-btn"
+        onClick={onOpenPalette}
+        title="Command palette (Ctrl+K)"
+        aria-label="Open command palette"
+      >
+        <Search className="size-3.5" />
       </button>
 
       <div className="mx-1 h-5 w-px bg-edge" />
@@ -181,8 +218,8 @@ export function Toolbar({ onOpenPalette, onOpenSettings }: ToolbarProps) {
       <button
         className="icon-btn"
         onClick={onOpenSettings}
-        title="Preferences (Ctrl+,)"
-        aria-label="Open preferences"
+        title="Settings (Ctrl+,)"
+        aria-label="Open settings"
       >
         <Settings className="size-3.5" />
       </button>

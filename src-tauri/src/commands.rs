@@ -7,9 +7,10 @@ use ura_core::{
     StringScanResult,
 };
 use ura_project::{
-    create_project, delete_annotation as remove_annotation, open_project,
-    save_annotation as persist_annotation, set_selected_address, Annotation, BinaryIdentity,
-    ProjectInfo, ProjectSnapshot,
+    create_project, delete_annotation as remove_annotation,
+    export_annotations as write_annotations, open_project, save_annotation as persist_annotation,
+    save_view_state as persist_view_state, set_selected_address, Annotation, BinaryIdentity,
+    ExportSummary, ProjectInfo, ProjectSnapshot,
 };
 
 async fn run_blocking<T, F>(task: F) -> Result<T, String>
@@ -195,6 +196,39 @@ pub async fn delete_annotation(project_path: String, annotation_id: i64) -> Resu
     run_blocking(move || {
         remove_annotation(PathBuf::from(&project_path).as_path(), annotation_id)
             .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn save_view_state(project_path: String, state: String) -> Result<(), String> {
+    run_blocking(move || {
+        persist_view_state(PathBuf::from(&project_path).as_path(), &state)
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn load_view_state(project_path: String) -> Result<Option<String>, String> {
+    run_blocking(move || {
+        ura_project::load_view_state_for_path(PathBuf::from(&project_path).as_path())
+            .map_err(|error| error.to_string())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn export_annotations(
+    project_path: String,
+    destination: String,
+) -> Result<ExportSummary, String> {
+    run_blocking(move || {
+        write_annotations(
+            PathBuf::from(&project_path).as_path(),
+            PathBuf::from(&destination).as_path(),
+        )
+        .map_err(|error| error.to_string())
     })
     .await
 }

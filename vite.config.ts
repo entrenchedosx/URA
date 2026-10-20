@@ -26,5 +26,19 @@ export default defineConfig({
   build: {
     target: "chrome110",
     sourcemap: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("node_modules/dockview")) return "dockview";
+          if (
+            id.includes("node_modules/react") ||
+            id.includes("node_modules/scheduler")
+          ) {
+            return "react";
+          }
+          return undefined;
+        },
+      },
+    },
   },
 });

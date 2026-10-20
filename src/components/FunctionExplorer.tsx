@@ -8,8 +8,10 @@ import {
   Loader2,
   Pencil,
   Play,
+  Plus,
   ScanSearch,
   Share2,
+  Trash2,
 } from "lucide-react";
 import {
   errorMessage,
@@ -43,6 +45,7 @@ const originLabels: Record<string, string> = {
   export: "export",
   symbol: "symbol",
   callTarget: "call",
+  user: "user",
 };
 
 const originColors: Record<string, string> = {
@@ -50,6 +53,7 @@ const originColors: Record<string, string> = {
   export: "bg-emerald-400",
   symbol: "bg-sky-400",
   callTarget: "bg-ink-600",
+  user: "bg-fuchsia-400",
 };
 
 function formatCount(value: number): string {
@@ -73,6 +77,8 @@ export function FunctionExplorer({ search }: { search: string }) {
     openXrefs,
     requestRename,
     projectPath,
+    createUserFunction,
+    deleteUserFunction,
   } = useSession();
   const { log } = useMessages();
 
@@ -207,6 +213,24 @@ export function FunctionExplorer({ search }: { search: string }) {
         disabled: !projectPath,
         onSelect: () => requestRename(fn.address),
       },
+      ...(projectPath && fn.origin !== "user"
+        ? [
+            {
+              label: "Mark as user-defined",
+              icon: Plus,
+              onSelect: () => createUserFunction(fn.address),
+            },
+          ]
+        : []),
+      ...(projectPath && fn.origin === "user"
+        ? [
+            {
+              label: "Delete user-defined function",
+              icon: Trash2,
+              onSelect: () => deleteUserFunction(fn.address),
+            },
+          ]
+        : []),
       {
         label: "Copy address",
         icon: Clipboard,
@@ -220,6 +244,8 @@ export function FunctionExplorer({ search }: { search: string }) {
     openXrefs,
     requestRename,
     projectPath,
+    createUserFunction,
+    deleteUserFunction,
     copy,
   ]);
 

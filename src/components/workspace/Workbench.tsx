@@ -1,19 +1,57 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   DockviewReact,
   type DockviewReadyEvent,
   type IDockviewPanelProps,
 } from "dockview-react";
 import type { DockviewApi, DockviewTheme } from "dockview";
-import { CfgView } from "../CfgView";
-import { DisassemblyView } from "../DisassemblyView";
 import { Explorer } from "../Explorer";
-import { HexView } from "../HexView";
 import { Inspector } from "../Inspector";
 import { MessagesPanel } from "../MessagesPanel";
 import { Overview } from "../Overview";
-import { StringsView } from "../StringsView";
-import { XrefsPanel } from "../XrefsPanel";
+
+const CfgView = lazy(() =>
+  import("../CfgView").then((module) => ({ default: module.CfgView })),
+);
+const DisassemblyView = lazy(() =>
+  import("../DisassemblyView").then((module) => ({
+    default: module.DisassemblyView,
+  })),
+);
+const HexView = lazy(() =>
+  import("../HexView").then((module) => ({ default: module.HexView })),
+);
+const StringsView = lazy(() =>
+  import("../StringsView").then((module) => ({ default: module.StringsView })),
+);
+const XrefsPanel = lazy(() =>
+  import("../XrefsPanel").then((module) => ({ default: module.XrefsPanel })),
+);
+
+function LazyPanel({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex h-full items-center justify-center bg-obsidian-850 text-[11px] text-ink-500">
+          Loading view…
+        </div>
+      }
+    >
+      {children}
+    </Suspense>
+  );
+}
 import {
   WORKSPACE_PANEL_TITLES,
   type WorkspacePanelId,
@@ -23,6 +61,10 @@ import { useWorkspace } from "../../state/workspace";
 const STORAGE_KEY = "ura:workspace:v1";
 const LAYOUT_VERSION = 2;
 
+function storageKeyFor(scope: string | null): string {
+  return scope ? `${STORAGE_KEY}:${encodeURIComponent(scope)}` : STORAGE_KEY;
+}
+
 interface StoredLayout {
   version: number;
   layout: unknown;
@@ -30,14 +72,38 @@ interface StoredLayout {
 
 const panelComponents: Record<string, React.FunctionComponent<IDockviewPanelProps>> = {
   explorer: () => <Explorer />,
-  disassembly: () => <DisassemblyView />,
-  hex: () => <HexView />,
-  strings: () => <StringsView />,
-  overview: () => <Overview />,
+  disassembly: () => (
+    <LazyPanel>
+      <DisassemblyView />
+    </LazyPanel>
+  ),
+  hex: () => (
+    <LazyPanel>
+      <HexView />
+    </LazyPanel>
+  ),
+  strings: () => (
+    <LazyPanel>
+      <StringsView />
+    </LazyPanel>
+  ),
+  overview: () => (
+    <LazyPanel>
+      <Overview />
+    </LazyPanel>
+  ),
   inspector: () => <Inspector />,
   messages: () => <MessagesPanel />,
-  cfg: () => <CfgView />,
-  xrefs: () => <XrefsPanel />,
+  cfg: () => (
+    <LazyPanel>
+      <CfgView />
+    </LazyPanel>
+  ),
+  xrefs: () => (
+    <LazyPanel>
+      <XrefsPanel />
+    </LazyPanel>
+  ),
 };
 
 const uraTheme: DockviewTheme = {
@@ -51,9 +117,9 @@ function componentFor(panel: WorkspacePanelId): string {
   return panel;
 }
 
-function readStoredLayout(): StoredLayout | null {
+function readStoredLayout(key: string): StoredLayout | null {
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = window.localStorage.getItem(key);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as StoredLayout;
     if (parsed?.version !== LAYOUT_VERSION || !parsed.layout) return null;
@@ -70,10 +136,10 @@ function readStoredLayout(): StoredLayout | null {
   }
 }
 
-function writeStoredLayout(layout: unknown): void {
+function writeStoredLayout(key: string, layout: unknown): void {
   try {
     window.localStorage.setItem(
-      STORAGE_KEY,
+      key,
       JSON.stringify({ version: LAYOUT_VERSION, layout } satisfies StoredLayout),
     );
   } catch {
@@ -169,12 +235,16 @@ export function Workbench() {
     acknowledgeIntent,
     setActivePanel,
     setOpenPanels,
+    layoutScope,
   } = useWorkspace();
   const apiRef = useRef<DockviewApi | null>(null);
   const disposables = useRef<Array<{ dispose: () => void }>>([]);
   const saveTimer = useRef<number | null>(null);
   const [ready, setReady] = useState(false);
   const lastReset = useRef(resetNonce);
+  const scopeRef = useRef<string | null>(layoutScope ?? null);
+  const lastScope = useRef<string | null | undefined>(undefined);
+  scopeRef.current = layoutScope ?? null;
 
   const persistSoon = useCallback(() => {
     if (saveTimer.current != null) window.clearTimeout(saveTimer.current);
@@ -182,7 +252,7 @@ export function Workbench() {
       saveTimer.current = null;
       const api = apiRef.current;
       if (!api) return;
-      writeStoredLayout(api.toJSON());
+      writeStoredLayout(storageKeyFor(scopeRef.current), api.toJSON());
     }, 350);
   }, []);
 
@@ -193,7 +263,8 @@ export function Workbench() {
       for (const disposable of disposables.current) disposable.dispose();
       disposables.current = [];
 
-      const stored = readStoredLayout();
+      lastScope.current = scopeRef.current;
+      const stored = readStoredLayout(storageKeyFor(scopeRef.current));
       let restored = false;
       if (stored) {
         try {
@@ -218,6 +289,7 @@ export function Workbench() {
           setOpenPanels(syncPanels(api));
           persistSoon();
         }),
+
         api.onDidActivePanelChange((panelEvent) => {
           const panel = panelEvent.panel;
           setActivePanel(
@@ -241,6 +313,37 @@ export function Workbench() {
       if (saveTimer.current != null) window.clearTimeout(saveTimer.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (!ready) return;
+    const scope = layoutScope ?? null;
+    if (lastScope.current === scope) return;
+    const api = apiRef.current;
+    if (!api) return;
+    if (lastScope.current !== undefined) {
+      writeStoredLayout(storageKeyFor(lastScope.current), api.toJSON());
+    }
+    lastScope.current = scope;
+    const stored = readStoredLayout(storageKeyFor(scope));
+    let restored = false;
+    if (stored) {
+      try {
+        api.fromJSON(stored.layout as never);
+        restored = api.panels.length > 0;
+      } catch {
+        restored = false;
+      }
+    }
+    if (!restored) buildDefaultLayout(api);
+    setOpenPanels(syncPanels(api));
+    const active = api.activePanel;
+    setActivePanel(
+      active && active.id in WORKSPACE_PANEL_TITLES
+        ? (active.id as WorkspacePanelId)
+        : null,
+    );
+    writeStoredLayout(storageKeyFor(scope), api.toJSON());
+  }, [layoutScope, ready, setActivePanel, setOpenPanels]);
 
   const ensurePanel = useCallback(
     (api: DockviewApi, panel: WorkspacePanelId) => {
@@ -317,14 +420,14 @@ export function Workbench() {
     const api = apiRef.current;
     if (!api) return;
     try {
-      window.localStorage.removeItem(STORAGE_KEY);
+      window.localStorage.removeItem(storageKeyFor(scopeRef.current));
     } catch {
       // ignore
     }
     buildDefaultLayout(api);
     setOpenPanels(syncPanels(api));
     setActivePanel("disassembly");
-    writeStoredLayout(api.toJSON());
+    writeStoredLayout(storageKeyFor(scopeRef.current), api.toJSON());
   }, [resetNonce, ready, setActivePanel, setOpenPanels]);
 
   return (

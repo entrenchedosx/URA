@@ -8,6 +8,7 @@ import type {
   FunctionCfg,
   FunctionDetail,
   FunctionListPage,
+  ExportSummary,
   FunctionQuery,
   HexPage,
   ProjectInfo,
@@ -105,8 +106,56 @@ export async function deleteAnnotation(
   return invoke("delete_annotation", { projectPath, annotationId });
 }
 
-export async function analyzeBinary(): Promise<AnalysisSummary> {
-  return invoke<AnalysisSummary>("analyze_binary", { options: null });
+export async function analyzeBinary(
+  projectPath?: string | null,
+): Promise<AnalysisSummary> {
+  return invoke<AnalysisSummary>("analyze_binary", {
+    options: null,
+    projectPath: projectPath ?? null,
+  });
+}
+
+export async function createManualFunction(
+  projectPath: string,
+  address: string,
+): Promise<AnalysisSummary> {
+  return invoke<AnalysisSummary>("create_manual_function", {
+    projectPath,
+    address,
+  });
+}
+
+export async function removeManualFunction(
+  projectPath: string,
+  address: string,
+): Promise<AnalysisSummary> {
+  return invoke<AnalysisSummary>("remove_manual_function", {
+    projectPath,
+    address,
+  });
+}
+
+export async function saveViewState(
+  projectPath: string,
+  state: string,
+): Promise<void> {
+  return invoke("save_view_state", { projectPath, state });
+}
+
+export async function loadViewState(
+  projectPath: string,
+): Promise<string | null> {
+  return invoke<string | null>("load_view_state", { projectPath });
+}
+
+export async function exportAnnotations(
+  projectPath: string,
+  destination: string,
+): Promise<ExportSummary> {
+  return invoke<ExportSummary>("export_annotations", {
+    projectPath,
+    destination,
+  });
 }
 
 export async function cancelAnalysis(): Promise<boolean> {

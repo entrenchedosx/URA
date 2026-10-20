@@ -132,7 +132,7 @@ npm run build
 
 ## Manual verification
 
-The following flow was used to validate v0.1 end-to-end:
+The base flow:
 
 1. Launch with the fixture path: `ura-app.exe tests\fixtures\ura64.exe`.
 2. Confirm the header facts, sections and imports/exports in Overview and Explorer.
@@ -143,6 +143,21 @@ The following flow was used to validate v0.1 end-to-end:
 6. Create a project from the toolbar, save an annotation in the Inspector, close the app.
 7. Reopen the app, open the `.ura` project, and confirm the annotation, selected address and
    `binary verified` status.
+
+The v0.4 flow:
+
+1. Open the fixture and a project, then disassemble an instruction with a RIP-relative operand
+   and confirm the Inspector/Xrefs panel shows a `data` reference with its target section.
+2. Use go-to (`Ctrl+G`) with `0x140001020`, then `@0x200`, `.text+0x30`, `+0x10` and a pasted
+   dump (`0x140001020 55 48 89 E5`); confirm each resolves to the expected address.
+3. Navigate to several locations and step back/forward with `Alt+Left`/`Alt+Right`; confirm the
+   toolbar buttons and history agree and that duplicate consecutive entries do not accumulate.
+4. Define a function at an executable address from the disassembly or Functions context menu,
+   confirm it appears with the user-defined origin after re-analysis, then delete it.
+5. Export annotations from the Inspector, inspect the JSON, and confirm the destination cannot
+   be the project or the analyzed binary.
+6. Close and reopen the project; confirm the address, CFG function, active panel and history are
+   restored and the layout is scoped to the project.
 
 ### Automated inspection tips
 

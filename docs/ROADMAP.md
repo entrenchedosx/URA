@@ -47,16 +47,27 @@ Priority: turn linear disassembly into navigable program structure, with honest 
 - [x] Project schema v2 (`function_names`) with automatic v1 migration
 - [x] Deterministic fixture acceptance: discover → CFG → xrefs → rename → save → reopen
 
-## v0.4 — navigation and workflow (next)
+## v0.4 — navigation and workflow (complete)
 
 Priority: help analysts move through an image instead of reading linearly.
 
-- Symbol/annotation navigation history with back and forward.
-- Go-to improvements: relative offsets, section-relative input and pasted dumps.
-- Annotation export/import as portable JSON alongside the SQLite project.
-- Persist view state per project (active view, scroll anchor, filters).
-- Manual function creation and function-boundary adjustment.
-- Data cross-references and jump-table recovery.
+- [x] Symbol/annotation navigation history with back and forward
+- [x] Go-to improvements: virtual addresses, explicit offsets, relative/section deltas, pasted
+      dumps and searchable candidates
+- [x] Annotation export as portable JSON alongside the SQLite project
+- [x] Persist view state per project (address, CFG function, history, active panel)
+- [x] Manual function creation and deletion; manual seeds survive re-analysis
+- [x] Data cross-references for RIP-relative and absolute memory operands
+- [ ] Jump-table recovery — deferred; see below
+
+Jump tables were evaluated for v0.4 and deliberately deferred. MSVC and GCC emit jump tables
+in data sections (`.rdata`/`.rodata`), while the analysis engine walks only executable
+file-backed sections and has no safe data-section reader. Resolving entries without reading
+those bytes would fabricate targets. Instead, indirect jumps and calls are explicitly labelled
+as unresolved in the disassembly, and data references cover the memory operands that can be
+proven from decoded instructions. A future pass should add a bounded data reader, validate
+table extents and entry count against the preceding bounds check, and mark any recovered table
+as heuristic.
 
 ## v0.5 — depth
 

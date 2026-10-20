@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { AlertCircle, X } from "lucide-react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { AboutDialog } from "./components/AboutDialog";
 import { CommandPalette } from "./components/CommandPalette";
+import { GoToDialog } from "./components/GoToDialog";
 import { RenameFunctionDialog } from "./components/RenameFunctionDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { StatusBar } from "./components/StatusBar";
@@ -15,25 +18,48 @@ import { WorkspaceProvider, useWorkspace } from "./state/workspace";
 function Shell() {
   const {
     binary,
+    project,
     openBinaryDialog,
     openProjectDialog,
     newProject,
     requestRename,
+    goBack,
+    goForward,
   } = useSession();
   const { focusView } = useWorkspace();
   const { toast, dismissToast } = useMessages();
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [goToOpen, setGoToOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
 
   const openPalette = useCallback(() => {
+    setGoToOpen(false);
     setSettingsOpen(false);
     setPaletteOpen(true);
+  }, []);
+
+  const openGoTo = useCallback(() => {
+    setPaletteOpen(false);
+    setSettingsOpen(false);
+    setGoToOpen(true);
   }, []);
 
   const openSettings = useCallback(() => {
     setPaletteOpen(false);
     setSettingsOpen(true);
   }, []);
+
+  useEffect(() => {
+    const title = binary
+      ? project
+        ? `${binary.info.fileName} — ${project.project.name} — URA`
+        : `${binary.info.fileName} — URA`
+      : "URA";
+    void getCurrentWindow()
+      .setTitle(title)
+      .catch(() => undefined);
+  }, [binary, project]);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -54,6 +80,21 @@ function Shell() {
       if (mod && event.key === ",") {
         event.preventDefault();
         openSettings();
+        return;
+      }
+      if (mod && !event.shiftKey && event.key.toLowerCase() === "g") {
+        event.preventDefault();
+        openGoTo();
+        return;
+      }
+      if (event.altKey && event.key === "ArrowLeft") {
+        event.preventDefault();
+        goBack();
+        return;
+      }
+      if (event.altKey && event.key === "ArrowRight") {
+        event.preventDefault();
+        goForward();
         return;
       }
       if (mod && !event.shiftKey && event.key.toLowerCase() === "o") {
@@ -88,6 +129,7 @@ function Shell() {
       }
       if (!typing && event.key === "Escape") {
         setPaletteOpen(false);
+        setGoToOpen(false);
         setSettingsOpen(false);
       }
     };
@@ -97,8 +139,11 @@ function Shell() {
   }, [
     binary,
     focusView,
+    goBack,
+    goForward,
     newProject,
     openBinaryDialog,
+    openGoTo,
     openPalette,
     openProjectDialog,
     openSettings,
@@ -107,7 +152,11 @@ function Shell() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-obsidian-950">
-      <Toolbar onOpenPalette={openPalette} onOpenSettings={openSettings} />
+      <Toolbar
+        onOpenPalette={openPalette}
+        onOpenGoTo={openGoTo}
+        onOpenSettings={openSettings}
+      />
 
       <main className="relative min-h-0 flex-1">
         <Workbench />
@@ -120,11 +169,15 @@ function Shell() {
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
         onOpenSettings={openSettings}
+        onOpenGoTo={openGoTo}
       />
+      <GoToDialog open={goToOpen} onClose={() => setGoToOpen(false)} />
       <SettingsDialog
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
+        onOpenAbout={() => setAboutOpen(true)}
       />
+      <AboutDialog open={aboutOpen} onClose={() => setAboutOpen(false)} />
       <RenameFunctionDialog />
 
       {toast && (

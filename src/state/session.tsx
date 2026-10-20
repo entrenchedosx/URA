@@ -14,17 +14,25 @@ import {
   cancelAnalysis as cancelNativeAnalysis,
   closeBinary as closeNativeBinary,
   createAnalysisProject,
+  createManualFunction,
   deleteAnnotation as deleteNativeAnnotation,
   errorMessage,
+  exportAnnotations as exportNativeAnnotations,
   extractStrings,
   functionAt,
   openAnalysisProject,
   openBinary as openNativeBinary,
+  removeManualFunction,
   renameFunction as renameNativeFunction,
   saveAnnotation as saveNativeAnnotation,
+  saveViewState as saveNativeViewState,
   setProjectAddress,
   takeStartupPath,
 } from "../lib/api";
+import {
+  WORKSPACE_PANEL_TITLES,
+  type WorkspacePanelId,
+} from "../lib/panels";
 import {
   addressToOffset,
   normalizeAddress,
@@ -65,8 +73,15 @@ interface SessionContextValue {
   currentFunction: FunctionDetail | null;
   cfgAddress: string | null;
   renameRequest: { address: string } | null;
+  canGoBack: boolean;
+  canGoForward: boolean;
   setSelection: (selection: Selection | null) => void;
   navigate: NavigateFn;
+  goBack: () => void;
+  goForward: () => void;
+  createUserFunction: (address: string) => void;
+  deleteUserFunction: (address: string) => void;
+  exportProjectAnnotations: () => void;
   openBinaryDialog: () => void;
   openBinaryPath: (path: string) => void;
   closeBinary: () => void;
@@ -87,9 +102,85 @@ interface SessionContextValue {
 
 const SessionContext = createContext<SessionContextValue | null>(null);
 
+interface HistoryEntry {
+  address: string | null;
+  fileOffset: string | null;
+}
+
+interface SavedViewState {
+  version: 1;
+  address: string | null;
+  fileOffset: string | null;
+  cfgAddress: string | null;
+  functionAddress: string | null;
+  history: HistoryEntry[];
+  historyIndex: number;
+  activePanel: WorkspacePanelId | null;
+  openPanels: WorkspacePanelId[];
+}
+
+const MAX_HISTORY = 100;
+
+function normalizeHistoryEntry(
+  entry: Partial<HistoryEntry> | null | undefined,
+): HistoryEntry | null {
+  if (!entry) return null;
+  const address = normalizeAddress(entry.address ?? null);
+  const fileOffset = normalizeAddress(entry.fileOffset ?? null);
+  if (!address && !fileOffset) return null;
+  return { address, fileOffset };
+}
+
+function isWorkspacePanel(value: unknown): value is WorkspacePanelId {
+  return (
+    typeof value === "string" &&
+    Object.prototype.hasOwnProperty.call(WORKSPACE_PANEL_TITLES, value)
+  );
+}
+
+function parseViewState(raw: string | null | undefined): SavedViewState | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<SavedViewState>;
+    if (!parsed || typeof parsed !== "object") return null;
+    const history = Array.isArray(parsed.history)
+      ? parsed.history
+          .map((entry) => normalizeHistoryEntry(entry))
+          .filter((entry): entry is HistoryEntry => entry != null)
+      : [];
+    const historyIndex =
+      typeof parsed.historyIndex === "number"
+        ? Math.min(Math.max(0, parsed.historyIndex), Math.max(0, history.length - 1))
+        : history.length - 1;
+    return {
+      version: 1,
+      address: normalizeAddress(parsed.address ?? null),
+      fileOffset: normalizeAddress(parsed.fileOffset ?? null),
+      cfgAddress: normalizeAddress(parsed.cfgAddress ?? null),
+      functionAddress: normalizeAddress(parsed.functionAddress ?? null),
+      history,
+      historyIndex,
+      activePanel: isWorkspacePanel(parsed.activePanel)
+        ? parsed.activePanel
+        : null,
+      openPanels: Array.isArray(parsed.openPanels)
+        ? parsed.openPanels.filter(isWorkspacePanel)
+        : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function SessionProvider({ children }: { children: React.ReactNode }) {
   const { log } = useMessages();
-  const { focusView: workspaceFocusView, showPanel } = useWorkspace();
+  const {
+    focusView: workspaceFocusView,
+    showPanel,
+    activePanelId,
+    openPanels,
+    setLayoutScope,
+  } = useWorkspace();
 
   const [binary, setBinary] = useState<BinaryOpenResult | null>(null);
   const [project, setProject] = useState<ProjectSnapshot | null>(null);
@@ -117,6 +208,13 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const projectRef = useRef<ProjectSnapshot | null>(null);
   const analysisRunId = useRef(0);
   const analysisInFlight = useRef(false);
+  const historyRef = useRef<{ entries: HistoryEntry[]; index: number }>({
+    entries: [],
+    index: -1,
+  });
+  const [historyToken, setHistoryToken] = useState(0);
+  const [viewRestoreToken, setViewRestoreToken] = useState(0);
+  const restoringView = useRef(false);
   projectRef.current = project;
 
   const annotations = project?.annotations ?? [];
@@ -149,6 +247,12 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           : null,
       );
       setNavigation({ address: target, nonce: Date.now() });
+      const fileOffset = target ? addressToOffset(result.sections, target) : null;
+      historyRef.current = {
+        entries: target || fileOffset ? [{ address: target, fileOffset }] : [],
+        index: target || fileOffset ? 0 : -1,
+      };
+      setHistoryToken((value) => value + 1);
       focusView("disassembly");
     },
     [focusView],
@@ -210,6 +314,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, [loadBinaryPath, log]);
 
   useEffect(() => {
+    setLayoutScope(projectPath);
+  }, [projectPath, setLayoutScope]);
+
+  useEffect(() => {
     takeStartupPath()
       .then((path) => {
         if (path) void loadBinaryPath(path);
@@ -232,6 +340,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     setCurrentFunction(null);
     setCfgAddress(null);
     setRenameRequest(null);
+    historyRef.current = { entries: [], index: -1 };
+    setHistoryToken((value) => value + 1);
     setNavigation({ nonce: Date.now() });
     log("info", "Binary closed.");
   }, [log]);
@@ -246,15 +356,17 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           filters: [{ name: "URA project", extensions: ["ura"] }],
         });
         if (typeof picked !== "string") return;
+        restoringView.current = true;
         setBusy("Opening project…");
         const snapshot = await openAnalysisProject(picked);
+        const saved = parseViewState(snapshot.viewState);
         setProject(snapshot);
         setProjectPath(picked);
         projectRef.current = snapshot;
         setFunctionRevision((value) => value + 1);
         log(
           "success",
-          `Opened project “${snapshot.project.name}” (${snapshot.annotations.length} annotations, ${snapshot.functionNames.length} custom function names).`,
+          `Opened project “${snapshot.project.name}” (${snapshot.annotations.length} annotations, ${snapshot.functionNames.length} custom function names, ${snapshot.manualFunctions.length} user-defined functions).`,
         );
 
         if (snapshot.binaryStatus === "missing") {
@@ -266,12 +378,31 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
             "warning",
             `Source binary is missing: ${snapshot.project.binaryPath}`,
           );
+          restoringView.current = false;
           return;
         }
 
         setBusy("Loading project binary…");
         const result = await openNativeBinary(snapshot.project.binaryPath);
-        applyBinary(result, snapshot.project.selectedAddress);
+        applyBinary(
+          result,
+          saved?.address ?? snapshot.project.selectedAddress,
+        );
+        if (saved) {
+          if (saved.history.length > 0) {
+            historyRef.current = {
+              entries: saved.history,
+              index: saved.historyIndex,
+            };
+            setHistoryToken((value) => value + 1);
+          }
+          if (saved.cfgAddress) setCfgAddress(saved.cfgAddress);
+          if (saved.activePanel) showPanel(saved.activePanel);
+        }
+        window.setTimeout(() => {
+          restoringView.current = false;
+          setViewRestoreToken((value) => value + 1);
+        }, 500);
         if (result.info.sha256 !== snapshot.project.binaryHash) {
           setProject((previous) =>
             previous ? { ...previous, binaryStatus: "modified" } : previous,
@@ -287,12 +418,13 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           );
         }
       } catch (err) {
+        restoringView.current = false;
         log("error", `Failed to open project: ${errorMessage(err)}`);
       } finally {
         setBusy(null);
       }
     })();
-  }, [applyBinary, log]);
+  }, [applyBinary, log, showPanel]);
 
   const newProject = useCallback(() => {
     if (!binary) {
@@ -318,12 +450,15 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           project: info,
           annotations: [],
           functionNames: [],
+          manualFunctions: [],
+          viewState: null,
           binaryStatus: "unchanged",
         };
         setProject(snapshot);
         setProjectPath(projectFile);
         projectRef.current = snapshot;
         lastSavedAddress.current = null;
+        restoringView.current = false;
         log("success", `Created project “${info.name}”.`);
         showPanel("messages");
       } catch (err) {
@@ -450,12 +585,12 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     };
 
     const attempt = (retries: number) => {
-      void analyzeBinary()
+      void analyzeBinary(projectPath)
         .then((summary) => {
           if (analysisRunId.current !== runId) return;
           setAnalysis(summary);
           setFunctionRevision((value) => value + 1);
-          const counts = `${summary.functionCount} functions, ${summary.blockCount} blocks, ${summary.xrefCount} xrefs from ${summary.instructionCount} instructions`;
+          const counts = `${summary.functionCount} functions, ${summary.blockCount} blocks, ${summary.xrefCount} xrefs (${summary.dataXrefCount} data) from ${summary.instructionCount} instructions`;
           if (summary.cancelled) {
             log("warning", `Analysis cancelled — partial result: ${counts}.`);
           } else {
@@ -498,7 +633,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     };
 
     attempt(8);
-  }, [binary, log]);
+  }, [binary, projectPath, log]);
 
   useEffect(() => {
     analysisRunId.current += 1;
@@ -576,6 +711,121 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     [projectPath, log],
   );
 
+  const createUserFunction = useCallback(
+    (address: string) => {
+      if (!projectPath) {
+        log("warning", "Create or open a project to define functions.");
+        return;
+      }
+      const normalized = normalizeAddress(address);
+      if (!normalized) return;
+      setBusy("Defining function…");
+      setAnalysisRunning(true);
+      setAnalysisProgress({
+        stage: "preparing",
+        instructions: 0,
+        functions: 0,
+        blocks: 0,
+        currentAddress: null,
+      });
+      void createManualFunction(projectPath, normalized)
+        .then((summary) => {
+          setAnalysis(summary);
+          setFunctionRevision((value) => value + 1);
+          setSelection({
+            address: normalized,
+            fileOffset: binary
+              ? addressToOffset(binary.sections, normalized)
+              : null,
+          });
+          setNavigation({ address: normalized, nonce: Date.now() });
+          focusView("disassembly");
+          log(
+            "success",
+            `Defined function at ${normalized}; analysis now has ${summary.functionCount} functions.`,
+          );
+        })
+        .catch((err) => {
+          log("error", `Unable to define function: ${errorMessage(err)}`);
+        })
+        .finally(() => {
+          setAnalysisRunning(false);
+          setAnalysisProgress(null);
+          setBusy(null);
+        });
+    },
+    [projectPath, binary, log, focusView],
+  );
+
+  const deleteUserFunction = useCallback(
+    (address: string) => {
+      if (!projectPath) {
+        log("warning", "Create or open a project to delete functions.");
+        return;
+      }
+      const normalized = normalizeAddress(address);
+      if (!normalized) return;
+      setBusy("Deleting function…");
+      setAnalysisRunning(true);
+      setAnalysisProgress({
+        stage: "preparing",
+        instructions: 0,
+        functions: 0,
+        blocks: 0,
+        currentAddress: null,
+      });
+      void removeManualFunction(projectPath, normalized)
+        .then((summary) => {
+          setAnalysis(summary);
+          setFunctionRevision((value) => value + 1);
+          log(
+            "info",
+            `Removed the user-defined function at ${normalized}; analysis now has ${summary.functionCount} functions.`,
+          );
+        })
+        .catch((err) => {
+          log("error", `Unable to delete function: ${errorMessage(err)}`);
+        })
+        .finally(() => {
+          setAnalysisRunning(false);
+          setAnalysisProgress(null);
+          setBusy(null);
+        });
+    },
+    [projectPath, log],
+  );
+
+  const exportProjectAnnotations = useCallback(() => {
+    if (!projectPath || !project) {
+      log("warning", "Create or open a project to export annotations.");
+      return;
+    }
+    void (async () => {
+      try {
+        const base = project.project.name.replace(/[^a-z0-9._-]+/gi, "-");
+        const picked = await save({
+          title: "Export annotations",
+          defaultPath: `${base || "ura"}-annotations.json`,
+          filters: [{ name: "JSON", extensions: ["json"] }],
+        });
+        if (typeof picked !== "string" || !picked) return;
+        const destination = picked.toLowerCase().endsWith(".json")
+          ? picked
+          : `${picked}.json`;
+        setBusy("Exporting annotations…");
+        const summary = await exportNativeAnnotations(projectPath, destination);
+        log(
+          "success",
+          `Exported ${summary.annotationCount} annotations, ${summary.functionNameCount} function names and ${summary.manualFunctionCount} user-defined functions to ${summary.path}.`,
+        );
+      } catch (err) {
+        log("error", `Failed to export annotations: ${errorMessage(err)}`);
+      } finally {
+        setBusy(null);
+      }
+    })();
+  }, [projectPath, project, log]);
+
   useEffect(() => {
     if (!binary) {
       setStrings(null);
@@ -635,18 +885,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     return () => window.clearTimeout(timeout);
   }, [selection?.address, projectPath, log]);
 
-  const navigate = useCallback<NavigateFn>(
-    (target, nextView) => {
+  const applyLocation = useCallback(
+    (resolved: HistoryEntry, nextView?: ViewKind) => {
       const sections = binary?.sections ?? [];
-      const resolved = resolveNavigation(
-        sections,
-        target.address,
-        target.fileOffset,
-      );
-      if (resolved.address == null && resolved.fileOffset == null) {
-        log("warning", "That target is not mapped in the loaded binary.");
-        return;
-      }
       setSelection({
         address: resolved.address,
         fileOffset: resolved.fileOffset,
@@ -670,8 +911,97 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
             : undefined);
       if (inferred) focusView(inferred);
     },
-    [binary, log, focusView],
+    [binary, focusView],
   );
+
+  const pushHistory = useCallback((entry: HistoryEntry) => {
+    const history = historyRef.current;
+    const current = history.entries[history.index];
+    if (
+      current &&
+      current.address === entry.address &&
+      current.fileOffset === entry.fileOffset
+    ) {
+      return;
+    }
+    const entries = history.entries.slice(0, history.index + 1);
+    entries.push(entry);
+    while (entries.length > MAX_HISTORY) entries.shift();
+    historyRef.current = { entries, index: entries.length - 1 };
+    setHistoryToken((value) => value + 1);
+  }, []);
+
+  useEffect(() => {
+    if (!projectPath || !binary || restoringView.current) return;
+    const timeout = window.setTimeout(() => {
+      const history = historyRef.current;
+      const state: SavedViewState = {
+        version: 1,
+        address: normalizeAddress(selection?.address),
+        fileOffset: normalizeAddress(selection?.fileOffset),
+        cfgAddress: normalizeAddress(cfgAddress),
+        functionAddress: normalizeAddress(currentFunction?.address),
+        history: history.entries.slice(0, history.index + 1),
+        historyIndex: history.index,
+        activePanel: activePanelId,
+        openPanels,
+      };
+      saveNativeViewState(projectPath, JSON.stringify(state)).catch((err) => {
+        log("warning", `Unable to store view state: ${errorMessage(err)}`);
+      });
+    }, 700);
+    return () => window.clearTimeout(timeout);
+  }, [
+    projectPath,
+    binary,
+    selection?.address,
+    selection?.fileOffset,
+    cfgAddress,
+    currentFunction?.address,
+    activePanelId,
+    openPanels,
+    historyToken,
+    viewRestoreToken,
+    log,
+  ]);
+
+  const navigate = useCallback<NavigateFn>(
+    (target, nextView) => {
+      const sections = binary?.sections ?? [];
+      const resolved = resolveNavigation(
+        sections,
+        target.address,
+        target.fileOffset,
+      );
+      if (resolved.address == null && resolved.fileOffset == null) {
+        log("warning", "That target is not mapped in the loaded binary.");
+        return;
+      }
+      applyLocation(resolved, nextView);
+      pushHistory(resolved);
+    },
+    [binary, log, applyLocation, pushHistory],
+  );
+
+  const travelHistory = useCallback(
+    (delta: number) => {
+      const history = historyRef.current;
+      const next = history.index + delta;
+      const entry = history.entries[next];
+      if (!entry) return;
+      history.index = next;
+      setHistoryToken((value) => value + 1);
+      applyLocation(entry);
+    },
+    [applyLocation],
+  );
+
+  const goBack = useCallback(() => travelHistory(-1), [travelHistory]);
+  const goForward = useCallback(() => travelHistory(1), [travelHistory]);
+  const canGoBack = historyRef.current.index > 0;
+  const canGoForward =
+    historyRef.current.index >= 0 &&
+    historyRef.current.index < historyRef.current.entries.length - 1;
 
   useEffect(() => {
     const address = selection?.address;
@@ -769,8 +1099,15 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       currentFunction,
       cfgAddress,
       renameRequest,
+      canGoBack,
+      canGoForward,
       setSelection,
       navigate,
+      goBack,
+      goForward,
+      createUserFunction,
+      deleteUserFunction,
+      exportProjectAnnotations,
       openBinaryDialog,
       openBinaryPath: (path: string) => void loadBinaryPath(path),
       closeBinary,
@@ -806,7 +1143,14 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       currentFunction,
       cfgAddress,
       renameRequest,
+      canGoBack,
+      canGoForward,
       navigate,
+      goBack,
+      goForward,
+      createUserFunction,
+      deleteUserFunction,
+      exportProjectAnnotations,
       openBinaryDialog,
       loadBinaryPath,
       closeBinary,

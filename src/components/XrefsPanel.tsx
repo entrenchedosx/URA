@@ -8,7 +8,11 @@ import {
   Share2,
 } from "lucide-react";
 import { errorMessage, xrefsFrom, xrefsTo } from "../lib/api";
-import { formatHex, normalizeAddress } from "../lib/format";
+import {
+  formatHex,
+  normalizeAddress,
+  sectionForAddress,
+} from "../lib/format";
 import type { XrefView } from "../lib/types";
 import { useSession } from "../state/session";
 
@@ -19,12 +23,20 @@ const kindLabels: Record<string, string> = {
   call: "call",
   jump: "jump",
   conditionalJump: "cond",
+  data: "data",
 };
 
 function kindClass(kind: string): string {
   if (kind === "call") return "bg-emerald-500/10 text-emerald-300";
   if (kind === "conditionalJump") return "bg-amber-500/10 text-amber-300";
+  if (kind === "data") return "bg-teal-500/10 text-teal-300";
   return "bg-accent-500/10 text-accent-300";
+}
+
+function dataKindLabel(value: string | null): string | null {
+  if (value === "ripRelative") return "RIP-relative";
+  if (value === "absolute") return "absolute";
+  return null;
 }
 
 export function XrefsPanel() {
@@ -107,9 +119,15 @@ export function XrefsPanel() {
     (reference: XrefView) => {
       const address =
         direction === "incoming" ? reference.from : reference.to;
-      navigate({ address }, "disassembly");
+      const section = binary
+        ? sectionForAddress(binary.sections, address)
+        : null;
+      navigate(
+        { address },
+        section?.executable ? "disassembly" : "hex",
+      );
     },
-    [direction, navigate],
+    [binary, direction, navigate],
   );
 
   if (!binary) {
@@ -259,7 +277,7 @@ export function XrefsPanel() {
               key={`${reference.from}-${reference.to}-${index}`}
               className="flex w-full items-start gap-1.5 border-b border-edge/60 px-2 py-1.5 text-left hover:bg-obsidian-800"
               onClick={() => openReference(reference)}
-              title={`${reference.from} → ${reference.to} (${reference.kind})`}
+              title={`${reference.from} → ${reference.to} (${reference.kind}${reference.dataKind ? `, ${reference.dataKind}` : ""})`}
             >
               <span
                 className={`mt-0.5 shrink-0 rounded px-1 font-mono text-[8.5px] uppercase ${kindClass(reference.kind)}`}
@@ -271,13 +289,23 @@ export function XrefsPanel() {
                   <span className="truncate">{formatHex(counterpart)}</span>
                   <MoveRight className="size-2.5 shrink-0 text-ink-600" />
                   <span className="truncate text-[9px] text-ink-500">
-                    {counterpartFunction?.name ?? "unmapped"}
+                    {counterpartFunction?.name ??
+                      (reference.kind === "data"
+                        ? reference.targetSection ??
+                          dataKindLabel(reference.dataKind) ??
+                          "data"
+                        : "unmapped")}
                   </span>
                 </span>
                 <span className="mt-0.5 flex items-center gap-1 font-mono text-[9px] text-ink-600">
                   <span>{reference.from}</span>
                   <span>→</span>
                   <span>{reference.to}</span>
+                  {reference.kind === "data" && reference.dataKind && (
+                    <span className="ml-1 text-ink-600">
+                      {dataKindLabel(reference.dataKind)}
+                    </span>
+                  )}
                 </span>
               </span>
             </button>

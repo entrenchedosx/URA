@@ -8,9 +8,10 @@ pub mod strings;
 
 pub use address::{format_address, format_offset, parse_address};
 pub use analysis::{
-    analyze_binary as analyze_functions, analyze_image, architecture_supports_analysis,
-    seeds_for_binary, AnalysisControl, AnalysisDiagnostic, AnalysisOptions, AnalysisProgress,
-    AnalysisReport, AnalysisSeed, AnalysisStage, BasicBlock, CodeImage, CodeRegion,
+    analyze_binary as analyze_functions, analyze_binary_with_seeds, analyze_image,
+    analyze_image_mapped, architecture_supports_analysis, seeds_for_binary, AnalysisControl,
+    AnalysisDiagnostic, AnalysisOptions, AnalysisProgress, AnalysisReport, AnalysisSeed,
+    AnalysisStage, BasicBlock, CodeImage, CodeRegion, DataReference, DataReferenceKind,
     DecodedInstruction, Edge, EdgeKind, Function, FunctionOrigin, InstructionFlow, ProgramAnalysis,
     Xref, XrefKind,
 };

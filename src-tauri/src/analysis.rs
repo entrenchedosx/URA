@@ -6,11 +6,15 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, State};
 use ura_core::analysis::{
-    analyze_binary as run_analysis_engine, AnalysisControl, AnalysisOptions, AnalysisProgress,
-    AnalysisReport, AnalysisStage, Function, ProgramAnalysis, Xref, XrefKind,
+    analyze_binary_with_seeds as run_analysis_engine, AnalysisControl, AnalysisOptions,
+    AnalysisProgress, AnalysisReport, AnalysisSeed, AnalysisStage, DataReferenceKind, Function,
+    FunctionOrigin, ProgramAnalysis, Xref, XrefKind,
 };
-use ura_core::format_address;
-use ura_project::{delete_function_name, save_function_name};
+use ura_core::{format_address, parse_address};
+use ura_project::{
+    add_manual_function, delete_function_name, delete_manual_function,
+    load_manual_functions_for_path, save_function_name,
+};
 
 const DEFAULT_FUNCTION_PAGE: usize = 200;
 const MAX_FUNCTION_PAGE: usize = 500;
@@ -37,6 +41,7 @@ pub struct AnalysisSummary {
     pub function_count: usize,
     pub block_count: usize,
     pub xref_count: usize,
+    pub data_xref_count: usize,
     pub cancelled: bool,
     pub truncated: bool,
     pub diagnostics_dropped: usize,
@@ -58,6 +63,7 @@ impl AnalysisSummary {
             function_count: report.function_count,
             block_count: report.block_count,
             xref_count: report.xref_count,
+            data_xref_count: report.data_xref_count,
             cancelled: report.cancelled,
             truncated: report.truncated,
             diagnostics_dropped: report.diagnostics_dropped,
@@ -160,8 +166,17 @@ pub async fn analyze_binary(
     app: AppHandle,
     state: State<'_, AppState>,
     options: Option<AnalysisRequest>,
+    project_path: Option<String>,
 ) -> Result<AnalysisSummary, String> {
-    let state = state.inner().clone();
+    execute_analysis(app, state.inner().clone(), options, project_path).await
+}
+
+async fn execute_analysis(
+    app: AppHandle,
+    state: AppState,
+    options: Option<AnalysisRequest>,
+    project_path: Option<String>,
+) -> Result<AnalysisSummary, String> {
     let Some(cancel) = state.try_start_analysis() else {
         return Err("analysis is already running".to_string());
     };
@@ -170,13 +185,14 @@ pub async fn analyze_binary(
     };
     let binary = state.binary().map_err(|error| error.to_string())?;
     let binary_hash = state.binary_hash();
-    state.clear_analysis();
     let control = EngineControl::new(app, cancel);
     run_blocking(move || {
         let options = options
             .map(AnalysisRequest::into_options)
             .unwrap_or_default();
-        let analysis = run_analysis_engine(&binary, &options, &control);
+        let seeds = manual_seeds(project_path.as_deref())?;
+        state.clear_analysis();
+        let analysis = run_analysis_engine(&binary, &options, &seeds, &control);
         let summary = AnalysisSummary::from_report(&analysis.report);
         if binary_hash.is_some() && state.binary_hash() == binary_hash {
             state.set_analysis(analysis);
@@ -184,6 +200,94 @@ pub async fn analyze_binary(
         Ok(summary)
     })
     .await
+}
+
+fn manual_seeds(project_path: Option<&str>) -> Result<Vec<AnalysisSeed>, String> {
+    let Some(project_path) = project_path.filter(|path| !path.trim().is_empty()) else {
+        return Ok(Vec::new());
+    };
+    let entries = load_manual_functions_for_path(std::path::Path::new(project_path))
+        .map_err(|error| error.to_string())?;
+    Ok(entries
+        .iter()
+        .filter_map(|entry| {
+            parse_address(&entry.address)
+                .ok()
+                .map(|address| AnalysisSeed {
+                    address,
+                    name: None,
+                    origin: FunctionOrigin::UserDefined,
+                })
+        })
+        .collect())
+}
+
+fn executable_address(state: &AppState, address: u64) -> Result<(), String> {
+    let binary = state.binary().map_err(|error| error.to_string())?;
+    let inside = binary.analysis().sections.iter().any(|section| {
+        section.executable
+            && address >= section.address
+            && address < section.address.saturating_add(section.size)
+    });
+    if inside {
+        Ok(())
+    } else {
+        Err(format!(
+            "{} is not inside an executable section",
+            format_address(address)
+        ))
+    }
+}
+
+#[tauri::command]
+pub async fn create_manual_function(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    project_path: String,
+    address: String,
+) -> Result<AnalysisSummary, String> {
+    let state = state.inner().clone();
+    if project_path.trim().is_empty() {
+        return Err("create or open a project to define functions".to_string());
+    }
+    let address = parse_address(&address).map_err(|error| error.to_string())?;
+    executable_address(&state, address)?;
+    let project = project_path.clone();
+    let formatted = format_address(address);
+    run_blocking(move || {
+        add_manual_function(std::path::Path::new(&project), &formatted)
+            .map_err(|error| error.to_string())
+    })
+    .await?;
+    execute_analysis(app, state, None, Some(project_path)).await
+}
+
+#[tauri::command]
+pub async fn remove_manual_function(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    project_path: String,
+    address: String,
+) -> Result<AnalysisSummary, String> {
+    let state = state.inner().clone();
+    if project_path.trim().is_empty() {
+        return Err("create or open a project to delete functions".to_string());
+    }
+    let address = parse_address(&address).map_err(|error| error.to_string())?;
+    let project = project_path.clone();
+    let formatted = format_address(address);
+    let removed = run_blocking(move || {
+        delete_manual_function(std::path::Path::new(&project), &formatted)
+            .map_err(|error| error.to_string())
+    })
+    .await?;
+    if !removed {
+        return Err(format!(
+            "{} is not a user-defined function",
+            format_address(address)
+        ));
+    }
+    execute_analysis(app, state, None, Some(project_path)).await
 }
 
 #[tauri::command]
@@ -542,11 +646,18 @@ pub struct XrefView {
     pub from: String,
     pub to: String,
     pub kind: String,
+    pub data_kind: Option<String>,
+    pub target_section: Option<String>,
     pub source_function: Option<FunctionRef>,
     pub target_function: Option<FunctionRef>,
 }
 
-fn xref_view(analysis: &ProgramAnalysis, names: &BTreeMap<u64, String>, xref: &Xref) -> XrefView {
+fn xref_view(
+    analysis: &ProgramAnalysis,
+    names: &BTreeMap<u64, String>,
+    sections: &[ura_core::binary::Section],
+    xref: &Xref,
+) -> XrefView {
     XrefView {
         from: format_address(xref.from),
         to: format_address(xref.to),
@@ -554,8 +665,22 @@ fn xref_view(analysis: &ProgramAnalysis, names: &BTreeMap<u64, String>, xref: &X
             XrefKind::Call => "call",
             XrefKind::Jump => "jump",
             XrefKind::ConditionalJump => "conditionalJump",
+            XrefKind::Data => "data",
         }
         .to_string(),
+        data_kind: xref.data_kind.map(|kind| {
+            match kind {
+                DataReferenceKind::RipRelative => "ripRelative",
+                DataReferenceKind::Absolute => "absolute",
+            }
+            .to_string()
+        }),
+        target_section: sections
+            .iter()
+            .find(|section| {
+                xref.to >= section.address && xref.to < section.address.saturating_add(section.size)
+            })
+            .map(|section| section.name.clone()),
         source_function: analysis
             .function_containing(xref.from)
             .and_then(|function| function_ref(analysis, names, function.address)),
@@ -573,6 +698,10 @@ fn xref_page(
 ) -> Result<XrefPage, String> {
     let analysis = current_analysis(state)?;
     let names = state.function_names();
+    let sections = state
+        .binary()
+        .map(|binary| binary.analysis().sections.clone())
+        .unwrap_or_default();
     let limit = limit.unwrap_or(DEFAULT_XREF_LIMIT).clamp(1, MAX_XREF_LIMIT);
     let references: Vec<&Xref> = if incoming {
         analysis.xrefs_to(address).collect()
@@ -583,7 +712,7 @@ fn xref_page(
     let references = references
         .into_iter()
         .take(limit)
-        .map(|xref| xref_view(&analysis, &names, xref))
+        .map(|xref| xref_view(&analysis, &names, &sections, xref))
         .collect();
     Ok(XrefPage { total, references })
 }

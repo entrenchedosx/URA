@@ -21,6 +21,7 @@ import { useWorkspace } from "../state/workspace";
 interface SettingsDialogProps {
   open: boolean;
   onClose: () => void;
+  onOpenAbout: () => void;
 }
 
 const densities: Array<{ id: Density; label: string }> = [
@@ -29,7 +30,11 @@ const densities: Array<{ id: Density; label: string }> = [
   { id: "spacious", label: "Spacious" },
 ];
 
-export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
+export function SettingsDialog({
+  open,
+  onClose,
+  onOpenAbout,
+}: SettingsDialogProps) {
   const { settings, update, reset } = useSettings();
   const { resetLayout } = useWorkspace();
 
@@ -55,13 +60,13 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
         <div className="flex items-center gap-2 border-b border-edge bg-obsidian-800 px-3.5 py-2.5">
           <Settings className="size-4 text-accent-400" />
           <span className="flex-1 text-[12px] font-semibold uppercase tracking-[0.14em] text-ink-300">
-            Preferences
+            Settings
           </span>
           <span className="kbd">Esc</span>
           <button
             className="icon-btn size-6"
             onClick={onClose}
-            aria-label="Close preferences"
+            aria-label="Close settings"
           >
             <X className="size-3.5" />
           </button>
@@ -157,10 +162,10 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             <button
               className="btn flex-1 justify-center"
               onClick={reset}
-              title="Restore default preferences"
+              title="Restore default settings"
             >
               <RotateCcw className="size-3.5" />
-              Reset preferences
+              Reset settings
             </button>
             <button
               className="btn flex-1 justify-center"
@@ -168,18 +173,22 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 resetLayout();
                 onClose();
               }}
-              title="Rebuild the default dock layout"
+              title="Restore the default panel layout"
             >
               <LayoutIcon />
               Reset layout
             </button>
+            <button
+              className="btn justify-center"
+              onClick={() => {
+                onClose();
+                onOpenAbout();
+              }}
+              title="About URA"
+            >
+              About
+            </button>
           </section>
-        </div>
-
-        <div className="flex items-center gap-2 border-t border-edge bg-obsidian-900 px-3.5 py-2 font-mono text-[9.5px] text-ink-600">
-          <span>Preferences persist locally in this workspace.</span>
-          <div className="flex-1" />
-          <span>ura:settings:v1</span>
         </div>
       </div>
     </div>

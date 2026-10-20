@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowLeft,
+  ArrowRight,
   BookMarked,
   CheckSquare,
   Crosshair,
@@ -15,12 +17,14 @@ import {
   MessageSquare,
   PanelLeft,
   PanelRight,
+  Plus,
   RotateCcw,
   ScanSearch,
   Search,
   Settings,
   Square,
   Terminal,
+  Trash2,
   X,
 } from "lucide-react";
 import { formatHex, normalizeAddress, parseHex } from "../lib/format";
@@ -32,6 +36,7 @@ interface CommandPaletteProps {
   open: boolean;
   onClose: () => void;
   onOpenSettings: () => void;
+  onOpenGoTo: () => void;
 }
 
 interface PaletteItem {
@@ -54,17 +59,24 @@ export function CommandPalette({
   open,
   onClose,
   onOpenSettings,
+  onOpenGoTo,
 }: CommandPaletteProps) {
   const {
     binary,
+    projectPath,
     annotations,
     selection,
+    currentFunction,
     openBinaryDialog,
     openProjectDialog,
     newProject,
     closeBinary,
     scanStrings,
     navigate,
+    goBack,
+    goForward,
+    createUserFunction,
+    deleteUserFunction,
   } = useSession();
   const { settings, update } = useSettings();
   const { focusView, togglePanel, resetLayout } = useWorkspace();
@@ -108,6 +120,30 @@ export function CommandPalette({
         category: "Project",
         icon: FilePlus2,
         run: newProject,
+      },
+      {
+        id: "go-to",
+        label: "Go to address, offset or symbol…",
+        detail: "Ctrl+G",
+        category: "Navigate",
+        icon: Crosshair,
+        run: onOpenGoTo,
+      },
+      {
+        id: "history-back",
+        label: "Navigate back",
+        detail: "Alt+Left",
+        category: "Navigate",
+        icon: ArrowLeft,
+        run: goBack,
+      },
+      {
+        id: "history-forward",
+        label: "Navigate forward",
+        detail: "Alt+Right",
+        category: "Navigate",
+        icon: ArrowRight,
+        run: goForward,
       },
       {
         id: "view-disassembly",
@@ -174,15 +210,15 @@ export function CommandPalette({
         label: settings.showBytes
           ? "Hide instruction bytes column"
           : "Show instruction bytes column",
-        category: "Preferences",
+        category: "Settings",
         icon: settings.showBytes ? CheckSquare : Square,
         run: () => update({ showBytes: !settings.showBytes }),
       },
       {
-        id: "preferences",
-        label: "Open preferences…",
+        id: "settings",
+        label: "Open settings…",
         detail: "Ctrl+,",
-        category: "Preferences",
+        category: "Settings",
         icon: Settings,
         run: onOpenSettings,
       },
@@ -201,6 +237,24 @@ export function CommandPalette({
         category: "Binary",
         icon: X,
         run: closeBinary,
+      });
+    }
+    if (projectPath && selection?.address) {
+      items.push({
+        id: "define-function",
+        label: `Define function at ${normalizeAddress(selection.address) ?? selection.address}`,
+        category: "Function",
+        icon: Plus,
+        run: () => createUserFunction(selection.address as string),
+      });
+    }
+    if (projectPath && currentFunction?.origin === "user") {
+      items.push({
+        id: "delete-function",
+        label: `Delete user-defined function at ${currentFunction.address}`,
+        category: "Function",
+        icon: Trash2,
+        run: () => deleteUserFunction(currentFunction.address),
       });
     }
     if (binary?.info.entryPoint) {
@@ -225,11 +279,19 @@ export function CommandPalette({
     return items;
   }, [
     binary,
+    currentFunction?.address,
+    currentFunction?.origin,
+    projectPath,
     selection,
     settings.showBytes,
     navigate,
     closeBinary,
+    createUserFunction,
+    deleteUserFunction,
     focusView,
+    goBack,
+    goForward,
+    onOpenGoTo,
     onOpenSettings,
     openBinaryDialog,
     openProjectDialog,

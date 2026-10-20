@@ -1,7 +1,7 @@
 use crate::address::format_address;
 use crate::binary::{CpuArchitecture, LoadedBinary};
 use iced_x86::{
-    Decoder, DecoderOptions, FlowControl, Formatter, Instruction, IntelFormatter, OpKind,
+    Decoder, DecoderOptions, FlowControl, Formatter, Instruction, IntelFormatter, OpKind, Register,
 };
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -52,6 +52,7 @@ pub enum FunctionOrigin {
     Export,
     Symbol,
     CallTarget,
+    UserDefined,
 }
 
 impl FunctionOrigin {
@@ -61,6 +62,7 @@ impl FunctionOrigin {
             FunctionOrigin::Export => "export",
             FunctionOrigin::Symbol => "symbol",
             FunctionOrigin::CallTarget => "callTarget",
+            FunctionOrigin::UserDefined => "user",
         }
     }
 
@@ -70,6 +72,7 @@ impl FunctionOrigin {
             FunctionOrigin::Export => 3,
             FunctionOrigin::Symbol => 2,
             FunctionOrigin::CallTarget => 1,
+            FunctionOrigin::UserDefined => 5,
         }
     }
 
@@ -139,6 +142,7 @@ pub enum XrefKind {
     Call,
     Jump,
     ConditionalJump,
+    Data,
 }
 
 impl XrefKind {
@@ -147,8 +151,30 @@ impl XrefKind {
             XrefKind::Call => "call",
             XrefKind::Jump => "jump",
             XrefKind::ConditionalJump => "conditionalJump",
+            XrefKind::Data => "data",
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DataReferenceKind {
+    RipRelative,
+    Absolute,
+}
+
+impl DataReferenceKind {
+    pub fn name(self) -> &'static str {
+        match self {
+            DataReferenceKind::RipRelative => "ripRelative",
+            DataReferenceKind::Absolute => "absolute",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct DataReference {
+    pub target: u64,
+    pub kind: DataReferenceKind,
 }
 
 #[derive(Debug, Clone)]
@@ -157,6 +183,7 @@ pub struct DecodedInstruction {
     pub length: u8,
     pub flow: InstructionFlow,
     pub target: Option<u64>,
+    pub data_references: Vec<DataReference>,
     pub invalid: bool,
     pub mnemonic: String,
     pub operands: String,
@@ -237,6 +264,7 @@ pub struct Xref {
     pub from: u64,
     pub to: u64,
     pub kind: XrefKind,
+    pub data_kind: Option<DataReferenceKind>,
     pub function: Option<u64>,
 }
 
@@ -254,6 +282,7 @@ pub struct AnalysisReport {
     pub function_count: usize,
     pub block_count: usize,
     pub xref_count: usize,
+    pub data_xref_count: usize,
     pub cancelled: bool,
     pub truncated: bool,
     pub diagnostics_dropped: usize,
@@ -444,18 +473,45 @@ pub fn analyze_binary(
     options: &AnalysisOptions,
     control: &dyn AnalysisControl,
 ) -> ProgramAnalysis {
+    analyze_binary_with_seeds(binary, options, &[], control)
+}
+
+pub fn analyze_binary_with_seeds(
+    binary: &LoadedBinary,
+    options: &AnalysisOptions,
+    extra_seeds: &[AnalysisSeed],
+    control: &dyn AnalysisControl,
+) -> ProgramAnalysis {
     let image = CodeImage::from_binary(binary);
     let analysis = binary.analysis();
-    let seeds = seeds_for_binary(binary);
+    let mut seeds = seeds_for_binary(binary);
+    seeds.extend_from_slice(extra_seeds);
+    let mapped = mapped_ranges(binary);
     let options = options.normalized();
-    analyze_image(
+    analyze_image_mapped(
         &image,
         analysis.bitness,
         analysis.entry_point,
         &seeds,
         &options,
+        &mapped,
         control,
     )
+}
+
+fn mapped_ranges(binary: &LoadedBinary) -> Vec<(u64, u64)> {
+    binary
+        .analysis()
+        .sections
+        .iter()
+        .filter(|section| section.size > 0)
+        .map(|section| {
+            (
+                section.address,
+                section.address.saturating_add(section.size),
+            )
+        })
+        .collect()
 }
 
 pub fn seeds_for_binary(binary: &LoadedBinary) -> Vec<AnalysisSeed> {
@@ -540,6 +596,18 @@ pub fn analyze_image(
     options: &AnalysisOptions,
     control: &dyn AnalysisControl,
 ) -> ProgramAnalysis {
+    analyze_image_mapped(image, bitness, entry, seeds, options, &[], control)
+}
+
+pub fn analyze_image_mapped(
+    image: &CodeImage<'_>,
+    bitness: u8,
+    entry: Option<u64>,
+    seeds: &[AnalysisSeed],
+    options: &AnalysisOptions,
+    mapped: &[(u64, u64)],
+    control: &dyn AnalysisControl,
+) -> ProgramAnalysis {
     let normalized_options = options.normalized();
     let options = &normalized_options;
     let started = Instant::now();
@@ -554,14 +622,30 @@ pub fn analyze_image(
                 bitness
             ),
         );
-        return finalize(discovered, diagnostics, control, started, options, bitness);
+        return finalize(
+            discovered,
+            diagnostics,
+            control,
+            started,
+            options,
+            bitness,
+            mapped,
+        );
     }
     if image.is_empty() {
         diagnostics.push(
             None,
             "the binary has no executable file-backed sections".to_string(),
         );
-        return finalize(discovered, diagnostics, control, started, options, bitness);
+        return finalize(
+            discovered,
+            diagnostics,
+            control,
+            started,
+            options,
+            bitness,
+            mapped,
+        );
     }
 
     control.report(AnalysisProgress {
@@ -845,7 +929,15 @@ pub fn analyze_image(
         current_address: None,
     });
 
-    let mut result = finalize(discovered, diagnostics, control, started, options, bitness);
+    let mut result = finalize(
+        discovered,
+        diagnostics,
+        control,
+        started,
+        options,
+        bitness,
+        mapped,
+    );
     result.report.cancelled = cancelled;
     result.report.truncated |= truncated;
     result
@@ -858,6 +950,7 @@ fn finalize(
     started: Instant,
     options: &AnalysisOptions,
     _bitness: u8,
+    mapped: &[(u64, u64)],
 ) -> ProgramAnalysis {
     let mut blocks: BTreeMap<u64, BasicBlock> = BTreeMap::new();
     let mut functions: Vec<Function> = Vec::new();
@@ -988,36 +1081,57 @@ fn finalize(
         });
     }
 
-    let mut xref_set: BTreeSet<(u64, u64, u8)> = BTreeSet::new();
+    let mut xref_set: BTreeSet<(u64, u64, u8, u8)> = BTreeSet::new();
     for (address, instruction) in &discovered.instructions {
-        let kind = match instruction.flow {
+        let flow_kind = match instruction.flow {
             InstructionFlow::Call => Some(XrefKind::Call),
             InstructionFlow::Jump => Some(XrefKind::Jump),
             InstructionFlow::ConditionalJump => Some(XrefKind::ConditionalJump),
             _ => None,
         };
-        let (Some(kind), Some(target)) = (kind, instruction.target) else {
-            continue;
-        };
-        let kind_code = match kind {
-            XrefKind::Call => 0,
-            XrefKind::Jump => 1,
-            XrefKind::ConditionalJump => 2,
-        };
-        xref_set.insert((*address, target, kind_code));
+        if let (Some(kind), Some(target)) = (flow_kind, instruction.target) {
+            let kind_code = match kind {
+                XrefKind::Call => 0,
+                XrefKind::Jump => 1,
+                XrefKind::ConditionalJump => 2,
+                XrefKind::Data => 3,
+            };
+            xref_set.insert((*address, target, kind_code, 0));
+        }
+        for reference in &instruction.data_references {
+            if !mapped_contains(mapped, reference.target) {
+                continue;
+            }
+            let detail_code = match reference.kind {
+                DataReferenceKind::RipRelative => 0,
+                DataReferenceKind::Absolute => 1,
+            };
+            xref_set.insert((*address, reference.target, 3, detail_code));
+        }
     }
 
+    let mut data_xref_count = 0usize;
     let mut xrefs: Vec<Xref> = Vec::with_capacity(xref_set.len());
-    for (from, to, kind_code) in xref_set {
-        let kind = match kind_code {
-            0 => XrefKind::Call,
-            1 => XrefKind::Jump,
-            _ => XrefKind::ConditionalJump,
+    for (from, to, kind_code, detail_code) in xref_set {
+        let (kind, data_kind) = match kind_code {
+            0 => (XrefKind::Call, None),
+            1 => (XrefKind::Jump, None),
+            2 => (XrefKind::ConditionalJump, None),
+            _ => {
+                data_xref_count += 1;
+                let data_kind = if detail_code == 0 {
+                    DataReferenceKind::RipRelative
+                } else {
+                    DataReferenceKind::Absolute
+                };
+                (XrefKind::Data, Some(data_kind))
+            }
         };
         xrefs.push(Xref {
             from,
             to,
             kind,
+            data_kind,
             function: discovered.owner.get(&from).copied(),
         });
     }
@@ -1086,6 +1200,7 @@ fn finalize(
         function_count: functions.len(),
         block_count: blocks.len(),
         xref_count: xrefs.len(),
+        data_xref_count,
         cancelled: false,
         truncated: block_cap_hit,
         diagnostics_dropped: diagnostics.dropped,
@@ -1122,6 +1237,12 @@ fn can_enter(
     image.contains(address) && (address == current_function || !function_starts.contains(&address))
 }
 
+fn mapped_contains(mapped: &[(u64, u64)], address: u64) -> bool {
+    mapped
+        .iter()
+        .any(|(start, end)| address >= *start && address < *end)
+}
+
 fn decode_instruction(
     image: &CodeImage<'_>,
     address: u64,
@@ -1139,6 +1260,7 @@ fn decode_instruction(
     }
     let flow = flow_of(instruction.flow_control());
     let target = direct_target(&instruction);
+    let data_references = data_references(&instruction);
     let invalid = instruction.is_invalid();
 
     let mut mnemonic = String::new();
@@ -1158,10 +1280,41 @@ fn decode_instruction(
         length: instruction.len() as u8,
         flow,
         target,
+        data_references,
         invalid,
         mnemonic: mnemonic.trim().to_string(),
         operands: operands.trim().to_string(),
     })
+}
+
+fn data_references(instruction: &Instruction) -> Vec<DataReference> {
+    if instruction.is_invalid() {
+        return Vec::new();
+    }
+    let mut references = Vec::new();
+    for operand in 0..instruction.op_count() {
+        if instruction.op_kind(operand) != OpKind::Memory {
+            continue;
+        }
+        if instruction.is_ip_rel_memory_operand() {
+            references.push(DataReference {
+                target: instruction.ip_rel_memory_address(),
+                kind: DataReferenceKind::RipRelative,
+            });
+        } else if instruction.memory_base() == Register::None
+            && instruction.memory_index() == Register::None
+        {
+            let target = instruction.memory_displacement64();
+            if target != 0 {
+                references.push(DataReference {
+                    target,
+                    kind: DataReferenceKind::Absolute,
+                });
+            }
+        }
+        break;
+    }
+    references
 }
 
 fn flow_of(flow: FlowControl) -> InstructionFlow {

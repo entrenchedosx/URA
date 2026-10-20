@@ -4,6 +4,7 @@ import {
   Check,
   Clipboard,
   Database,
+  Download,
   FilePlus2,
   GitFork,
   Info,
@@ -148,6 +149,7 @@ export function Inspector() {
     openCfg,
     openXrefs,
     requestRename,
+    exportProjectAnnotations,
   } = useSession();
   const { log } = useMessages();
   const [label, setLabel] = useState("");
@@ -218,6 +220,21 @@ export function Inspector() {
       window.clearTimeout(timeout);
     };
   }, [analysis, address, functionRevision, log]);
+
+  const openAddress = (value: string) => {
+    const section = binary ? sectionForAddress(binary.sections, value) : null;
+    navigate(
+      { address: value },
+      section?.executable ? "disassembly" : "hex",
+    );
+  };
+
+  const referenceKind = (reference: XrefView) => {
+    if (reference.kind === "call") return "call";
+    if (reference.kind === "conditionalJump") return "jcc";
+    if (reference.kind === "data") return "data";
+    return "jmp";
+  };
 
   const dirty =
     existing == null
@@ -458,7 +475,7 @@ export function Inspector() {
             ) : references.incoming.length === 0 &&
               references.outgoing.length === 0 ? (
               <div className="text-[10px] text-ink-500">
-                No call or jump references at this address.
+                No references at this address.
               </div>
             ) : (
               <div className="space-y-1">
@@ -472,20 +489,14 @@ export function Inspector() {
                       <button
                         key={`in-${reference.from}-${index}`}
                         className="flex w-full items-center gap-1 rounded px-1 py-0.5 text-left font-mono text-[9.5px] hover:bg-obsidian-750"
-                        onClick={() =>
-                          navigate({ address: reference.from })
-                        }
+                        onClick={() => openAddress(reference.from)}
                         title={`${reference.from} → ${reference.to} (${reference.kind})`}
                       >
                         <span className="text-accent-400/80">
                           {formatHex(reference.from)}
                         </span>
                         <span className="text-ink-600">
-                          {reference.kind === "call"
-                            ? "call"
-                            : reference.kind === "conditionalJump"
-                              ? "jcc"
-                              : "jmp"}
+                          {referenceKind(reference)}
                         </span>
                         <span className="min-w-0 flex-1 truncate text-right text-ink-500">
                           {reference.sourceFunction?.name ?? ""}
@@ -504,21 +515,19 @@ export function Inspector() {
                       <button
                         key={`out-${reference.to}-${index}`}
                         className="flex w-full items-center gap-1 rounded px-1 py-0.5 text-left font-mono text-[9.5px] hover:bg-obsidian-750"
-                        onClick={() => navigate({ address: reference.to })}
+                        onClick={() => openAddress(reference.to)}
                         title={`${reference.from} → ${reference.to} (${reference.kind})`}
                       >
                         <span className="text-accent-400/80">
                           {formatHex(reference.to)}
                         </span>
                         <span className="text-ink-600">
-                          {reference.kind === "call"
-                            ? "call"
-                            : reference.kind === "conditionalJump"
-                              ? "jcc"
-                              : "jmp"}
+                          {referenceKind(reference)}
                         </span>
                         <span className="min-w-0 flex-1 truncate text-right text-ink-500">
-                          {reference.targetFunction?.name ?? ""}
+                          {reference.targetFunction?.name ??
+                            reference.targetSection ??
+                            ""}
                         </span>
                       </button>
                     ))}
@@ -644,6 +653,15 @@ export function Inspector() {
                   {shorten(projectPath, 18, 14)}
                 </div>
               )}
+              <button
+                className="btn h-6.5 w-full px-2 text-[10px]"
+                onClick={exportProjectAnnotations}
+                disabled={busy != null}
+                title="Export annotations and function names as JSON"
+              >
+                <Download className="size-3" />
+                Export annotations…
+              </button>
               {binaryStatus === "modified" && (
                 <div className="rounded border border-amber-500/25 bg-amber-500/5 px-1.5 py-1 text-[9.5px] text-amber-300/90">
                   The binary changed since this project was created. Annotations
