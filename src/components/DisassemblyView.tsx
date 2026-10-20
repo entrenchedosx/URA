@@ -4,8 +4,10 @@ import {
   AlertTriangle,
   ArrowDownToLine,
   BookMarked,
+  Clipboard,
   CornerDownRight,
   Cpu,
+  Hash,
   Loader2,
   RefreshCw,
   TriangleAlert,
@@ -17,36 +19,26 @@ import {
   parseHex,
   sectionForAddress,
 } from "../lib/format";
-import type {
-  Annotation,
-  BinaryOpenResult,
-  InstructionView,
-  NavigateFn,
-  NavigationTarget,
-  Selection,
-} from "../lib/types";
+import type { Annotation, InstructionView } from "../lib/types";
+import { useMessages } from "../state/messages";
+import { useSession } from "../state/session";
+import { rowHeightFor, useSettings } from "../state/settings";
+import { useWorkspace } from "../state/workspace";
+import { ContextMenu, type ContextMenuItem } from "./ContextMenu";
 
 const PAGE_SIZE = 320;
 
-interface DisassemblyViewProps {
-  binary: BinaryOpenResult;
-  target: NavigationTarget;
-  selection: Selection | null;
-  annotations: Annotation[];
-  onSelect: (selection: Selection) => void;
-  onNavigate: NavigateFn;
-  onLog: (level: "info" | "success" | "warning" | "error", text: string) => void;
+function copyText(text: string): Promise<void> {
+  return navigator.clipboard.writeText(text);
 }
 
-export function DisassemblyView({
-  binary,
-  target,
-  selection,
-  annotations,
-  onSelect,
-  onNavigate,
-  onLog,
-}: DisassemblyViewProps) {
+export function DisassemblyView() {
+  const { binary, navigation: target, selection, setSelection, navigate, annotations } =
+    useSession();
+  const { log } = useMessages();
+  const { settings } = useSettings();
+  const workspace = useWorkspace();
+
   const [instructions, setInstructions] = useState<InstructionView[]>([]);
   const [sectionName, setSectionName] = useState<string>("");
   const [architecture, setArchitecture] = useState<string>("");
@@ -56,13 +48,20 @@ export function DisassemblyView({
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [menu, setMenu] = useState<{
+    x: number;
+    y: number;
+    instruction: InstructionView;
+  } | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const requestId = useRef(0);
   const animationFrame = useRef<number | null>(null);
 
   const supported =
-    binary.info.architecture === "x86" || binary.info.architecture === "x86-64";
+    binary?.info.architecture === "x86" ||
+    binary?.info.architecture === "x86-64";
+  const rowHeight = rowHeightFor(settings);
 
   const annotationMap = useMemo(() => {
     const map = new Map<string, Annotation>();
@@ -93,16 +92,17 @@ export function DisassemblyView({
         .catch((err) => {
           if (current !== requestId.current) return;
           setError(errorMessage(err));
-          onLog("error", `Disassembly failed at ${address}: ${errorMessage(err)}`);
+          log("error", `Disassembly failed at ${address}: ${errorMessage(err)}`);
         })
         .finally(() => {
           if (current === requestId.current) setLoading(false);
         });
     },
-    [onLog],
+    [log],
   );
 
   useEffect(() => {
+    if (!binary) return;
     if (!supported) {
       setError(`Disassembly is not available for ${binary.info.architecture}.`);
       return;
@@ -113,7 +113,8 @@ export function DisassemblyView({
       return;
     }
     loadInitial(normalizeAddress(address) ?? address);
-    if (animationFrame.current != null) cancelAnimationFrame(animationFrame.current);
+    if (animationFrame.current != null)
+      cancelAnimationFrame(animationFrame.current);
     animationFrame.current = requestAnimationFrame(() => {
       scrollRef.current?.scrollTo({ top: 0 });
     });
@@ -155,19 +156,23 @@ export function DisassemblyView({
       .catch((err) => {
         if (current !== requestId.current) return;
         setHasMore(false);
-        onLog("warning", `Unable to continue disassembly: ${errorMessage(err)}`);
+        log("warning", `Unable to continue disassembly: ${errorMessage(err)}`);
       })
       .finally(() => {
         if (current === requestId.current) setLoadingMore(false);
       });
-  }, [hasMore, loadingMore, loading, instructions, onLog]);
+  }, [hasMore, loadingMore, loading, instructions, log]);
 
   const virtualizer = useVirtualizer({
     count: instructions.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => 24,
+    estimateSize: () => rowHeight,
     overscan: 24,
   });
+
+  useEffect(() => {
+    virtualizer.measure();
+  }, [rowHeight, virtualizer]);
 
   const selectedIndex = useMemo(() => {
     if (!selection?.address) return -1;
@@ -179,7 +184,7 @@ export function DisassemblyView({
 
   const selectInstruction = useCallback(
     (instruction: InstructionView) => {
-      onSelect({
+      setSelection({
         address: instruction.address,
         fileOffset: instruction.fileOffset,
         mnemonic: instruction.mnemonic,
@@ -187,7 +192,7 @@ export function DisassemblyView({
         bytes: instruction.bytes,
       });
     },
-    [onSelect],
+    [setSelection],
   );
 
   const moveSelection = useCallback(
@@ -212,6 +217,84 @@ export function DisassemblyView({
     }
   }, [loadMore]);
 
+  const copy = useCallback(
+    (text: string, label: string) => {
+      copyText(text).catch((err) => {
+        log("warning", `Unable to copy ${label}: ${errorMessage(err)}`);
+      });
+    },
+    [log],
+  );
+
+  const menuItems: ContextMenuItem[] = useMemo(() => {
+    if (!menu) return [];
+    const instruction = menu.instruction;
+    const address = normalizeAddress(instruction.address);
+    const targetValue = instruction.target
+      ? normalizeAddress(instruction.target)
+      : null;
+    const targetSection = targetValue
+      ? sectionForAddress(binary?.sections ?? [], targetValue)
+      : null;
+    const items: ContextMenuItem[] = [
+      {
+        label: "Copy address",
+        icon: Clipboard,
+        onSelect: () => copy(instruction.address, "address"),
+      },
+      {
+        label: "Copy instruction",
+        icon: Clipboard,
+        onSelect: () => copy(instruction.text, "instruction"),
+      },
+      {
+        label: "Copy bytes",
+        icon: Clipboard,
+        disabled: !instruction.bytes,
+        onSelect: () => copy(instruction.bytes, "bytes"),
+      },
+    ];
+    if (targetValue) {
+      items.push(
+        { label: "-", onSelect: () => undefined },
+        {
+          label: "Follow branch target",
+          icon: ArrowDownToLine,
+          onSelect: () =>
+            navigate(
+              { address: targetValue },
+              targetSection?.executable ? "disassembly" : "hex",
+            ),
+        },
+        {
+          label: "Open target in hex",
+          icon: Hash,
+          onSelect: () => navigate({ address: targetValue }, "hex"),
+        },
+      );
+    }
+    if (address) {
+      items.push(
+        { label: "-", onSelect: () => undefined },
+        {
+          label: "Add annotation",
+          icon: BookMarked,
+          onSelect: () => {
+            setSelection({
+              address,
+              fileOffset: instruction.fileOffset,
+              mnemonic: instruction.mnemonic,
+              text: instruction.text,
+              bytes: instruction.bytes,
+            });
+            workspace.showPanel("inspector");
+          },
+        },
+      );
+    }
+    return items;
+  }, [menu, binary, copy, navigate, setSelection, workspace]);
+
   const startAddress =
     instructions.length > 0 ? instructions[0].address : target.address ?? null;
   const endAddress =
@@ -222,26 +305,39 @@ export function DisassemblyView({
         )
       : null;
 
+  if (!binary) {
+    return (
+      <div className="flex h-full items-center justify-center bg-obsidian-900 p-6 text-[11.5px] text-ink-500">
+        Open a binary to disassemble code.
+      </div>
+    );
+  }
+
   if (!supported) {
     return (
-      <div className="flex h-full items-center justify-center p-6">
-        <div className="max-w-md rounded-lg border border-amber-500/25 bg-amber-500/5 p-5 text-center">
-          <TriangleAlert className="mx-auto mb-2 size-6 text-amber-400" />
-          <div className="text-[13px] font-medium text-amber-200">
-            Disassembly is not available for {binary.info.architecture}
-          </div>
-          <div className="mt-1 text-[11.5px] leading-relaxed text-ink-400">
-            v0.1 decodes x86 and x86-64 through iced-x86. Sections, symbols, hex
-            and strings remain available for this image.
+      <div className="view-root">
+        <div className="flex flex-1 items-center justify-center p-6">
+          <div className="max-w-md rounded-lg border border-amber-500/25 bg-amber-500/5 p-5 text-center">
+            <TriangleAlert className="mx-auto mb-2 size-6 text-amber-400" />
+            <div className="text-[13px] font-medium text-amber-200">
+              Disassembly is not available for {binary.info.architecture}
+            </div>
+            <div className="mt-1 text-[11.5px] leading-relaxed text-ink-400">
+              URA decodes x86 and x86-64 through iced-x86. Sections, symbols, hex
+              and strings remain available for this image.
+            </div>
           </div>
         </div>
       </div>
     );
   }
 
+  const showBytes = settings.showBytes;
+  const gridClass = `disasm-grid ${showBytes ? "" : "no-bytes"}`;
+
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="flex h-8 shrink-0 items-center gap-3 border-b border-edge bg-obsidian-850 px-3 font-mono text-[10.5px] text-ink-400">
+    <div className="view-root">
+      <div className="view-toolbar">
         <span className="flex items-center gap-1.5 text-ink-300">
           <Cpu className="size-3.5 text-accent-400" />
           {sectionName || "—"}
@@ -249,12 +345,23 @@ export function DisassemblyView({
         <span className="text-ink-600">|</span>
         <span>{architecture || binary.info.architecture}</span>
         <span className="text-ink-600">|</span>
-        <span className="text-ink-500">
+        <span className="hidden text-ink-500 @[560px]:inline">
           {startAddress ? formatHex(startAddress) : "—"}
           {endAddress ? ` → ${formatHex(endAddress)}` : ""}
         </span>
         <div className="flex-1" />
         <span className="text-ink-500">{instructions.length} loaded</span>
+        <button
+          className="icon-btn size-6"
+          title="Copy selected instruction"
+          onClick={() => {
+            const instruction = instructions[selectedIndex];
+            if (instruction) copy(instruction.text, "instruction");
+          }}
+          disabled={selectedIndex < 0}
+        >
+          <Clipboard className="size-3" />
+        </button>
         <button
           className="icon-btn size-6"
           onClick={() => setRefreshKey((value) => value + 1)}
@@ -272,12 +379,12 @@ export function DisassemblyView({
         </div>
       )}
 
-      <div className="grid h-6 shrink-0 grid-cols-[112px_188px_66px_1fr_120px] items-center border-b border-edge bg-obsidian-900 px-3 font-mono text-[9.5px] uppercase tracking-wider text-ink-500 select-none">
+      <div className={`view-columns ${gridClass}`}>
         <span>Address</span>
-        <span>Bytes</span>
+        {showBytes && <span className="disasm-bytes-col">Bytes</span>}
         <span>Mnemonic</span>
         <span>Operands</span>
-        <span className="text-right">Target / Note</span>
+        <span className="disasm-target-col text-right">Target / note</span>
       </div>
 
       <div
@@ -286,6 +393,14 @@ export function DisassemblyView({
         onScroll={handleScroll}
         tabIndex={0}
         onKeyDown={(event) => {
+          if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c") {
+            const instruction = instructions[selectedIndex];
+            if (instruction && !window.getSelection()?.toString()) {
+              event.preventDefault();
+              copy(instruction.text, "instruction");
+            }
+            return;
+          }
           if (event.key === "ArrowDown") {
             event.preventDefault();
             moveSelection(1);
@@ -298,6 +413,12 @@ export function DisassemblyView({
           } else if (event.key === "PageUp") {
             event.preventDefault();
             moveSelection(-20);
+          } else if (event.key === "Home") {
+            event.preventDefault();
+            moveSelection(-instructions.length);
+          } else if (event.key === "End") {
+            event.preventDefault();
+            moveSelection(instructions.length);
           }
         }}
       >
@@ -321,7 +442,7 @@ export function DisassemblyView({
         )}
 
         <div
-          className="relative w-full"
+          className="disasm-rows w-full"
           style={{ height: `${virtualizer.getTotalSize()}px` }}
         >
           {virtualizer.getVirtualItems().map((virtualRow) => {
@@ -343,30 +464,52 @@ export function DisassemblyView({
             return (
               <div
                 key={virtualRow.key}
-                className={`absolute left-0 top-0 grid h-6 w-full grid-cols-[112px_188px_66px_1fr_120px] items-center border-l-2 px-3 font-mono text-[11.5px] transition-colors ${
+                className={`disasm-row ${gridClass} items-center border-l-2 font-mono transition-colors ${
                   selected
                     ? "border-accent-400 bg-accent-500/12"
                     : "border-transparent hover:bg-obsidian-850/80"
                 } ${instruction.invalid ? "text-red-300/80" : ""}`}
-                style={{ transform: `translateY(${virtualRow.start}px)` }}
+                style={{
+                  transform: `translateY(${virtualRow.start}px)`,
+                  height: rowHeight,
+                  fontSize: settings.codeFontSize,
+                }}
                 onClick={() => selectInstruction(instruction)}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  selectInstruction(instruction);
+                  setMenu({
+                    x: event.clientX,
+                    y: event.clientY,
+                    instruction,
+                  });
+                }}
+                title={
+                  instruction.fileOffset
+                    ? `file offset ${instruction.fileOffset}`
+                    : undefined
+                }
               >
-                <span className="flex items-center gap-1 text-ink-500">
+                <span className="flex min-w-0 items-center gap-1 text-ink-500">
                   {selected ? (
                     <CornerDownRight className="size-3 shrink-0 text-accent-400" />
                   ) : (
                     <span className="w-3 shrink-0" />
                   )}
-                  <span className="text-ink-400">{formatHex(instruction.address)}</span>
+                  <span className="truncate text-ink-400">
+                    {formatHex(instruction.address)}
+                  </span>
                 </span>
+                {showBytes && (
+                  <span
+                    className="disasm-bytes-col truncate text-ink-600"
+                    title={instruction.fileOffset ?? undefined}
+                  >
+                    {instruction.bytes}
+                  </span>
+                )}
                 <span
-                  className="truncate text-ink-600"
-                  title={instruction.fileOffset ?? undefined}
-                >
-                  {instruction.bytes}
-                </span>
-                <span
-                  className={
+                  className={`truncate ${
                     instruction.invalid
                       ? "text-red-400"
                       : instruction.flow.includes("call")
@@ -378,7 +521,7 @@ export function DisassemblyView({
                             : instruction.privileged
                               ? "text-amber-400"
                               : "text-sky-300"
-                  }
+                  }`}
                 >
                   {instruction.mnemonic}
                 </span>
@@ -391,30 +534,28 @@ export function DisassemblyView({
                     </span>
                   )}
                 </span>
-                <span className="flex justify-end">
-                  {targetValue && (
+                <span className="disasm-target-col flex min-w-0 justify-end">
+                  {targetValue ? (
                     <button
-                      className="flex items-center gap-1 rounded px-1 font-mono text-[10px] text-accent-400/80 hover:bg-accent-500/10 hover:text-accent-300"
+                      className="flex min-w-0 items-center gap-1 rounded px-1 font-mono text-[10px] text-accent-400/80 hover:bg-accent-500/10 hover:text-accent-300"
                       onClick={(event) => {
                         event.stopPropagation();
-                        if (targetSection?.executable) {
-                          onNavigate({ address: targetValue }, "disassembly");
-                        } else {
-                          onNavigate({ address: targetValue }, "hex");
-                        }
+                        navigate(
+                          { address: targetValue },
+                          targetSection?.executable ? "disassembly" : "hex",
+                        );
                       }}
                       title={`Follow branch to ${targetValue} (${targetSection?.name ?? "unmapped"})`}
                     >
-                      <ArrowDownToLine className="size-2.5 -rotate-90" />
-                      {formatHex(targetValue)}
+                      <ArrowDownToLine className="size-2.5 shrink-0 -rotate-90" />
+                      <span className="truncate">{formatHex(targetValue)}</span>
                     </button>
+                  ) : (
+                    <span className="truncate text-[9.5px] text-ink-600">
+                      {instructionSection?.name ?? ""}
+                    </span>
                   )}
                 </span>
-                {instructionSection && !targetValue && (
-                  <span className="pointer-events-none absolute right-3 font-mono text-[9px] text-ink-600">
-                    {instructionSection.name}
-                  </span>
-                )}
               </div>
             );
           })}
@@ -433,6 +574,15 @@ export function DisassemblyView({
           </div>
         )}
       </div>
+
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          items={menuItems}
+          onClose={() => setMenu(null)}
+        />
+      )}
     </div>
   );
 }

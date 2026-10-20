@@ -7,39 +7,43 @@ import {
   Search,
   Tags,
 } from "lucide-react";
-import type {
-  Annotation,
-  BinaryOpenResult,
-  NavigateFn,
-  Selection,
-} from "../lib/types";
+import type { Annotation, SectionView } from "../lib/types";
 import { formatHex, formatSize, normalizeAddress } from "../lib/format";
+import { useSession } from "../state/session";
 import { VirtualList } from "./VirtualList";
 
 type ExplorerTab = "sections" | "symbols" | "imports" | "exports";
 
-interface ExplorerProps {
-  binary: BinaryOpenResult;
-  annotations: Annotation[];
-  selection: Selection | null;
-  onNavigate: NavigateFn;
-}
-
-const tabs: Array<{ id: ExplorerTab; label: string; icon: React.ComponentType<{ className?: string }> }> = [
+const tabs: Array<{
+  id: ExplorerTab;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+}> = [
   { id: "sections", label: "Sections", icon: Layers },
   { id: "symbols", label: "Symbols", icon: Tags },
   { id: "imports", label: "Imports", icon: PackageOpen },
   { id: "exports", label: "Exports", icon: Fingerprint },
 ];
 
-export function Explorer({
-  binary,
-  annotations,
-  selection,
-  onNavigate,
-}: ExplorerProps) {
+function sectionContains(section: SectionView, address: string | null): boolean {
+  if (!address) return false;
+  const parsed = normalizeAddress(address);
+  if (!parsed) return false;
+  try {
+    const start = BigInt(section.address);
+    const value = BigInt(parsed);
+    return value >= start && value < start + BigInt(section.size);
+  } catch {
+    return false;
+  }
+}
+
+export function Explorer() {
+  const { binary, project, selection, navigate } = useSession();
   const [tab, setTab] = useState<ExplorerTab>("sections");
   const [filter, setFilter] = useState("");
+
+  const annotations = project?.annotations ?? [];
 
   const annotated = useMemo(() => {
     const map = new Map<string, Annotation>();
@@ -50,8 +54,21 @@ export function Explorer({
     return map;
   }, [annotations]);
 
+  const needle = filter.trim().toLowerCase();
+
+  const sections = useMemo(() => {
+    if (!binary) return [];
+    if (!needle) return binary.sections;
+    return binary.sections.filter(
+      (section) =>
+        section.name.toLowerCase().includes(needle) ||
+        section.address.toLowerCase().includes(needle) ||
+        section.kind.toLowerCase().includes(needle),
+    );
+  }, [binary, needle]);
+
   const symbols = useMemo(() => {
-    const needle = filter.trim().toLowerCase();
+    if (!binary) return [];
     if (!needle) return binary.symbols;
     return binary.symbols.filter(
       (symbol) =>
@@ -59,39 +76,51 @@ export function Explorer({
         (symbol.section ?? "").toLowerCase().includes(needle) ||
         (symbol.address ?? "").toLowerCase().includes(needle),
     );
-  }, [binary.symbols, filter]);
+  }, [binary, needle]);
 
   const imports = useMemo(() => {
-    const needle = filter.trim().toLowerCase();
+    if (!binary) return [];
     if (!needle) return binary.imports;
     return binary.imports.filter(
       (entry) =>
         entry.name.toLowerCase().includes(needle) ||
         (entry.library ?? "").toLowerCase().includes(needle),
     );
-  }, [binary.imports, filter]);
+  }, [binary, needle]);
 
   const exports = useMemo(() => {
-    const needle = filter.trim().toLowerCase();
+    if (!binary) return [];
     if (!needle) return binary.exports;
     return binary.exports.filter(
       (entry) =>
         entry.name.toLowerCase().includes(needle) ||
         entry.address.toLowerCase().includes(needle),
     );
-  }, [binary.exports, filter]);
+  }, [binary, needle]);
 
-  const showFilter = tab !== "sections";
+  if (!binary) {
+    return (
+      <div className="flex h-full items-center justify-center bg-obsidian-850 p-6 text-[11.5px] text-ink-500">
+        Open a binary to browse its structure.
+      </div>
+    );
+  }
+
+  const counts: Record<ExplorerTab, number> = {
+    sections: sections.length,
+    symbols: symbols.length,
+    imports: imports.length,
+    exports: exports.length,
+  };
 
   return (
-    <aside className="flex w-[264px] shrink-0 flex-col border-r border-edge bg-obsidian-850">
-      <div className="panel-header">
-        <span className="flex items-center gap-1.5">
-          <Layers className="size-3.5" />
-          Explorer
+    <div className="explorer-root flex h-full min-h-0 w-full flex-col bg-obsidian-850">
+      <div className="flex h-7 shrink-0 items-center justify-between border-b border-edge px-2.5">
+        <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-ink-500">
+          {binary.info.format} · {binary.info.architecture}
         </span>
-        <span className="font-mono text-[10px] normal-case tracking-normal text-ink-500">
-          {binary.info.format}
+        <span className="font-mono text-[9.5px] text-ink-600">
+          {annotations.length} {annotations.length === 1 ? "note" : "notes"}
         </span>
       </div>
 
@@ -102,7 +131,7 @@ export function Explorer({
           return (
             <button
               key={entry.id}
-              className={`flex h-8 items-center justify-center gap-1 border-b-2 text-[10.5px] font-medium transition-colors ${
+              className={`relative flex h-8 items-center justify-center gap-1 border-b-2 text-[10.5px] font-medium transition-colors ${
                 active
                   ? "border-accent-500 bg-obsidian-800 text-accent-300"
                   : "border-transparent text-ink-500 hover:bg-obsidian-800/60 hover:text-ink-300"
@@ -110,54 +139,49 @@ export function Explorer({
               onClick={() => setTab(entry.id)}
               title={entry.label}
             >
-              <Icon className="size-3.5" />
-              <span className="hidden xl:inline">{entry.label}</span>
+              <Icon className="size-3 shrink-0" />
+              <span className="explorer-tab-label truncate text-[9.5px]">
+                {entry.label}
+              </span>
+              <span className="font-mono text-[8.5px] text-ink-600">
+                {counts[entry.id]}
+              </span>
             </button>
           );
         })}
       </div>
 
-      {showFilter && (
-        <div className="shrink-0 border-b border-edge p-1.5">
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-ink-500" />
-            <input
-              className="input h-7 pl-7 text-[11px]"
-              placeholder={`Filter ${tab}…`}
-              value={filter}
-              onChange={(event) => setFilter(event.target.value)}
-              spellCheck={false}
-            />
-          </div>
+      <div className="shrink-0 border-b border-edge p-1.5">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-ink-500" />
+          <input
+            className="input h-6.5 pl-7 text-[11px]"
+            placeholder={`Filter ${tab}…`}
+            value={filter}
+            onChange={(event) => setFilter(event.target.value)}
+            spellCheck={false}
+          />
         </div>
-      )}
+      </div>
 
-      <div className="flex min-h-0 flex-1 flex-col">
+      <div className="min-h-0 flex-1">
         {tab === "sections" && (
-          <div className="overflow-auto py-1">
-            {binary.sections.map((section) => {
-              const active = selection?.address != null
-                ? (() => {
-                    try {
-                      const start = BigInt(section.address);
-                      const addr = BigInt(selection.address!);
-                      return (
-                        addr >= start &&
-                        addr < start + BigInt(section.size)
-                      );
-                    } catch {
-                      return false;
-                    }
-                  })()
-                : false;
+          <VirtualList
+            className="h-full"
+            count={sections.length}
+            estimateSize={34}
+            renderRow={(index) => {
+              const section = sections[index];
+              const active = sectionContains(section, selection?.address ?? null);
               return (
                 <button
-                  key={`${section.name}-${section.address}`}
-                  className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors ${
-                    active ? "bg-accent-500/10" : "hover:bg-obsidian-750/70"
+                  className={`flex h-[34px] w-full items-center gap-2 border-l-2 px-2.5 text-left transition-colors ${
+                    active
+                      ? "border-accent-400 bg-accent-500/10"
+                      : "border-transparent hover:bg-obsidian-750/70"
                   }`}
                   onClick={() =>
-                    onNavigate(
+                    navigate(
                       { address: section.address, fileOffset: section.fileOffset },
                       section.executable ? "disassembly" : "hex",
                     )
@@ -165,7 +189,7 @@ export function Explorer({
                   title={`${section.name} — ${formatSize(section.size)}`}
                 >
                   <span
-                    className={`h-5 w-0.5 shrink-0 rounded-full ${
+                    className={`h-6 w-0.5 shrink-0 rounded-full ${
                       section.executable
                         ? "bg-accent-500"
                         : section.writable
@@ -174,25 +198,35 @@ export function Explorer({
                     }`}
                   />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate font-mono text-[11.5px] text-ink-200">
-                      {section.name}
+                    <span className="flex items-center gap-1.5">
+                      <span className="truncate font-mono text-[11.5px] text-ink-200">
+                        {section.name}
+                      </span>
+                      {annotated.has(normalizeAddress(section.address) ?? "") && (
+                        <BookMarked className="size-3 shrink-0 text-amber-400" />
+                      )}
                     </span>
                     <span className="block font-mono text-[9.5px] text-ink-500">
                       {formatHex(section.address)} · {section.permissions}
                     </span>
                   </span>
-                  <span className="shrink-0 font-mono text-[9.5px] text-ink-500">
-                    {formatSize(section.size)}
+                  <span className="shrink-0 text-right">
+                    <span className="block font-mono text-[9.5px] text-ink-400">
+                      {formatSize(section.size)}
+                    </span>
+                    <span className="explorer-file-offset block font-mono text-[9px] text-ink-600">
+                      {section.fileOffset ? formatHex(section.fileOffset) : "no file"}
+                    </span>
                   </span>
                 </button>
               );
-            })}
-          </div>
+            }}
+          />
         )}
 
         {tab === "symbols" && (
           <VirtualList
-            className="min-h-0 flex-1"
+            className="h-full"
             count={symbols.length}
             estimateSize={27}
             renderRow={(index) => {
@@ -208,7 +242,7 @@ export function Explorer({
                   } ${clickable ? "" : "cursor-default opacity-60"}`}
                   disabled={!clickable}
                   onClick={() =>
-                    onNavigate(
+                    navigate(
                       { address: symbol.address },
                       binary.sections.find(
                         (section) => section.name === symbol.section,
@@ -232,10 +266,7 @@ export function Explorer({
                       }`}
                     />
                   )}
-                  <span
-                    className="min-w-0 flex-1 truncate font-mono text-[11px] text-ink-300"
-                    title={symbol.name}
-                  >
+                  <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-ink-300">
                     {symbol.name}
                   </span>
                   <span className="shrink-0 font-mono text-[9.5px] text-ink-500">
@@ -249,13 +280,13 @@ export function Explorer({
 
         {tab === "imports" && (
           <VirtualList
-            className="min-h-0 flex-1"
+            className="h-full"
             count={imports.length}
-            estimateSize={27}
+            estimateSize={30}
             renderRow={(index) => {
               const entry = imports[index];
               return (
-                <div className="flex h-[27px] items-center gap-2 px-2.5">
+                <div className="flex h-[30px] items-center gap-2 px-2.5">
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-mono text-[11px] text-ink-200">
                       {entry.name}
@@ -272,7 +303,7 @@ export function Explorer({
 
         {tab === "exports" && (
           <VirtualList
-            className="min-h-0 flex-1"
+            className="h-full"
             count={exports.length}
             estimateSize={27}
             renderRow={(index) => {
@@ -280,7 +311,7 @@ export function Explorer({
               return (
                 <button
                   className="flex h-[27px] w-full items-center gap-2 px-2.5 text-left hover:bg-obsidian-750/70"
-                  onClick={() => onNavigate({ address: entry.address }, "disassembly")}
+                  onClick={() => navigate({ address: entry.address }, "disassembly")}
                   title={entry.name}
                 >
                   <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-ink-300">
@@ -298,14 +329,13 @@ export function Explorer({
 
       <div className="flex h-6 shrink-0 items-center justify-between border-t border-edge px-2.5 font-mono text-[9.5px] text-ink-500">
         <span>
-          {tab === "sections" && `${binary.sections.length} sections`}
-          {tab === "symbols" &&
-            `${symbols.length}/${binary.symbols.length} symbols`}
+          {tab === "sections" && `${sections.length} sections`}
+          {tab === "symbols" && `${symbols.length}/${binary.symbols.length} symbols`}
           {tab === "imports" && `${imports.length} imports`}
           {tab === "exports" && `${exports.length} exports`}
         </span>
-        <span>{annotations.length} notes</span>
+        <span>{filter ? "filtered" : binary.info.fileName}</span>
       </div>
-    </aside>
+    </div>
   );
 }

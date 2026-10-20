@@ -30,6 +30,8 @@ trigger a rebuild of the app; frontend changes hot-reload in the webview.
 | `cargo test --workspace` | All Rust unit and integration tests |
 | `cargo test -p ura-core` | Analysis engine tests |
 | `cargo test -p ura-project` | Project persistence tests |
+| `cargo clippy --workspace --all-targets -- -D warnings` | Rust lint gate |
+| `cargo fmt --all -- --check` | Rust formatting gate |
 | `npm run tauri build` | Release build and installer bundle |
 | `python scripts/generate_fixtures.py` | Regenerate deterministic PE/ELF fixtures |
 
@@ -65,11 +67,15 @@ src-tauri/src/
   commands.rs        IPC wrappers with spawn_blocking
   state.rs           shared session state
 src/
-  App.tsx            session orchestration and shortcuts
-  components/        views, inspector, palette, shell
+  App.tsx            provider composition, shell chrome and global shortcuts
+  state/             session, settings, messages and workspace contexts
+  components/workspace/Workbench.tsx   Dockview host, default layout, persistence
+  components/        views, inspector, palette, settings, shell
   lib/api.ts         typed invoke wrappers
   lib/types.ts       IPC payload types
   lib/format.ts      address/offset helpers
+  lib/panels.ts      workspace panel ids and view mapping
+  index.css          Obsidian Dark tokens, component classes, Dockview theme
 ```
 
 ## Adding an IPC command
@@ -87,9 +93,17 @@ src/
 - Addresses and offsets are strings at the IPC boundary. Use `src/lib/format.ts`
   (`normalizeAddress`, `formatHex`, `parseAddressInput`, `offsetForAddress`, `sectionForAddress`)
   rather than ad-hoc conversions.
-- Views receive read-only data and callbacks. Session state belongs in `App.tsx`.
+- Views receive immutable projections from context hooks. Analysis state belongs in
+  `state/session.tsx`; settings, messages and workspace intents have their own providers.
+  Components call session actions rather than `invoke` directly.
+- Docked panels are registered in `lib/panels.ts`. Add a view to the Dockview layout in
+  `components/workspace/Workbench.tsx` and use a stable panel id so persisted layouts survive.
+  After creating a panel, size its group explicitly if the default geometry matters.
+- Narrow-panel behaviour uses CSS container queries on `.view-root`, `.explorer-root` and
+  `.overview-root`; do not key layout off viewport breakpoints for docked content.
 - Styling uses the Obsidian Dark tokens and component classes in `src/index.css`
-  (`.panel`, `.btn`, `.input`, `.tab`). Avoid introducing new color literals.
+  (`.panel`, `.btn`, `.input`, `.tab`, `.view-root`, `.disasm-grid`, `.hex-grid`,
+  `.strings-grid`). Avoid introducing new color literals.
 - Lists that can grow use `VirtualList` or `@tanstack/react-virtual`. Virtualized rows must be
   absolutely positioned with a `translateY` offset; in-flow rows break scroll math.
 - Every mutating action must handle errors and leave the UI in a usable state.
@@ -111,6 +125,8 @@ Run Rust tests before any frontend work is considered done:
 
 ```powershell
 cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --all -- --check
 npm run build
 ```
 

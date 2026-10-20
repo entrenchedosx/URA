@@ -8,39 +8,25 @@ import {
   Search,
   TextCursorInput,
 } from "lucide-react";
-import type {
-  BinaryOpenResult,
-  NavigateFn,
-  Selection,
-  StringScanResult,
-} from "../lib/types";
 import { formatHex, formatSize, normalizeAddress, parseHex } from "../lib/format";
+import { useSession } from "../state/session";
+import { rowHeightFor, useSettings } from "../state/settings";
 import { VirtualList } from "./VirtualList";
-
-interface StringsViewProps {
-  binary: BinaryOpenResult;
-  strings: StringScanResult | null;
-  scanning: boolean;
-  selection: Selection | null;
-  onScan: (minLength: number, ascii: boolean, utf16: boolean) => void;
-  onNavigate: NavigateFn;
-}
 
 type EncodingFilter = "all" | "ASCII" | "UTF-16LE";
 
-export function StringsView({
-  binary,
-  strings,
-  scanning,
-  selection,
-  onScan,
-  onNavigate,
-}: StringsViewProps) {
+export function StringsView() {
+  const { binary, strings, scanning, selection, scanStrings, navigate } =
+    useSession();
+  const { settings } = useSettings();
+
   const [minLength, setMinLength] = useState("4");
   const [ascii, setAscii] = useState(true);
   const [utf16, setUtf16] = useState(true);
   const [filter, setFilter] = useState("");
   const [encoding, setEncoding] = useState<EncodingFilter>("all");
+
+  const rowHeight = rowHeightFor(settings);
 
   const filtered = useMemo(() => {
     if (!strings) return [];
@@ -63,11 +49,19 @@ export function StringsView({
     const value = Number.parseInt(minLength, 10);
     const bounded = Number.isFinite(value) ? Math.min(512, Math.max(2, value)) : 4;
     setMinLength(String(bounded));
-    onScan(bounded, ascii, utf16);
+    scanStrings(bounded, ascii, utf16);
   };
 
+  if (!binary) {
+    return (
+      <div className="flex h-full items-center justify-center bg-obsidian-900 p-6 text-[11.5px] text-ink-500">
+        Open a binary to scan for strings.
+      </div>
+    );
+  }
+
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="view-root">
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-edge bg-obsidian-850 px-3 py-2">
         <label className="flex items-center gap-1.5 text-[11px] text-ink-400">
           <TextCursorInput className="size-3.5" />
@@ -157,7 +151,7 @@ export function StringsView({
         </div>
       )}
 
-      <div className="grid h-6 shrink-0 grid-cols-[92px_104px_74px_54px_1fr] items-center border-b border-edge bg-obsidian-900 px-3 font-mono text-[9.5px] uppercase tracking-wider text-ink-500 select-none">
+      <div className="strings-grid grid h-6 shrink-0 items-center border-b border-edge bg-obsidian-900 px-3 font-mono text-[9.5px] uppercase tracking-wider text-ink-500 select-none">
         <span>Offset</span>
         <span>Address</span>
         <span>Encoding</span>
@@ -199,7 +193,7 @@ export function StringsView({
           <VirtualList
             className="h-full"
             count={filtered.length}
-            estimateSize={26}
+            estimateSize={rowHeight}
             renderRow={(index) => {
               const entry = filtered[index];
               const address = normalizeAddress(entry.address);
@@ -218,13 +212,14 @@ export function StringsView({
               const destination = section?.executable ? "disassembly" : "hex";
               return (
                 <button
-                  className={`grid h-[26px] w-full grid-cols-[92px_104px_74px_54px_1fr] items-center border-l-2 px-3 text-left font-mono text-[11px] transition-colors ${
+                  className={`strings-grid grid w-full items-center border-l-2 px-3 text-left font-mono transition-colors ${
                     selected
                       ? "border-accent-400 bg-accent-500/10"
                       : "border-transparent hover:bg-obsidian-850/80"
                   }`}
+                  style={{ height: rowHeight, fontSize: settings.codeFontSize }}
                   onClick={() =>
-                    onNavigate(
+                    navigate(
                       { address: entry.address, fileOffset: entry.offset },
                       destination,
                     )
@@ -247,10 +242,7 @@ export function StringsView({
                     </span>
                   </span>
                   <span className="pr-1 text-right text-ink-500">{entry.length}</span>
-                  <span
-                    className="truncate pl-3 text-ink-200"
-                    title={entry.value}
-                  >
+                  <span className="truncate pl-3 text-ink-200" title={entry.value}>
                     {entry.value}
                   </span>
                 </button>

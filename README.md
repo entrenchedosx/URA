@@ -10,6 +10,9 @@ disassembly for any executable section URA can map.
 
 ## Highlights
 
+- **Dockable workspace** — Explorer, Disassembly, Overview, Strings, Hex, Inspector and Messages
+  live in resizable panels powered by Dockview. The layout persists between launches, can be
+  reset from the toolbar or preferences, and the core views adapt to narrow panels.
 - **Binary overview** — format, architecture, bitness, endianness, image base, entry point,
   file size, SHA-256 and section permissions.
 - **Explorer** — sections, symbols, imports and exports with filters and virtualized lists.
@@ -18,11 +21,13 @@ disassembly for any executable section URA can map.
   flow classification, resolved branch targets and section mapping. Pages are fetched on demand
   (320 instructions) and the list is virtualized; keyboard navigation and branch following are
   built in.
-- **Hex viewer** — 16-byte rows with offset/ASCII gutter, chunked reads, section/address
-  mapping and jump-to-offset. Navigating from strings or disassembly lands on the exact row.
-- **Strings explorer** — ASCII and UTF-16LE scanning with configurable minimum length,
-  per-encoding filters and substring search. Each result can jump to the hex view or, when the
-  string maps to an executable section, the disassembly view.
+- **Hex viewer** — offset/ASCII gutter with 8, 16 or 32 bytes per row, chunked reads,
+  section/address mapping and jump-to-offset. Navigating from strings or disassembly lands on the
+  exact row.
+- **Strings explorer** — ASCII and UTF-16LE scanning starts when a binary opens and can be re-run
+  with a configurable minimum length. Per-encoding filters and substring search are applied
+  client-side. Each result can jump to the hex view or, when the string maps to an executable
+  section, the disassembly view.
 - **Inspector and annotations** — selection facts, project facts, binary identity, and an
   annotation editor (label + note). Annotations are listed and can be edited or deleted.
 - **Analysis projects** — `.ura` files are SQLite databases that record the source binary path
@@ -36,8 +41,10 @@ disassembly for any executable section URA can map.
 v0.1.0 is complete and has been exercised end-to-end on Windows 11 against the deterministic
 PE64/ELF fixtures in `tests/fixtures`: open binary, inspect metadata/sections, disassemble,
 navigate (palette, keyboard, branch follow), read hex, scan and jump to strings, create a
-project, save an annotation, close, reopen and verify the restored state. See
-[ROADMAP.md](docs/ROADMAP.md) for what comes next.
+project, save an annotation, close, reopen and verify the restored state. The v0.2 workspace
+overhaul is complete: dockable/resizable panels, persistent layout, settings, responsive views,
+and context-based session/message/workspace state. See [ROADMAP.md](docs/ROADMAP.md) for what
+comes next.
 
 ## Requirements
 
@@ -93,8 +100,10 @@ python scripts/generate_fixtures.py
 | `Ctrl+K` | Open the command palette |
 | `Ctrl+N` | Create a project for the open binary |
 | `Ctrl+Shift+O` | Open an existing project |
+| `Ctrl+,` | Open preferences |
 | `Ctrl+1` … `Ctrl+4` | Disassembly / Hex / Strings / Overview |
-| `Esc` | Close the command palette |
+| `Ctrl+Enter` | Save the current annotation from the inspector |
+| `Esc` | Close the command palette or preferences |
 | `Up` / `Down` | Move the disassembly selection by one instruction |
 | `PageUp` / `PageDown` | Move the disassembly selection by 20 instructions |
 | `Enter` | Run the highlighted item in the command palette |

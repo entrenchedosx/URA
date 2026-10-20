@@ -18,7 +18,21 @@ deterministic fixtures.
 - [x] Startup binary argument and end-to-end acceptance flow
 - [x] Rust workspace tests and clean TypeScript/Vite build
 
-## v0.2 — navigation and structure
+## v0.2 — workspace overhaul (complete)
+
+Priority: make simultaneous views usable and keep the interface coherent at any window size.
+This work is UI-only; the analysis engine and IPC surface are unchanged.
+
+- [x] Dockview workbench: Explorer, Disassembly, Overview, Strings, Hex, Inspector, Messages
+- [x] Resizable panels, default geometry and reset-layout action
+- [x] Layout persistence in `localStorage` with a versioned key
+- [x] Context-based session, settings, messages and workspace state
+- [x] Rebuilt command palette, toolbar, status bar, welcome screen and preferences dialog
+- [x] Responsive disassembly, hex, strings, explorer and overview layouts
+- [x] Hex row-width selection (8/16/32), byte selection and context actions
+- [x] Automatic initial string scan plus manual re-scan
+
+## v0.2 — navigation and structure (next)
 
 Priority: help analysts move through an image instead of reading linearly.
 

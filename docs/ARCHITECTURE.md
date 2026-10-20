@@ -107,11 +107,12 @@ transient toast; commands never panic on malformed input.
    The backend decodes until the page is full or the section ends, classifies flow, and returns
    warnings. Scrolling near the end requests another page; selections update the inspector and
    the debounced project selection autosave.
-3. **Hex** — the view caches 4 KiB chunks by file offset and renders virtualized 16-byte rows.
-   A navigation request normalizes an address, offset or section to a file offset and scrolls
-   the row into view.
-4. **Strings** — scanning is explicit (Analyze File or the scan controls). Results are filtered
-   client-side. Each row keeps its file offset and mapped virtual address.
+3. **Hex** — the view caches 8 KiB chunks by file offset and renders virtualized rows with 8, 16
+   or 32 bytes per row. A navigation request normalizes an address, offset or section to a file
+   offset and scrolls the row into view.
+4. **Strings** — a default scan (minimum length 4, ASCII + UTF-16LE) runs when a binary opens.
+   The view can re-run it with different settings; results are filtered client-side. Each row
+   keeps its file offset and mapped virtual address.
 5. **Projects** — create/open flows live in the UI; persistence is entirely in `ura-project`.
    Open resolves the recorded binary path, loads it through the same `open_binary` path, checks
    the hash, restores the selected address and annotation list.
@@ -120,21 +121,33 @@ transient toast; commands never panic on malformed input.
 
 ## UI structure
 
-- `src/App.tsx` owns session state: binary projection, selection, active view, project snapshot,
-  navigation requests, message log and busy state. It wires keyboard shortcuts and autosave.
-- Views (`Overview`, `Explorer`, `DisassemblyView`, `HexView`, `StringsView`) receive immutable
-  projections and emit selection/navigation callbacks. They do not call IPC directly, except
-  through `src/lib/api.ts` wrappers.
+- `src/App.tsx` composes the providers and shell chrome, and owns global shortcuts, the command
+  palette and the preferences dialog. It does not hold analysis state directly.
+- `src/state/` contains the contexts: `session` (binary, selection, navigation requests, project,
+  strings, busy state and IPC actions), `settings` (density, code font size, byte column,
+  local persistence), `messages` (log and filters) and `workspace` (panel intents, active/open
+  panels, reset requests).
+- `src/components/workspace/Workbench.tsx` mounts Dockview, builds the default layout, persists
+  it to `ura:workspace:v1` (350 ms debounce) and services focus/toggle/reset intents. Layout
+  sizes are re-applied through each panel group after creation so the initial geometry matches
+  the intended Explorer 258 px / Inspector 300 px / Hex 280 px / Messages 148 px.
+- Views (`Overview`, `Explorer`, `DisassemblyView`, `HexView`, `StringsView`, `Inspector`,
+  `MessagesPanel`) consume context hooks and render immutable projections. Mutating actions call
+  session methods, never `invoke` directly.
+- Chrome components (`Toolbar`, `StatusBar`, `Welcome`, `CommandPalette`, `SettingsDialog`) use
+  the same contexts. The palette resolves addresses, `@file-offset` input, sections, symbols,
+  exports and annotations.
 - `VirtualList` wraps `@tanstack/react-virtual`. Virtualized rows are absolutely positioned,
   which keeps scroll height and jump offsets deterministic.
 - The design system lives in `src/index.css`: Obsidian Dark palette tokens, panel/button/input/tab
-  component classes. Icons come from `lucide-react`.
+  component classes, the Dockview theme, and container queries for narrow panels. Icons come
+  from `lucide-react`.
 
 ## Performance choices
 
 - Binary parsing and scanning happen off the UI thread.
 - Instruction pages are capped at 320 rows; the UI never renders the full section at once.
-- Hex data is chunked at 4 KiB and cached per view session.
+- Hex data is chunked at 8 KiB and cached per view session.
 - Strings are capped at 200,000 results and filtered in memory.
 - Large file lists use `@tanstack/react-virtual`; only visible rows are mounted.
 - Selection persistence is debounced (700 ms) to avoid a write per keystroke.

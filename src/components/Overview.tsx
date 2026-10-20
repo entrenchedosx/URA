@@ -1,7 +1,7 @@
 import {
   AlertTriangle,
   ArrowUpRight,
-  Binary,
+  Binary as BinaryIcon,
   Boxes,
   Cpu,
   Database,
@@ -12,18 +12,8 @@ import {
   MapPin,
   PackageOpen,
 } from "lucide-react";
-import type {
-  BinaryOpenResult,
-  NavigateFn,
-  ProjectInfo,
-} from "../lib/types";
 import { formatHex, formatSize, shorten } from "../lib/format";
-
-interface OverviewProps {
-  binary: BinaryOpenResult;
-  project: ProjectInfo | null;
-  onNavigate: NavigateFn;
-}
+import { useSession } from "../state/session";
 
 function Fact({
   icon: Icon,
@@ -54,23 +44,42 @@ function Fact({
   );
 }
 
-export function Overview({ binary, project, onNavigate }: OverviewProps) {
+export function Overview() {
+  const { binary, project, annotations, navigate } = useSession();
+
+  if (!binary) {
+    return (
+      <div className="flex h-full items-center justify-center bg-obsidian-900 p-6 text-[11.5px] text-ink-500">
+        Open a binary to see its image overview.
+      </div>
+    );
+  }
+
   const { info, sections, imports, exports, symbols } = binary;
   const executableSections = sections.filter((section) => section.executable);
+  const executableSize = executableSections.reduce(
+    (total, section) => total + section.size,
+    0,
+  );
 
   return (
-    <div className="h-full overflow-auto p-4">
+    <div className="overview-root h-full overflow-auto bg-obsidian-900 p-4">
       <div className="mx-auto max-w-5xl space-y-4">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <Binary className="size-4 text-accent-400" />
+              <BinaryIcon className="size-4 text-accent-400" />
               <h1 className="truncate text-[16px] font-semibold text-ink-100">
                 {info.fileName}
               </h1>
               <span className="rounded border border-accent-500/30 bg-accent-500/10 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-accent-300">
                 {info.format}
               </span>
+              {info.hasDebugSymbols && (
+                <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 font-mono text-[9.5px] uppercase tracking-wider text-emerald-300">
+                  debug symbols
+                </span>
+              )}
             </div>
             <div
               className="mt-1 truncate font-mono text-[10.5px] text-ink-500"
@@ -92,7 +101,7 @@ export function Overview({ binary, project, onNavigate }: OverviewProps) {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
+        <div className="overview-facts grid grid-cols-2 gap-2.5 md:grid-cols-4">
           <Fact
             icon={Cpu}
             label="Architecture"
@@ -100,7 +109,12 @@ export function Overview({ binary, project, onNavigate }: OverviewProps) {
             mono
           />
           <Fact icon={HardDrive} label="File size" value={formatSize(info.fileSize)} />
-          <Fact icon={MapPin} label="Image base" value={formatHex(info.imageBase, 16)} mono />
+          <Fact
+            icon={MapPin}
+            label="Image base"
+            value={formatHex(info.imageBase)}
+            mono
+          />
           <Fact icon={FileCode2} label="Object kind" value={info.objectKind} />
           <Fact
             icon={ArrowUpRight}
@@ -109,9 +123,9 @@ export function Overview({ binary, project, onNavigate }: OverviewProps) {
               info.entryPoint ? (
                 <button
                   className="font-mono text-accent-300 hover:underline"
-                  onClick={() => onNavigate({ address: info.entryPoint }, "disassembly")}
+                  onClick={() => navigate({ address: info.entryPoint }, "disassembly")}
                 >
-                  {formatHex(info.entryPoint, 16)}
+                  {formatHex(info.entryPoint)}
                 </button>
               ) : (
                 "—"
@@ -119,7 +133,7 @@ export function Overview({ binary, project, onNavigate }: OverviewProps) {
             }
             mono
           />
-          <Fact icon={Layers} label="Sections" value={String(info.sectionCount)} />
+          <Fact icon={Layers} label="Sections" value={`${info.sectionCount} · ${executableSections.length} exec`} />
           <Fact icon={Boxes} label="Symbols" value={String(info.symbolCount)} />
           <Fact
             icon={PackageOpen}
@@ -152,10 +166,10 @@ export function Overview({ binary, project, onNavigate }: OverviewProps) {
           <div className="flex items-center justify-between border-b border-edge bg-obsidian-800 px-3 py-2">
             <div className="flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-ink-400">
               <Layers className="size-3.5" />
-              Sections
+              Section map
             </div>
             <div className="font-mono text-[10.5px] text-ink-500">
-              {executableSections.length} executable
+              {formatSize(executableSize)} executable · {formatSize(info.fileSize)} total
             </div>
           </div>
           <table className="w-full border-collapse text-[11.5px]">
@@ -175,7 +189,7 @@ export function Overview({ binary, project, onNavigate }: OverviewProps) {
                   key={`${section.name}-${section.address}`}
                   className="cursor-pointer border-b border-edge/50 transition-colors last:border-0 hover:bg-obsidian-750/70"
                   onClick={() =>
-                    onNavigate(
+                    navigate(
                       {
                         address: section.address,
                         fileOffset: section.fileOffset,
@@ -216,7 +230,7 @@ export function Overview({ binary, project, onNavigate }: OverviewProps) {
           </table>
         </section>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           <section className="overflow-hidden rounded-lg border border-edge bg-obsidian-850">
             <div className="flex items-center justify-between border-b border-edge bg-obsidian-800 px-3 py-2">
               <div className="flex items-center gap-1.5 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-ink-400">
@@ -268,7 +282,9 @@ export function Overview({ binary, project, onNavigate }: OverviewProps) {
                   <button
                     key={`${entry.name}-${entry.address}`}
                     className="flex w-full items-center justify-between gap-2 border-b border-edge/40 px-3 py-1 text-left font-mono text-[11px] last:border-0 hover:bg-obsidian-750/70"
-                    onClick={() => onNavigate({ address: entry.address }, "disassembly")}
+                    onClick={() =>
+                      navigate({ address: entry.address }, "disassembly")
+                    }
                   >
                     <span className="truncate text-ink-200">{entry.name}</span>
                     <span className="shrink-0 text-[10px] text-accent-400">
@@ -281,16 +297,35 @@ export function Overview({ binary, project, onNavigate }: OverviewProps) {
           </section>
         </div>
 
-        {project && (
-          <div className="flex items-center gap-2 rounded-lg border border-edge bg-obsidian-850 px-3 py-2 text-[11.5px] text-ink-400">
-            <Database className="size-3.5 text-emerald-400" />
-            <span className="font-medium text-ink-300">{project.name}</span>
-            <span className="text-ink-600">·</span>
-            <span>schema v{project.schemaVersion}</span>
-            <span className="text-ink-600">·</span>
-            <span>{symbols.length} symbols indexed</span>
+        <div className="rounded-lg border border-edge bg-obsidian-850 px-3 py-2">
+          <div className="flex flex-wrap items-center gap-2 text-[11.5px] text-ink-400">
+            <Database className="size-3.5 text-accent-400" />
+            {project ? (
+              <>
+                <span className="font-medium text-ink-300">
+                  {project.project.name}
+                </span>
+                <span className="text-ink-600">·</span>
+                <span>schema v{project.project.schemaVersion}</span>
+                <span className="text-ink-600">·</span>
+                <span>
+                  {annotations.length} annotation
+                  {annotations.length === 1 ? "" : "s"}
+                </span>
+                <span className="text-ink-600">·</span>
+                <span className="truncate font-mono text-[10.5px] text-ink-500">
+                  binary {project.binaryStatus}
+                </span>
+              </>
+            ) : (
+              <span>
+                No project open — create one to persist annotations and
+                selection. {symbols.length.toLocaleString()} symbols are
+                available in memory.
+              </span>
+            )}
           </div>
-        )}
+        </div>
       </div>
     </div>
   );

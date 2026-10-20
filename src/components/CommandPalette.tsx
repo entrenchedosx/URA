@@ -1,37 +1,37 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BookMarked,
+  CheckSquare,
   Crosshair,
   Database,
   FilePlus2,
   FolderOpen,
   FolderSearch,
   Hash,
+  KeyRound,
   Layers,
+  LayoutDashboard,
   ListTree,
+  MessageSquare,
+  PanelLeft,
+  PanelRight,
+  RotateCcw,
   ScanSearch,
   Search,
+  Settings,
+  Square,
   Terminal,
+  X,
 } from "lucide-react";
-import type {
-  Annotation,
-  BinaryOpenResult,
-  NavigateFn,
-  ViewKind,
-} from "../lib/types";
 import { formatHex, normalizeAddress, parseHex } from "../lib/format";
+import { useSession } from "../state/session";
+import { useSettings } from "../state/settings";
+import { useWorkspace } from "../state/workspace";
 
 interface CommandPaletteProps {
   open: boolean;
-  binary: BinaryOpenResult | null;
-  annotations: Annotation[];
   onClose: () => void;
-  onOpenBinary: () => void;
-  onNewProject: () => void;
-  onOpenProject: () => void;
-  onNavigate: NavigateFn;
-  onSwitchView: (view: ViewKind) => void;
-  onScanStrings: () => void;
+  onOpenSettings: () => void;
 }
 
 interface PaletteItem {
@@ -45,21 +45,30 @@ interface PaletteItem {
 
 function looksLikeAddress(query: string): boolean {
   const trimmed = query.trim();
-  return /^0x[0-9a-f_]+$/i.test(trimmed) || /^\d{4,}$/.test(trimmed);
+  return (
+    /^@?0x[0-9a-f_]+$/i.test(trimmed) || /^\d{4,}$/.test(trimmed)
+  );
 }
 
 export function CommandPalette({
   open,
-  binary,
-  annotations,
   onClose,
-  onOpenBinary,
-  onNewProject,
-  onOpenProject,
-  onNavigate,
-  onSwitchView,
-  onScanStrings,
+  onOpenSettings,
 }: CommandPaletteProps) {
+  const {
+    binary,
+    annotations,
+    selection,
+    openBinaryDialog,
+    openProjectDialog,
+    newProject,
+    closeBinary,
+    scanStrings,
+    navigate,
+  } = useSession();
+  const { settings, update } = useSettings();
+  const { focusView, togglePanel, resetLayout } = useWorkspace();
+
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -82,7 +91,7 @@ export function CommandPalette({
         detail: "Ctrl+O",
         category: "Binary",
         icon: FolderOpen,
-        run: onOpenBinary,
+        run: openBinaryDialog,
       },
       {
         id: "open-project",
@@ -90,7 +99,7 @@ export function CommandPalette({
         detail: "Ctrl+Shift+O",
         category: "Project",
         icon: FolderSearch,
-        run: onOpenProject,
+        run: openProjectDialog,
       },
       {
         id: "new-project",
@@ -98,48 +107,102 @@ export function CommandPalette({
         detail: "Ctrl+N",
         category: "Project",
         icon: FilePlus2,
-        run: onNewProject,
+        run: newProject,
       },
       {
         id: "view-disassembly",
-        label: "Go to Disassembly view",
+        label: "Focus Disassembly",
         detail: "Ctrl+1",
         category: "View",
         icon: ListTree,
-        run: () => onSwitchView("disassembly"),
+        run: () => focusView("disassembly"),
       },
       {
         id: "view-hex",
-        label: "Go to Hex view",
+        label: "Focus Hex",
         detail: "Ctrl+2",
         category: "View",
         icon: Hash,
-        run: () => onSwitchView("hex"),
+        run: () => focusView("hex"),
       },
       {
         id: "view-strings",
-        label: "Go to Strings view",
+        label: "Focus Strings",
         detail: "Ctrl+3",
         category: "View",
         icon: ScanSearch,
-        run: () => onSwitchView("strings"),
+        run: () => focusView("strings"),
       },
       {
         id: "view-overview",
-        label: "Go to Overview",
+        label: "Focus Overview",
         detail: "Ctrl+4",
         category: "View",
         icon: Layers,
-        run: () => onSwitchView("overview"),
+        run: () => focusView("overview"),
+      },
+      {
+        id: "toggle-explorer",
+        label: "Toggle Explorer",
+        category: "Layout",
+        icon: PanelLeft,
+        run: () => togglePanel("explorer"),
+      },
+      {
+        id: "toggle-inspector",
+        label: "Toggle Inspector",
+        category: "Layout",
+        icon: PanelRight,
+        run: () => togglePanel("inspector"),
+      },
+      {
+        id: "toggle-messages",
+        label: "Toggle Messages",
+        category: "Layout",
+        icon: MessageSquare,
+        run: () => togglePanel("messages"),
+      },
+      {
+        id: "reset-layout",
+        label: "Reset workspace layout",
+        category: "Layout",
+        icon: RotateCcw,
+        run: resetLayout,
+      },
+      {
+        id: "toggle-bytes",
+        label: settings.showBytes
+          ? "Hide instruction bytes column"
+          : "Show instruction bytes column",
+        category: "Preferences",
+        icon: settings.showBytes ? CheckSquare : Square,
+        run: () => update({ showBytes: !settings.showBytes }),
+      },
+      {
+        id: "preferences",
+        label: "Open preferences…",
+        detail: "Ctrl+,",
+        category: "Preferences",
+        icon: Settings,
+        run: onOpenSettings,
       },
       {
         id: "scan-strings",
         label: "Scan strings (min length 4)",
         category: "String",
         icon: ScanSearch,
-        run: onScanStrings,
+        run: () => scanStrings(4, true, true),
       },
     ];
+    if (binary) {
+      items.push({
+        id: "close-binary",
+        label: "Close binary",
+        category: "Binary",
+        icon: X,
+        run: closeBinary,
+      });
+    }
     if (binary?.info.entryPoint) {
       items.unshift({
         id: "entry-point",
@@ -147,18 +210,34 @@ export function CommandPalette({
         detail: formatHex(binary.info.entryPoint, 16),
         category: "Navigate",
         icon: Terminal,
-        run: () => onNavigate({ address: binary.info.entryPoint }, "disassembly"),
+        run: () => navigate({ address: binary.info.entryPoint }, "disassembly"),
+      });
+    }
+    if (selection?.address) {
+      items.unshift({
+        id: "selected-address",
+        label: `Go to selected address ${normalizeAddress(selection.address) ?? selection.address}`,
+        category: "Navigate",
+        icon: Crosshair,
+        run: () => navigate({ address: selection.address }, "disassembly"),
       });
     }
     return items;
   }, [
     binary,
-    onNavigate,
-    onNewProject,
-    onOpenBinary,
-    onOpenProject,
-    onScanStrings,
-    onSwitchView,
+    selection,
+    settings.showBytes,
+    navigate,
+    closeBinary,
+    focusView,
+    onOpenSettings,
+    openBinaryDialog,
+    openProjectDialog,
+    newProject,
+    resetLayout,
+    scanStrings,
+    togglePanel,
+    update,
   ]);
 
   const items = useMemo<PaletteItem[]>(() => {
@@ -166,15 +245,22 @@ export function CommandPalette({
     const needle = trimmed.toLowerCase();
     const results: PaletteItem[] = [];
 
-    if (trimmed && looksLikeAddress(trimmed) && parseHex(trimmed) != null) {
-      const normalized = normalizeAddress(trimmed)!;
+    if (trimmed && looksLikeAddress(trimmed) && parseHex(trimmed.replace(/^@/, "")) != null) {
+      const offsetMode = trimmed.startsWith("@");
+      const normalized =
+        normalizeAddress(trimmed.replace(/^@/, "")) ?? trimmed.replace(/^@/, "");
       results.push({
         id: "address",
-        label: `Go to address ${normalized}`,
-        detail: "hex address",
+        label: offsetMode
+          ? `Go to file offset ${normalized}`
+          : `Go to address ${normalized}`,
+        detail: offsetMode ? "file offset" : "hex address",
         category: "Address",
-        icon: Crosshair,
-        run: () => onNavigate({ address: normalized }, "disassembly"),
+        icon: offsetMode ? KeyRound : Crosshair,
+        run: () =>
+          offsetMode
+            ? navigate({ fileOffset: normalized }, "hex")
+            : navigate({ address: normalized }, "disassembly"),
       });
     }
 
@@ -194,9 +280,9 @@ export function CommandPalette({
             label: section.name,
             detail: formatHex(section.address),
             category: "Section",
-            icon: Layers,
+            icon: LayoutDashboard,
             run: () =>
-              onNavigate(
+              navigate(
                 { address: section.address, fileOffset: section.fileOffset },
                 section.executable ? "disassembly" : "hex",
               ),
@@ -220,7 +306,7 @@ export function CommandPalette({
             const section = binary.sections.find(
               (candidate) => candidate.name === symbol.section,
             );
-            onNavigate(
+            navigate(
               { address: symbol.address },
               section?.executable ? "disassembly" : "hex",
             );
@@ -237,7 +323,7 @@ export function CommandPalette({
           detail: formatHex(exportEntry.address),
           category: "Export",
           icon: Database,
-          run: () => onNavigate({ address: exportEntry.address }, "disassembly"),
+          run: () => navigate({ address: exportEntry.address }, "disassembly"),
         });
       }
 
@@ -250,13 +336,13 @@ export function CommandPalette({
           detail: formatHex(annotation.address),
           category: "Annotation",
           icon: BookMarked,
-          run: () => onNavigate({ address: annotation.address }),
+          run: () => navigate({ address: annotation.address }),
         });
       }
     }
 
     return results.slice(0, 28);
-  }, [query, actions, binary, annotations, onNavigate]);
+  }, [query, actions, binary, annotations, navigate]);
 
   useEffect(() => {
     setSelected(0);
@@ -290,7 +376,7 @@ export function CommandPalette({
           <input
             ref={inputRef}
             className="h-11 flex-1 bg-transparent text-[13px] text-ink-100 placeholder:text-ink-500 focus:outline-none"
-            placeholder="Type an address, symbol, section or command…"
+            placeholder="Type an address, @file-offset, symbol, section or command…"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={(event) => {
@@ -366,10 +452,10 @@ export function CommandPalette({
           </span>
           <span>
             <span className="kbd mr-1">Enter</span>
-            jump
+            run
           </span>
           <div className="flex-1" />
-          <span>Addresses accept hex, e.g. 0x140001000</span>
+          <span>0x… address · @0x… file offset</span>
         </div>
       </div>
     </div>
