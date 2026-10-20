@@ -32,19 +32,33 @@ This work is UI-only; the analysis engine and IPC surface are unchanged.
 - [x] Hex row-width selection (8/16/32), byte selection and context actions
 - [x] Automatic initial string scan plus manual re-scan
 
-## v0.2 — navigation and structure (next)
+## v0.3 — function analysis (complete)
+
+Priority: turn linear disassembly into navigable program structure, with honest limits.
+
+- [x] Recursive-descent function discovery from entry points, exports, symbols and call targets
+- [x] Basic-block partitioning with fall-through, jump and taken edges
+- [x] Call/jump/conditional xrefs indexed per address
+- [x] Functions explorer: search, sort, pagination, virtualized rows, origin badges and counts
+- [x] Interactive CFG view: BFS layout, zoom/pan/fit, block selection, jump to disassembly
+- [x] Xrefs in the inspector and a dedicated panel, with function/address scope
+- [x] F2 rename with project persistence and display-name overlay across all views
+- [x] Cancellable background analysis with progress events, diagnostics and partial-result state
+- [x] Project schema v2 (`function_names`) with automatic v1 migration
+- [x] Deterministic fixture acceptance: discover → CFG → xrefs → rename → save → reopen
+
+## v0.4 — navigation and workflow (next)
 
 Priority: help analysts move through an image instead of reading linearly.
 
-- Cross-references: find code and data references to an address or symbol.
-- Function boundaries: entry points, prologue heuristics and manual function creation.
-- Control-flow view for the selected function, building on the existing branch targets.
 - Symbol/annotation navigation history with back and forward.
 - Go-to improvements: relative offsets, section-relative input and pasted dumps.
 - Annotation export/import as portable JSON alongside the SQLite project.
 - Persist view state per project (active view, scroll anchor, filters).
+- Manual function creation and function-boundary adjustment.
+- Data cross-references and jump-table recovery.
 
-## v0.3 — depth
+## v0.5 — depth
 
 - Signature scanning for known libraries and patterns.
 - PDB loading for symbols and types.
@@ -73,6 +87,6 @@ Priority: help analysts move through an image instead of reading linearly.
 - Fuzz the parsers and mapping functions with malformed images.
 - Add screenshot-based UI regression tests for the core views.
 - Introduce schema migrations when the project format changes; never open newer schemas
-  silently.
+  silently. (v1 → v2 implemented for function names.)
 - Measure large-file memory use and consider memory-mapped reads for hex and strings.
 - Expand integration coverage for ELF x64 disassembly and Mach-O metadata.

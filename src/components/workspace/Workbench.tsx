@@ -5,6 +5,7 @@ import {
   type IDockviewPanelProps,
 } from "dockview-react";
 import type { DockviewApi, DockviewTheme } from "dockview";
+import { CfgView } from "../CfgView";
 import { DisassemblyView } from "../DisassemblyView";
 import { Explorer } from "../Explorer";
 import { HexView } from "../HexView";
@@ -12,6 +13,7 @@ import { Inspector } from "../Inspector";
 import { MessagesPanel } from "../MessagesPanel";
 import { Overview } from "../Overview";
 import { StringsView } from "../StringsView";
+import { XrefsPanel } from "../XrefsPanel";
 import {
   WORKSPACE_PANEL_TITLES,
   type WorkspacePanelId,
@@ -19,7 +21,7 @@ import {
 import { useWorkspace } from "../../state/workspace";
 
 const STORAGE_KEY = "ura:workspace:v1";
-const LAYOUT_VERSION = 1;
+const LAYOUT_VERSION = 2;
 
 interface StoredLayout {
   version: number;
@@ -34,6 +36,8 @@ const panelComponents: Record<string, React.FunctionComponent<IDockviewPanelProp
   overview: () => <Overview />,
   inspector: () => <Inspector />,
   messages: () => <MessagesPanel />,
+  cfg: () => <CfgView />,
+  xrefs: () => <XrefsPanel />,
 };
 
 const uraTheme: DockviewTheme = {
@@ -107,12 +111,19 @@ function buildDefaultLayout(api: DockviewApi): void {
     inactive: true,
   });
   api.addPanel({
+    id: "cfg",
+    component: componentFor("cfg"),
+    title: WORKSPACE_PANEL_TITLES.cfg,
+    position: { referencePanel: "disassembly", direction: "within" },
+    inactive: true,
+  });
+  api.addPanel({
     id: "explorer",
     component: componentFor("explorer"),
     title: WORKSPACE_PANEL_TITLES.explorer,
     position: { referencePanel: "disassembly", direction: "left" },
-    initialWidth: 258,
-    minimumWidth: 180,
+    initialWidth: 330,
+    minimumWidth: 200,
   });
   api.addPanel({
     id: "inspector",
@@ -121,6 +132,13 @@ function buildDefaultLayout(api: DockviewApi): void {
     position: { referencePanel: "disassembly", direction: "right" },
     initialWidth: 300,
     minimumWidth: 220,
+  });
+  api.addPanel({
+    id: "xrefs",
+    component: componentFor("xrefs"),
+    title: WORKSPACE_PANEL_TITLES.xrefs,
+    position: { referencePanel: "inspector", direction: "within" },
+    inactive: true,
   });
   api.addPanel({
     id: "hex",
@@ -132,7 +150,7 @@ function buildDefaultLayout(api: DockviewApi): void {
   });
 
   api.getPanel("messages")?.group.api.setSize({ height: 148 });
-  api.getPanel("explorer")?.group.api.setSize({ width: 258 });
+  api.getPanel("explorer")?.group.api.setSize({ width: 330 });
   api.getPanel("inspector")?.group.api.setSize({ width: 300 });
   api.getPanel("hex")?.group.api.setSize({ height: 280 });
   api.getPanel("disassembly")?.api.setActive();
@@ -251,6 +269,10 @@ export function Workbench() {
           position = { referencePanel: anchor.id, direction: "right" };
         } else if (panel === "messages") {
           position = { referencePanel: anchor.id, direction: "below" };
+        } else if (panel === "cfg" && api.getPanel("disassembly")) {
+          position = { referencePanel: "disassembly", direction: "within" };
+        } else if (panel === "xrefs" && api.getPanel("inspector")) {
+          position = { referencePanel: "inspector", direction: "within" };
         } else {
           position = { referencePanel: anchor.id, direction: "within" };
         }
@@ -261,9 +283,9 @@ export function Workbench() {
         title: WORKSPACE_PANEL_TITLES[panel],
         position,
         initialWidth:
-          panel === "explorer" ? 258 : panel === "inspector" ? 300 : undefined,
+          panel === "explorer" ? 330 : panel === "inspector" ? 300 : undefined,
         initialHeight: panel === "messages" ? 148 : isView ? undefined : undefined,
-        minimumWidth: panel === "explorer" ? 180 : panel === "inspector" ? 220 : undefined,
+        minimumWidth: panel === "explorer" ? 200 : panel === "inspector" ? 220 : undefined,
       });
       api.getPanel(panel)?.api.setActive();
     },

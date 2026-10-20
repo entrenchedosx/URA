@@ -19,6 +19,7 @@ pub struct InstructionView {
     pub text: String,
     pub flow: String,
     pub target: Option<String>,
+    pub target_name: Option<String>,
     pub invalid: bool,
     pub privileged: bool,
 }
@@ -117,6 +118,7 @@ impl InstructionDecoder for X86Decoder {
                 text,
                 flow: flow_name(instruction.flow_control()).to_string(),
                 target: branch_target(&instruction).map(format_address),
+                target_name: None,
                 invalid: instruction.is_invalid(),
                 privileged: instruction.is_privileged(),
             });

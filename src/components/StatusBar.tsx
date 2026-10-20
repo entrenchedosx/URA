@@ -3,6 +3,7 @@ import {
   CircleCheck,
   CircleDot,
   Database,
+  GitFork,
   Loader2,
   MessageSquare,
   ShieldAlert,
@@ -48,7 +49,17 @@ function StatusBadge({ status }: { status: string | null }) {
 }
 
 export function StatusBar() {
-  const { binary, project, projectPath, selection, busy, scanning } = useSession();
+  const {
+    binary,
+    project,
+    projectPath,
+    selection,
+    busy,
+    scanning,
+    analysis,
+    analysisRunning,
+    analysisProgress,
+  } = useSession();
   const { messages } = useMessages();
   const { activePanelId, openPanels, togglePanel } = useWorkspace();
 
@@ -74,6 +85,30 @@ export function StatusBar() {
           <span>{formatSize(binary.info.fileSize)}</span>
           <span>{binary.sections.length} sections</span>
           <span>{binary.symbols.length} symbols</span>
+          {(analysis || analysisRunning) && (
+            <>
+              <span className="text-ink-600">|</span>
+              <span className="flex items-center gap-1">
+                {analysisRunning ? (
+                  <>
+                    <Loader2 className="size-3 animate-spin text-accent-400" />
+                    <span>
+                      analysis {analysisProgress?.functions ?? 0} fn
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <GitFork className="size-3 text-accent-400" />
+                    <span>
+                      {analysis?.functionCount ?? 0} fn ·{" "}
+                      {analysis?.blockCount ?? 0} blocks
+                      {analysis?.cancelled ? " · partial" : ""}
+                    </span>
+                  </>
+                )}
+              </span>
+            </>
+          )}
         </>
       ) : (
         <span className="text-ink-500">No binary loaded</span>

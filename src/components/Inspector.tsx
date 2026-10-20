@@ -5,15 +5,19 @@ import {
   Clipboard,
   Database,
   FilePlus2,
+  GitFork,
   Info,
   MapPin,
+  Pencil,
   Save,
+  Share2,
   ShieldAlert,
   ShieldCheck,
   Sparkles,
   Trash2,
 } from "lucide-react";
-import type { Annotation } from "../lib/types";
+import { errorMessage, xrefsFrom, xrefsTo } from "../lib/api";
+import type { Annotation, XrefView } from "../lib/types";
 import {
   addressToOffset,
   formatHex,
@@ -23,6 +27,7 @@ import {
   sectionForOffset,
   shorten,
 } from "../lib/format";
+import { useMessages } from "../state/messages";
 import { useSession } from "../state/session";
 
 function CopyButton({ value, label }: { value: string; label?: string }) {
@@ -137,9 +142,22 @@ export function Inspector() {
     saveAnnotation,
     deleteAnnotation,
     newProject,
+    analysis,
+    functionRevision,
+    currentFunction,
+    openCfg,
+    openXrefs,
+    requestRename,
   } = useSession();
+  const { log } = useMessages();
   const [label, setLabel] = useState("");
   const [note, setNote] = useState("");
+  const [references, setReferences] = useState<{
+    incoming: XrefView[];
+    outgoing: XrefView[];
+    incomingTotal: number;
+    outgoingTotal: number;
+  } | null>(null);
 
   const address = normalizeAddress(selection?.address);
   const fileOffset =
@@ -167,6 +185,39 @@ export function Inspector() {
     setLabel(existing?.label ?? "");
     setNote(existing?.note ?? "");
   }, [address, existing?.id, existing?.label, existing?.note]);
+
+  useEffect(() => {
+    if (!analysis || !address) {
+      setReferences(null);
+      return;
+    }
+    let cancelled = false;
+    setReferences(null);
+    const timeout = window.setTimeout(() => {
+      Promise.all([xrefsTo(address, 4), xrefsFrom(address, 4)])
+        .then(([incoming, outgoing]) => {
+          if (cancelled) return;
+          setReferences({
+            incoming: incoming.references,
+            outgoing: outgoing.references,
+            incomingTotal: incoming.total,
+            outgoingTotal: outgoing.total,
+          });
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          setReferences(null);
+          log(
+            "warning",
+            `Unable to load references: ${errorMessage(err)}`,
+          );
+        });
+    }, 140);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [analysis, address, functionRevision, log]);
 
   const dirty =
     existing == null
@@ -249,6 +300,234 @@ export function Inspector() {
             </div>
           )}
         </section>
+
+        {analysis && currentFunction && (
+          <section className="border-b border-edge p-2.5">
+            <div className="mb-1.5 flex items-center justify-between">
+              <span className="flex items-center gap-1.5 text-[9.5px] font-semibold uppercase tracking-[0.16em] text-ink-500">
+                <GitFork className="size-3" />
+                Function
+              </span>
+              <div className="flex items-center gap-1">
+                {currentFunction.verified ? (
+                  <span
+                    className="rounded bg-emerald-500/10 px-1 font-mono text-[8.5px] uppercase text-emerald-300"
+                    title={`Discovered from ${currentFunction.origin}`}
+                  >
+                    verified
+                  </span>
+                ) : (
+                  <span
+                    className="rounded bg-obsidian-700 px-1 font-mono text-[8.5px] uppercase text-ink-500"
+                    title={`Discovered from ${currentFunction.origin}`}
+                  >
+                    call target
+                  </span>
+                )}
+                <button
+                  className="icon-btn size-5"
+                  title="Rename function (F2)"
+                  disabled={!projectPath}
+                  onClick={() =>
+                    requestRename(currentFunction.address)
+                  }
+                >
+                  <Pencil className="size-3" />
+                </button>
+              </div>
+            </div>
+            <div className="space-y-1 text-[10px]">
+              <div
+                className="truncate font-mono text-[11.5px] text-ink-200"
+                title={currentFunction.name}
+              >
+                {currentFunction.name}
+              </div>
+              <Field
+                label="Address"
+                copy={currentFunction.address}
+              >
+                {formatHex(currentFunction.address, 16)}
+              </Field>
+              <Field label="Range">
+                {formatHex(currentFunction.address)} →{" "}
+                {formatHex(currentFunction.endAddress)}
+              </Field>
+              <div className="grid grid-cols-3 gap-1 pt-1">
+                <div className="rounded border border-edge bg-obsidian-900 px-1.5 py-1">
+                  <div className="font-mono text-[10.5px] text-ink-200">
+                    {currentFunction.instructionCount}
+                  </div>
+                  <div className="text-[8.5px] uppercase tracking-wide text-ink-600">
+                    insn
+                  </div>
+                </div>
+                <div className="rounded border border-edge bg-obsidian-900 px-1.5 py-1">
+                  <div className="font-mono text-[10.5px] text-ink-200">
+                    {currentFunction.blockCount}
+                  </div>
+                  <div className="text-[8.5px] uppercase tracking-wide text-ink-600">
+                    blocks
+                  </div>
+                </div>
+                <div className="rounded border border-edge bg-obsidian-900 px-1.5 py-1">
+                  <div className="font-mono text-[10.5px] text-ink-200">
+                    {currentFunction.referenceCount}
+                  </div>
+                  <div className="text-[8.5px] uppercase tracking-wide text-ink-600">
+                    refs
+                  </div>
+                </div>
+              </div>
+              {currentFunction.callers.length > 0 && (
+                <div className="pt-1">
+                  <div className="mb-0.5 text-[9px] text-ink-600">
+                    Callers
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {currentFunction.callers.slice(0, 5).map((caller) => (
+                      <button
+                        key={caller.address}
+                        className="max-w-full truncate rounded border border-edge bg-obsidian-900 px-1 py-0.5 font-mono text-[9px] text-ink-300 hover:border-accent-500/40 hover:text-accent-300"
+                        onClick={() => navigate({ address: caller.address })}
+                        title={`${caller.name} — ${caller.address}`}
+                      >
+                        {caller.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {currentFunction.callees.length > 0 && (
+                <div className="pt-1">
+                  <div className="mb-0.5 text-[9px] text-ink-600">
+                    Callees
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {currentFunction.callees.slice(0, 5).map((callee) => (
+                      <button
+                        key={callee.address}
+                        className="max-w-full truncate rounded border border-edge bg-obsidian-900 px-1 py-0.5 font-mono text-[9px] text-ink-300 hover:border-accent-500/40 hover:text-accent-300"
+                        onClick={() => navigate({ address: callee.address })}
+                        title={`${callee.name} — ${callee.address}`}
+                      >
+                        {callee.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <div className="flex gap-1.5 pt-1.5">
+                <button
+                  className="btn h-6.5 flex-1 px-2 text-[10px]"
+                  onClick={() => openCfg(currentFunction.address)}
+                >
+                  <GitFork className="size-3" />
+                  Control Flow
+                </button>
+                <button
+                  className="btn h-6.5 flex-1 px-2 text-[10px]"
+                  onClick={() => openXrefs(currentFunction.address)}
+                >
+                  <Share2 className="size-3" />
+                  References
+                </button>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {analysis && address && (
+          <section className="border-b border-edge p-2.5">
+            <div className="mb-1.5 flex items-center justify-between">
+              <span className="flex items-center gap-1.5 text-[9.5px] font-semibold uppercase tracking-[0.16em] text-ink-500">
+                <Share2 className="size-3" />
+                References
+              </span>
+              <button
+                className="text-[9px] text-accent-400 hover:text-accent-300"
+                onClick={() => openXrefs(address)}
+              >
+                show all
+              </button>
+            </div>
+            {!references ? (
+              <div className="text-[10px] text-ink-500">
+                Resolving cross-references…
+              </div>
+            ) : references.incoming.length === 0 &&
+              references.outgoing.length === 0 ? (
+              <div className="text-[10px] text-ink-500">
+                No call or jump references at this address.
+              </div>
+            ) : (
+              <div className="space-y-1">
+                {references.incoming.length > 0 && (
+                  <div>
+                    <div className="mb-0.5 flex items-center justify-between text-[9px] text-ink-600">
+                      <span>Incoming</span>
+                      <span>{references.incomingTotal}</span>
+                    </div>
+                    {references.incoming.map((reference, index) => (
+                      <button
+                        key={`in-${reference.from}-${index}`}
+                        className="flex w-full items-center gap-1 rounded px-1 py-0.5 text-left font-mono text-[9.5px] hover:bg-obsidian-750"
+                        onClick={() =>
+                          navigate({ address: reference.from })
+                        }
+                        title={`${reference.from} → ${reference.to} (${reference.kind})`}
+                      >
+                        <span className="text-accent-400/80">
+                          {formatHex(reference.from)}
+                        </span>
+                        <span className="text-ink-600">
+                          {reference.kind === "call"
+                            ? "call"
+                            : reference.kind === "conditionalJump"
+                              ? "jcc"
+                              : "jmp"}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate text-right text-ink-500">
+                          {reference.sourceFunction?.name ?? ""}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {references.outgoing.length > 0 && (
+                  <div>
+                    <div className="mb-0.5 flex items-center justify-between text-[9px] text-ink-600">
+                      <span>Outgoing</span>
+                      <span>{references.outgoingTotal}</span>
+                    </div>
+                    {references.outgoing.map((reference, index) => (
+                      <button
+                        key={`out-${reference.to}-${index}`}
+                        className="flex w-full items-center gap-1 rounded px-1 py-0.5 text-left font-mono text-[9.5px] hover:bg-obsidian-750"
+                        onClick={() => navigate({ address: reference.to })}
+                        title={`${reference.from} → ${reference.to} (${reference.kind})`}
+                      >
+                        <span className="text-accent-400/80">
+                          {formatHex(reference.to)}
+                        </span>
+                        <span className="text-ink-600">
+                          {reference.kind === "call"
+                            ? "call"
+                            : reference.kind === "conditionalJump"
+                              ? "jcc"
+                              : "jmp"}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate text-right text-ink-500">
+                          {reference.targetFunction?.name ?? ""}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+        )}
 
         <section className="border-b border-edge p-2.5">
           <div className="mb-2 flex items-center justify-between">

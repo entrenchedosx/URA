@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 interface VirtualListProps {
@@ -7,6 +7,7 @@ interface VirtualListProps {
   renderRow: (index: number) => React.ReactNode;
   className?: string;
   overscan?: number;
+  onEndReached?: () => void;
 }
 
 export function VirtualList({
@@ -15,6 +16,7 @@ export function VirtualList({
   renderRow,
   className,
   overscan = 16,
+  onEndReached,
 }: VirtualListProps) {
   const parentRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
@@ -23,6 +25,13 @@ export function VirtualList({
     estimateSize: () => estimateSize,
     overscan,
   });
+  const lastIndex = virtualizer.getVirtualItems().at(-1)?.index ?? -1;
+
+  useEffect(() => {
+    if (onEndReached && count > 0 && lastIndex >= count - 1) {
+      onEndReached();
+    }
+  }, [count, lastIndex, onEndReached]);
 
   return (
     <div ref={parentRef} className={`overflow-auto ${className ?? ""}`}>

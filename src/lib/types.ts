@@ -68,6 +68,7 @@ export interface InstructionView {
   text: string;
   flow: string;
   target: string | null;
+  targetName: string | null;
   invalid: boolean;
   privileged: boolean;
 }
@@ -131,10 +132,142 @@ export interface ProjectInfo {
   selectedAddress: string | null;
 }
 
+export interface FunctionNameEntry {
+  address: string;
+  name: string;
+  updatedAt: string;
+}
+
 export interface ProjectSnapshot {
   project: ProjectInfo;
   annotations: Annotation[];
+  functionNames: FunctionNameEntry[];
   binaryStatus: "unchanged" | "modified" | "missing" | string;
+}
+
+export interface AnalysisDiagnostic {
+  address: string | null;
+  message: string;
+}
+
+export interface AnalysisSummary {
+  instructionCount: number;
+  functionCount: number;
+  blockCount: number;
+  xrefCount: number;
+  cancelled: boolean;
+  truncated: boolean;
+  diagnosticsDropped: number;
+  elapsedMs: number;
+  diagnostics: AnalysisDiagnostic[];
+}
+
+export interface AnalysisProgress {
+  stage: "preparing" | "discovering" | "finalizing" | "complete";
+  instructions: number;
+  functions: number;
+  blocks: number;
+  currentAddress: string | null;
+}
+
+export interface AnalysisStateView {
+  summary: AnalysisSummary | null;
+  running: boolean;
+}
+
+export type FunctionSort =
+  | "address"
+  | "name"
+  | "instructions"
+  | "blocks"
+  | "references";
+
+export interface FunctionSummary {
+  address: string;
+  name: string;
+  symbol: string | null;
+  customName: string | null;
+  origin: string;
+  verified: boolean;
+  endAddress: string;
+  size: number;
+  instructionCount: number;
+  blockCount: number;
+  referenceCount: number;
+  callerCount: number;
+  calleeCount: number;
+}
+
+export interface FunctionRef {
+  address: string;
+  name: string;
+  customName: string | null;
+}
+
+export interface FunctionDetail extends FunctionSummary {
+  callers: FunctionRef[];
+  callees: FunctionRef[];
+}
+
+export interface FunctionListPage {
+  total: number;
+  offset: number;
+  limit: number;
+  functions: FunctionSummary[];
+}
+
+export interface FunctionQuery {
+  search?: string;
+  sort?: FunctionSort;
+  descending?: boolean;
+  offset?: number;
+  limit?: number;
+}
+
+export interface CfgLine {
+  address: string;
+  text: string;
+  targetName: string | null;
+}
+
+export interface CfgEdge {
+  target: string;
+  kind: "fallthrough" | "jump" | "taken" | string;
+}
+
+export interface CfgBlock {
+  address: string;
+  endAddress: string;
+  instructionCount: number;
+  omittedInstructions: number;
+  lines: CfgLine[];
+  edges: CfgEdge[];
+}
+
+export interface FunctionCfg {
+  function: FunctionSummary;
+  totalBlocks: number;
+  instructionCount: number;
+  truncated: boolean;
+  blocks: CfgBlock[];
+}
+
+export interface XrefView {
+  from: string;
+  to: string;
+  kind: "call" | "jump" | "conditionalJump" | string;
+  sourceFunction: FunctionRef | null;
+  targetFunction: FunctionRef | null;
+}
+
+export interface XrefPage {
+  total: number;
+  references: XrefView[];
+}
+
+export interface RenameResult {
+  address: string;
+  name: string | null;
 }
 
 export type ViewKind = "disassembly" | "hex" | "strings" | "overview";

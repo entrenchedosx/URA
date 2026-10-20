@@ -1,4 +1,5 @@
 pub mod address;
+pub mod analysis;
 pub mod binary;
 pub mod disasm;
 pub mod error;
@@ -6,6 +7,13 @@ pub mod hex;
 pub mod strings;
 
 pub use address::{format_address, format_offset, parse_address};
+pub use analysis::{
+    analyze_binary as analyze_functions, analyze_image, architecture_supports_analysis,
+    seeds_for_binary, AnalysisControl, AnalysisDiagnostic, AnalysisOptions, AnalysisProgress,
+    AnalysisReport, AnalysisSeed, AnalysisStage, BasicBlock, CodeImage, CodeRegion,
+    DecodedInstruction, Edge, EdgeKind, Function, FunctionOrigin, InstructionFlow, ProgramAnalysis,
+    Xref, XrefKind,
+};
 pub use binary::{
     analyze_path, Analysis, BinaryOpenResult, BinaryView, CpuArchitecture, Endianness, ExportInfo,
     ImportInfo, LoadedBinary, Section, SectionView, Symbol, SymbolView,

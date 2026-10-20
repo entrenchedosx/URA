@@ -1,12 +1,20 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  AnalysisStateView,
+  AnalysisSummary,
   Annotation,
   BinaryOpenResult,
   DisassemblyPage,
+  FunctionCfg,
+  FunctionDetail,
+  FunctionListPage,
+  FunctionQuery,
   HexPage,
   ProjectInfo,
   ProjectSnapshot,
+  RenameResult,
   StringScanResult,
+  XrefPage,
 } from "./types";
 
 export function errorMessage(error: unknown): string {
@@ -95,4 +103,61 @@ export async function deleteAnnotation(
   annotationId: number,
 ): Promise<void> {
   return invoke("delete_annotation", { projectPath, annotationId });
+}
+
+export async function analyzeBinary(): Promise<AnalysisSummary> {
+  return invoke<AnalysisSummary>("analyze_binary", { options: null });
+}
+
+export async function cancelAnalysis(): Promise<boolean> {
+  return invoke<boolean>("cancel_analysis");
+}
+
+export async function analysisState(): Promise<AnalysisStateView> {
+  return invoke<AnalysisStateView>("analysis_state");
+}
+
+export async function listFunctions(
+  query: FunctionQuery,
+): Promise<FunctionListPage> {
+  return invoke<FunctionListPage>("list_functions", { query });
+}
+
+export async function functionAt(
+  address: string,
+): Promise<FunctionDetail | null> {
+  return invoke<FunctionDetail | null>("function_at", { address });
+}
+
+export async function functionCfg(
+  address: string,
+  maxBlocks?: number,
+): Promise<FunctionCfg> {
+  return invoke<FunctionCfg>("function_cfg", { address, maxBlocks });
+}
+
+export async function xrefsTo(
+  address: string,
+  limit?: number,
+): Promise<XrefPage> {
+  return invoke<XrefPage>("xrefs_to", { address, limit });
+}
+
+export async function xrefsFrom(
+  address: string,
+  limit?: number,
+): Promise<XrefPage> {
+  return invoke<XrefPage>("xrefs_from", { address, limit });
+}
+
+export async function renameFunction(
+  projectPath: string,
+  address: string,
+  name: string,
+): Promise<RenameResult> {
+  return invoke<RenameResult>("rename_function", {
+    projectPath,
+    address,
+    name,
+  });
 }

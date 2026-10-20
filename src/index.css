@@ -285,8 +285,19 @@
 }
 
 @container (max-width: 235px) {
-  .explorer-tab-label,
   .explorer-file-offset {
+    display: none;
+  }
+}
+
+@container (max-width: 300px) {
+  .explorer-tab-label {
+    display: none;
+  }
+}
+
+@container (max-width: 340px) {
+  .explorer-tab-count {
     display: none;
   }
 }

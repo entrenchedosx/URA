@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { AlertCircle, X } from "lucide-react";
 import { CommandPalette } from "./components/CommandPalette";
+import { RenameFunctionDialog } from "./components/RenameFunctionDialog";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { StatusBar } from "./components/StatusBar";
 import { Toolbar } from "./components/Toolbar";
@@ -12,7 +13,13 @@ import { SettingsProvider } from "./state/settings";
 import { WorkspaceProvider, useWorkspace } from "./state/workspace";
 
 function Shell() {
-  const { binary, openBinaryDialog, openProjectDialog, newProject } = useSession();
+  const {
+    binary,
+    openBinaryDialog,
+    openProjectDialog,
+    newProject,
+    requestRename,
+  } = useSession();
   const { focusView } = useWorkspace();
   const { toast, dismissToast } = useMessages();
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -74,6 +81,11 @@ function Shell() {
         }
         return;
       }
+      if (event.key === "F2") {
+        event.preventDefault();
+        requestRename();
+        return;
+      }
       if (!typing && event.key === "Escape") {
         setPaletteOpen(false);
         setSettingsOpen(false);
@@ -90,6 +102,7 @@ function Shell() {
     openPalette,
     openProjectDialog,
     openSettings,
+    requestRename,
   ]);
 
   return (
@@ -112,6 +125,7 @@ function Shell() {
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
       />
+      <RenameFunctionDialog />
 
       {toast && (
         <div className="fixed bottom-11 right-4 z-[60] flex max-w-md items-start gap-2 rounded-lg border border-red-500/35 bg-obsidian-800 px-3 py-2 shadow-2xl">

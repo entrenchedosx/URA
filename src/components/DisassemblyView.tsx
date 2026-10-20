@@ -33,8 +33,18 @@ function copyText(text: string): Promise<void> {
 }
 
 export function DisassemblyView() {
-  const { binary, navigation: target, selection, setSelection, navigate, annotations } =
-    useSession();
+  const {
+    binary,
+    navigation: target,
+    selection,
+    setSelection,
+    navigate,
+    annotations,
+    openCfg,
+    openXrefs,
+    requestRename,
+    projectPath,
+  } = useSession();
   const { log } = useMessages();
   const { settings } = useSettings();
   const workspace = useWorkspace();
@@ -277,6 +287,24 @@ export function DisassemblyView() {
       items.push(
         { label: "-", onSelect: () => undefined },
         {
+          label: "Show control flow",
+          icon: Cpu,
+          onSelect: () => openCfg(address),
+        },
+        {
+          label: "Show references",
+          icon: ArrowDownToLine,
+          onSelect: () => openXrefs(address),
+        },
+        {
+          label: "Rename function",
+          icon: BookMarked,
+          shortcut: "F2",
+          disabled: !projectPath,
+          onSelect: () => requestRename(address),
+        },
+        { label: "-", onSelect: () => undefined },
+        {
           label: "Add annotation",
           icon: BookMarked,
           onSelect: () => {
@@ -293,7 +321,18 @@ export function DisassemblyView() {
       );
     }
     return items;
-  }, [menu, binary, copy, navigate, setSelection, workspace]);
+  }, [
+    menu,
+    binary,
+    copy,
+    navigate,
+    setSelection,
+    workspace,
+    openCfg,
+    openXrefs,
+    requestRename,
+    projectPath,
+  ]);
 
   const startAddress =
     instructions.length > 0 ? instructions[0].address : target.address ?? null;
@@ -545,10 +584,16 @@ export function DisassemblyView() {
                           targetSection?.executable ? "disassembly" : "hex",
                         );
                       }}
-                      title={`Follow branch to ${targetValue} (${targetSection?.name ?? "unmapped"})`}
+                      title={`Follow branch to ${formatHex(targetValue)}${
+                        instruction.targetName
+                          ? ` — ${instruction.targetName}`
+                          : ""
+                      } (${targetSection?.name ?? "unmapped"})`}
                     >
                       <ArrowDownToLine className="size-2.5 shrink-0 -rotate-90" />
-                      <span className="truncate">{formatHex(targetValue)}</span>
+                      <span className="truncate">
+                        {instruction.targetName ?? formatHex(targetValue)}
+                      </span>
                     </button>
                   ) : (
                     <span className="truncate text-[9.5px] text-ink-600">

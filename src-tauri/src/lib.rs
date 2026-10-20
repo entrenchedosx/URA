@@ -1,4 +1,5 @@
-﻿mod commands;
+﻿mod analysis;
+mod commands;
 mod state;
 
 use state::AppState;
@@ -34,6 +35,15 @@ pub fn run() {
             commands::save_annotation,
             commands::set_project_address,
             commands::delete_annotation,
+            analysis::analyze_binary,
+            analysis::cancel_analysis,
+            analysis::analysis_state,
+            analysis::list_functions,
+            analysis::function_at,
+            analysis::function_cfg,
+            analysis::xrefs_to,
+            analysis::xrefs_from,
+            analysis::rename_function,
         ])
         .run(tauri::generate_context!())
         .expect("failed to launch URA");

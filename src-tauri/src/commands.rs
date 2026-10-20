@@ -1,8 +1,10 @@
+use crate::analysis::display_parts;
 use crate::state::AppState;
 use std::path::PathBuf;
 use tauri::State;
 use ura_core::{
-    analyze_path, BinaryOpenResult, DisassemblyPage, HexPage, StringScanOptions, StringScanResult,
+    analyze_path, parse_address, BinaryOpenResult, DisassemblyPage, HexPage, StringScanOptions,
+    StringScanResult,
 };
 use ura_project::{
     create_project, delete_annotation as remove_annotation, open_project,
@@ -53,11 +55,28 @@ pub async fn disassemble(
     count: usize,
 ) -> Result<DisassemblyPage, String> {
     let binary = state.binary().map_err(|error| error.to_string())?;
-    let address_value = ura_core::parse_address(&address).map_err(|error| error.to_string())?;
+    let analysis = state.analysis();
+    let names = state.function_names();
+    let address_value = parse_address(&address).map_err(|error| error.to_string())?;
     run_blocking(move || {
-        binary
+        let mut page = binary
             .disassemble(address_value, count)
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+        if let Some(analysis) = analysis {
+            for instruction in &mut page.instructions {
+                let Some(target) = instruction.target.as_deref() else {
+                    continue;
+                };
+                let Ok(target_value) = parse_address(target) else {
+                    continue;
+                };
+                let Some(function) = analysis.function_containing(target_value) else {
+                    continue;
+                };
+                instruction.target_name = Some(display_parts(function, &names).0);
+            }
+        }
+        Ok(page)
     })
     .await
 }
@@ -106,7 +125,7 @@ pub async fn create_analysis_project(
     name: String,
 ) -> Result<ProjectInfo, String> {
     let binary = state.binary().map_err(|error| error.to_string())?;
-    run_blocking(move || {
+    let info = run_blocking(move || {
         let view = binary.view();
         let identity = BinaryIdentity {
             binary_path: view.path,
@@ -118,15 +137,29 @@ pub async fn create_analysis_project(
         create_project(PathBuf::from(&project_path).as_path(), &name, &identity)
             .map_err(|error| error.to_string())
     })
-    .await
+    .await?;
+    state.set_name_context(info.binary_hash.clone(), Vec::new());
+    Ok(info)
 }
 
 #[tauri::command]
-pub async fn open_analysis_project(project_path: String) -> Result<ProjectSnapshot, String> {
-    run_blocking(move || {
+pub async fn open_analysis_project(
+    state: State<'_, AppState>,
+    project_path: String,
+) -> Result<ProjectSnapshot, String> {
+    let snapshot = run_blocking(move || {
         open_project(PathBuf::from(&project_path).as_path()).map_err(|error| error.to_string())
     })
-    .await
+    .await?;
+    state.set_name_context(
+        snapshot.project.binary_hash.clone(),
+        snapshot
+            .function_names
+            .iter()
+            .map(|entry| (entry.address.clone(), entry.name.clone()))
+            .collect::<Vec<_>>(),
+    );
+    Ok(snapshot)
 }
 
 #[tauri::command]

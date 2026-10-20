@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 use ura_core::{format_address, parse_address, sha256_hex};
 
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 #[derive(Debug, Error)]
 pub enum ProjectError {
@@ -22,6 +22,8 @@ pub enum ProjectError {
     NotFound(String),
     #[error("address is invalid: {0}")]
     InvalidAddress(String),
+    #[error("function name is invalid: {0}")]
+    InvalidName(String),
 }
 
 impl From<std::io::Error> for ProjectError {
@@ -76,9 +78,18 @@ pub struct Annotation {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct FunctionNameEntry {
+    pub address: String,
+    pub name: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProjectSnapshot {
     pub project: ProjectInfo,
     pub annotations: Vec<Annotation>,
+    pub function_names: Vec<FunctionNameEntry>,
     pub binary_status: String,
 }
 
@@ -127,25 +138,15 @@ pub fn open_project(project_path: &Path) -> ProjectResult<ProjectSnapshot> {
     }
     let connection = Connection::open(project_path)?;
     connection.busy_timeout(std::time::Duration::from_secs(5))?;
-    let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    if version > SCHEMA_VERSION {
-        return Err(ProjectError::UnsupportedSchema {
-            found: version,
-            supported: SCHEMA_VERSION,
-        });
-    }
-    if version != SCHEMA_VERSION {
-        return Err(ProjectError::InvalidProject(format!(
-            "expected schema version {}, found {}",
-            SCHEMA_VERSION, version
-        )));
-    }
+    migrate_schema(&connection)?;
     let project = load_project(&connection)?;
     let annotations = load_annotations(&connection)?;
+    let function_names = load_function_names(&connection)?;
     let binary_status = binary_status(&project);
     Ok(ProjectSnapshot {
         project,
         annotations,
+        function_names,
         binary_status,
     })
 }
@@ -196,6 +197,67 @@ pub fn set_selected_address(project_path: &Path, address: &str) -> ProjectResult
     Ok(normalized)
 }
 
+pub fn save_function_name(
+    project_path: &Path,
+    address: &str,
+    name: &str,
+) -> ProjectResult<FunctionNameEntry> {
+    let normalized = normalize_address(address)?;
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(ProjectError::InvalidName(
+            "function names cannot be empty".to_string(),
+        ));
+    }
+    if name.chars().count() > 256 {
+        return Err(ProjectError::InvalidName(
+            "function names are limited to 256 characters".to_string(),
+        ));
+    }
+    let connection = open_existing(project_path)?;
+    let transaction = connection.unchecked_transaction()?;
+    transaction.execute(
+        "INSERT INTO function_names (address, name, updated_at) \
+         VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%fZ','now')) \
+         ON CONFLICT(address) DO UPDATE SET name = excluded.name, \
+         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')",
+        params![normalized, name],
+    )?;
+    transaction.execute(
+        "UPDATE project SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = 1",
+        [],
+    )?;
+    transaction.commit()?;
+    connection
+        .query_row(
+            "SELECT address, name, updated_at FROM function_names WHERE address = ?1",
+            params![normalized],
+            map_function_name,
+        )
+        .map_err(ProjectError::from)
+}
+
+pub fn delete_function_name(project_path: &Path, address: &str) -> ProjectResult<()> {
+    let normalized = normalize_address(address)?;
+    let connection = open_existing(project_path)?;
+    let transaction = connection.unchecked_transaction()?;
+    transaction.execute(
+        "DELETE FROM function_names WHERE address = ?1",
+        params![normalized],
+    )?;
+    transaction.execute(
+        "UPDATE project SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = 1",
+        [],
+    )?;
+    transaction.commit()?;
+    Ok(())
+}
+
+pub fn load_function_names_for_path(project_path: &Path) -> ProjectResult<Vec<FunctionNameEntry>> {
+    let connection = open_existing(project_path)?;
+    load_function_names(&connection)
+}
+
 pub fn delete_annotation(project_path: &Path, annotation_id: i64) -> ProjectResult<()> {
     let connection = open_existing(project_path)?;
     let transaction = connection.unchecked_transaction()?;
@@ -224,20 +286,38 @@ fn open_existing(project_path: &Path) -> ProjectResult<Connection> {
     }
     let connection = Connection::open(project_path)?;
     connection.busy_timeout(std::time::Duration::from_secs(5))?;
+    migrate_schema(&connection)?;
+    Ok(connection)
+}
+
+fn migrate_schema(connection: &Connection) -> ProjectResult<()> {
     let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
-    if version != SCHEMA_VERSION {
-        if version > SCHEMA_VERSION {
-            return Err(ProjectError::UnsupportedSchema {
-                found: version,
-                supported: SCHEMA_VERSION,
-            });
-        }
+    if version > SCHEMA_VERSION {
+        return Err(ProjectError::UnsupportedSchema {
+            found: version,
+            supported: SCHEMA_VERSION,
+        });
+    }
+    if version == SCHEMA_VERSION {
+        return Ok(());
+    }
+    if version != 1 {
         return Err(ProjectError::InvalidProject(format!(
             "expected schema version {}, found {}",
             SCHEMA_VERSION, version
         )));
     }
-    Ok(connection)
+    connection.execute_batch(
+        "BEGIN;
+         CREATE TABLE IF NOT EXISTS function_names (
+             address TEXT PRIMARY KEY NOT NULL,
+             name TEXT NOT NULL,
+             updated_at TEXT NOT NULL
+         );
+         PRAGMA user_version = 2;
+         COMMIT;",
+    )?;
+    Ok(())
 }
 
 fn initialize_schema(connection: &Connection) -> ProjectResult<()> {
@@ -263,7 +343,12 @@ fn initialize_schema(connection: &Connection) -> ProjectResult<()> {
              created_at TEXT NOT NULL,
              updated_at TEXT NOT NULL
          );
-         PRAGMA user_version = 1;
+         CREATE TABLE function_names (
+             address TEXT PRIMARY KEY NOT NULL,
+             name TEXT NOT NULL,
+             updated_at TEXT NOT NULL
+         );
+         PRAGMA user_version = 2;
          COMMIT;",
     )?;
     Ok(())
@@ -304,6 +389,27 @@ fn load_annotations(connection: &Connection) -> ProjectResult<Vec<Annotation>> {
         annotations.push(row?);
     }
     Ok(annotations)
+}
+
+fn load_function_names(connection: &Connection) -> ProjectResult<Vec<FunctionNameEntry>> {
+    let mut statement = connection.prepare(
+        "SELECT address, name, updated_at FROM function_names ORDER BY updated_at, address",
+    )?;
+    let rows = statement.query_map([], map_function_name)?;
+    let mut names = Vec::new();
+    for row in rows {
+        names.push(row?);
+    }
+    names.sort_by_key(|entry| parse_address(&entry.address).unwrap_or(u64::MAX));
+    Ok(names)
+}
+
+fn map_function_name(row: &rusqlite::Row<'_>) -> rusqlite::Result<FunctionNameEntry> {
+    Ok(FunctionNameEntry {
+        address: row.get(0)?,
+        name: row.get(1)?,
+        updated_at: row.get(2)?,
+    })
 }
 
 fn map_annotation(row: &rusqlite::Row<'_>) -> rusqlite::Result<Annotation> {

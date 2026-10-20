@@ -5,8 +5,10 @@ engine does the parsing, mapping, disassembly and scanning; a Tauri 2 shell host
 TypeScript interface. Every result comes from the bytes on disk — URA never executes or patches
 the files you open.
 
-v0.1 targets Windows PE x64, with static metadata for ELF and Mach-O images and x86/x64
-disassembly for any executable section URA can map.
+v0.3 adds recursive function discovery, basic blocks, cross-references, a control-flow
+graph and persistent function names on top of the v0.2 dockable workspace. It targets Windows
+PE x64, with static metadata for ELF and Mach-O images and x86/x64 disassembly for any
+executable section URA can map.
 
 ## Highlights
 
@@ -15,8 +17,24 @@ disassembly for any executable section URA can map.
   reset from the toolbar or preferences, and the core views adapt to narrow panels.
 - **Binary overview** — format, architecture, bitness, endianness, image base, entry point,
   file size, SHA-256 and section permissions.
-- **Explorer** — sections, symbols, imports and exports with filters and virtualized lists.
-  Selecting an entry navigates the workspace to it.
+- **Function analysis** — recursive-descent discovery from the entry point, exports,
+  function symbols and call targets. Every function is partitioned into basic blocks with
+  fall-through, jump and taken edges. The engine runs off the UI thread with progress events,
+  cancellation and explicit safety limits; partial results and diagnostics are surfaced rather
+  than hidden.
+- **Functions explorer** — searchable, sortable, paginated function list with origin badges,
+  instruction/block/reference counts and selection sync. Double-click opens linear disassembly;
+  the context menu opens the CFG, references or rename dialog. Custom names override imported
+  symbols and persist in the project.
+- **Control-flow graph** — layered, zoomable and pannable graph for the selected function.
+  Blocks show their instructions and branch targets; block and instruction selection is shared
+  with the rest of the workspace, and double-click jumps to linear disassembly. Large functions
+  are capped with a visible partial-result badge.
+- **Cross-references** — call, jump and conditional-jump references are indexed per address and
+  displayed in both the Inspector and a dedicated Xrefs panel, with function-level or exact
+  address scope. Reference rows navigate to the caller/callee.
+- **Explorer** — functions, sections, symbols, imports and exports with filters and virtualized
+  lists. Selecting an entry navigates the workspace to it.
 - **Disassembly** — Intel-syntax x86/x64 decoding via `iced-x86`, with instruction bytes,
   flow classification, resolved branch targets and section mapping. Pages are fetched on demand
   (320 instructions) and the list is virtualized; keyboard navigation and branch following are
@@ -31,20 +49,22 @@ disassembly for any executable section URA can map.
 - **Inspector and annotations** — selection facts, project facts, binary identity, and an
   annotation editor (label + note). Annotations are listed and can be edited or deleted.
 - **Analysis projects** — `.ura` files are SQLite databases that record the source binary path
-  and SHA-256, the selected address, and annotations. Reopening restores the selection and
-  verifies the binary against the recorded hash.
+  and SHA-256, the selected address, annotations and custom function names. Reopening restores
+  the selection and names and verifies the binary against the recorded hash. Schema version 2
+  migrates version 1 projects automatically.
 - **Command palette** — jump to an address, symbol, section, or run a command from one input.
 - **Startup argument** — pass a binary path on the command line and URA opens it on launch.
 
 ## Status
 
-v0.1.0 is complete and has been exercised end-to-end on Windows 11 against the deterministic
+v0.3 is complete and has been exercised end-to-end on Windows 11 against the deterministic
 PE64/ELF fixtures in `tests/fixtures`: open binary, inspect metadata/sections, disassemble,
 navigate (palette, keyboard, branch follow), read hex, scan and jump to strings, create a
 project, save an annotation, close, reopen and verify the restored state. The v0.2 workspace
-overhaul is complete: dockable/resizable panels, persistent layout, settings, responsive views,
-and context-based session/message/workspace state. See [ROADMAP.md](docs/ROADMAP.md) for what
-comes next.
+overhaul added dockable/resizable panels, persistent layout, settings, responsive views and
+context-based state. v0.3 adds function discovery, basic blocks, CFGs, cross-references,
+cancellable analysis progress and project-persisted function renaming. See
+[ROADMAP.md](docs/ROADMAP.md) for what comes next.
 
 ## Requirements
 
@@ -103,7 +123,8 @@ python scripts/generate_fixtures.py
 | `Ctrl+,` | Open preferences |
 | `Ctrl+1` … `Ctrl+4` | Disassembly / Hex / Strings / Overview |
 | `Ctrl+Enter` | Save the current annotation from the inspector |
-| `Esc` | Close the command palette or preferences |
+| `F2` | Rename the function containing the selection |
+| `Esc` | Close the command palette, preferences or rename dialog |
 | `Up` / `Down` | Move the disassembly selection by one instruction |
 | `PageUp` / `PageDown` | Move the disassembly selection by 20 instructions |
 | `Enter` | Run the highlighted item in the command palette |
@@ -113,29 +134,36 @@ mapped section, or back to the hex view when the target is not executable.
 
 ## Projects on disk
 
-A `.ura` project is a single SQLite database (`PRAGMA user_version = 1`) with two tables:
+A `.ura` project is a single SQLite database (`PRAGMA user_version = 2`) with three tables:
 
 - `project` — name, timestamps, binary path, binary SHA-256, file size, format, architecture
   and the last selected address.
 - `annotations` — one row per address with an optional label, a note and timestamps.
+- `function_names` — one custom name per function address, with a timestamp. Names override
+  imported symbols and are independent of the binary on disk.
 
 Opening a project resolves the recorded binary path. A missing file leaves the project open in
 a warning state; a hash mismatch opens the binary with a `modified` status so stale annotations
-are obvious. URA only reads the binary and never writes to it.
+are obvious. Version 1 projects are migrated by adding the `function_names` table; newer schema
+versions are rejected with a clear error. URA only reads the binary and never writes to it.
 
 ## Safety model
 
 - Samples are opened read-only. There is no execution, emulation, patching or code injection.
 - Binary identity is recorded as SHA-256 and re-checked on every project open.
-- Analysis is bounded: 512 MiB files, 50,000 symbols, 20,000 imports/exports, 200,000 strings
-  and 2,000 instructions per request.
+- Analysis is bounded: 512 MiB files, 50,000 symbols, 20,000 imports/exports, 200,000 strings,
+  2,000 instructions per page and, for function analysis, 200,000 instructions, 8,192 functions
+  and 150,000 basic blocks.
 - The webview runs under a restrictive CSP and talks only to the local Tauri IPC channel.
 - All parsing and decoding happens in safe Rust (`object`, `iced-x86`, `rusqlite`).
 
 ## Limitations
 
 - Disassembly is x86/x64 only; other architectures are limited to metadata and raw views.
-- No cross-references, function recovery, CFG, debugger, PDB/type support or binary diffing yet.
+- Function discovery is heuristic: indirect calls, tail calls, jump tables and unreachable code
+  are not recovered, so some functions or references can be missing. Results are explicitly
+  marked partial when a safety limit or cancellation is hit.
+- No debugger, PDB/type support, binary diffing or data-reference analysis yet.
 - COFF relocatable objects, WebAssembly and XCOFF are rejected with a clear error.
 - The UI is optimized for a desktop window of 1100x680 or larger.
 
@@ -143,8 +171,8 @@ are obvious. URA only reads the binary and never writes to it.
 
 | Path | Contents |
 | --- | --- |
-| `crates/ura-core` | Binary parsing, address mapping, disassembly, hex reads, string scanning |
-| `crates/ura-project` | SQLite project and annotation persistence |
+| `crates/ura-core` | Binary parsing, address mapping, disassembly, function/CFG/xref analysis, hex reads, string scanning |
+| `crates/ura-project` | SQLite project, annotation and function-name persistence |
 | `src-tauri` | Tauri application, command layer, session state |
 | `src` | React UI, views, inspector, command palette, typed IPC client |
 | `tests/fixtures` | Deterministic PE64 and ELF64 samples |

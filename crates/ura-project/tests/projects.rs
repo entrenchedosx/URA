@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 use ura_core::analyze_path;
 use ura_project::{
-    create_project, delete_annotation, open_project, save_annotation, BinaryIdentity, ProjectError,
-    SCHEMA_VERSION,
+    create_project, delete_annotation, delete_function_name, open_project, save_annotation,
+    save_function_name, BinaryIdentity, ProjectError, SCHEMA_VERSION,
 };
 
 fn fixture(name: &str) -> PathBuf {
@@ -118,7 +118,58 @@ fn rejects_existing_projects_and_future_schemas() {
         error,
         ProjectError::UnsupportedSchema {
             found: 99,
-            supported: 1
+            supported: SCHEMA_VERSION
         }
     ));
+}
+
+#[test]
+fn persists_and_deletes_function_names() {
+    let (_directory, project_path) = setup();
+    let binary_path = fixture("ura64.exe");
+    create_project(&project_path, "Names", &identity(&binary_path)).unwrap();
+
+    let saved = save_function_name(&project_path, "0x140001020", "  loop_counter  ").unwrap();
+    assert_eq!(saved.address, "0x140001020");
+    assert_eq!(saved.name, "loop_counter");
+
+    let updated = save_function_name(&project_path, "0x140001020", "counter_loop").unwrap();
+    assert_eq!(updated.name, "counter_loop");
+
+    let snapshot = open_project(&project_path).unwrap();
+    assert_eq!(snapshot.function_names.len(), 1);
+    assert_eq!(snapshot.function_names[0].name, "counter_loop");
+
+    assert!(save_function_name(&project_path, "0x140001020", "   ").is_err());
+    assert!(save_function_name(&project_path, "not-an-address", "name").is_err());
+
+    delete_function_name(&project_path, "0x140001020").unwrap();
+    let snapshot = open_project(&project_path).unwrap();
+    assert!(snapshot.function_names.is_empty());
+}
+
+#[test]
+fn migrates_version_one_projects_to_function_names() {
+    let (_directory, project_path) = setup();
+    let binary_path = fixture("ura64.elf");
+    create_project(&project_path, "Legacy", &identity(&binary_path)).unwrap();
+
+    let connection = rusqlite::Connection::open(&project_path).unwrap();
+    connection
+        .execute_batch(
+            "DROP TABLE function_names; \
+             PRAGMA user_version = 1;",
+        )
+        .unwrap();
+    drop(connection);
+
+    let snapshot = open_project(&project_path).unwrap();
+    assert_eq!(snapshot.project.schema_version, SCHEMA_VERSION);
+    assert!(snapshot.function_names.is_empty());
+
+    let saved = save_function_name(&project_path, "0x401020", "legacy_loop").unwrap();
+    assert_eq!(saved.name, "legacy_loop");
+    let snapshot = open_project(&project_path).unwrap();
+    assert_eq!(snapshot.function_names.len(), 1);
+    assert_eq!(snapshot.function_names[0].address, "0x401020");
 }

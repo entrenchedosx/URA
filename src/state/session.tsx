@@ -7,15 +7,20 @@ import {
   useRef,
   useState,
 } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import {
+  analyzeBinary,
+  cancelAnalysis as cancelNativeAnalysis,
   closeBinary as closeNativeBinary,
   createAnalysisProject,
   deleteAnnotation as deleteNativeAnnotation,
   errorMessage,
   extractStrings,
+  functionAt,
   openAnalysisProject,
   openBinary as openNativeBinary,
+  renameFunction as renameNativeFunction,
   saveAnnotation as saveNativeAnnotation,
   setProjectAddress,
   takeStartupPath,
@@ -27,8 +32,11 @@ import {
   sectionForAddress,
 } from "../lib/format";
 import type {
+  AnalysisProgress,
+  AnalysisSummary,
   Annotation,
   BinaryOpenResult,
+  FunctionDetail,
   NavigateFn,
   NavigationTarget,
   ProjectSnapshot,
@@ -49,6 +57,14 @@ interface SessionContextValue {
   strings: StringScanResult | null;
   scanning: boolean;
   busy: string | null;
+  analysis: AnalysisSummary | null;
+  analysisRunning: boolean;
+  analysisProgress: AnalysisProgress | null;
+  analysisError: string | null;
+  functionRevision: number;
+  currentFunction: FunctionDetail | null;
+  cfgAddress: string | null;
+  renameRequest: { address: string } | null;
   setSelection: (selection: Selection | null) => void;
   navigate: NavigateFn;
   openBinaryDialog: () => void;
@@ -59,6 +75,13 @@ interface SessionContextValue {
   saveAnnotation: (address: string, label: string, note: string) => void;
   deleteAnnotation: (id: number) => void;
   scanStrings: (minLength: number, ascii: boolean, utf16: boolean) => void;
+  startAnalysis: () => void;
+  cancelAnalysis: () => void;
+  renameFunction: (address: string, name: string) => void;
+  openCfg: (address?: string | null) => void;
+  openXrefs: (address?: string | null) => void;
+  requestRename: (address?: string | null) => void;
+  closeRename: () => void;
   focusView: (view: ViewKind) => void;
 }
 
@@ -76,9 +99,24 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [strings, setStrings] = useState<StringScanResult | null>(null);
   const [scanning, setScanning] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const [analysis, setAnalysis] = useState<AnalysisSummary | null>(null);
+  const [analysisRunning, setAnalysisRunning] = useState(false);
+  const [analysisProgress, setAnalysisProgress] =
+    useState<AnalysisProgress | null>(null);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [functionRevision, setFunctionRevision] = useState(0);
+  const [currentFunction, setCurrentFunction] = useState<FunctionDetail | null>(
+    null,
+  );
+  const [cfgAddress, setCfgAddress] = useState<string | null>(null);
+  const [renameRequest, setRenameRequest] = useState<{
+    address: string;
+  } | null>(null);
 
   const lastSavedAddress = useRef<string | null>(null);
   const projectRef = useRef<ProjectSnapshot | null>(null);
+  const analysisRunId = useRef(0);
+  const analysisInFlight = useRef(false);
   projectRef.current = project;
 
   const annotations = project?.annotations ?? [];
@@ -92,6 +130,13 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     (result: BinaryOpenResult, preferredAddress?: string | null) => {
       setBinary(result);
       setStrings(null);
+      setAnalysis(null);
+      setAnalysisProgress(null);
+      setAnalysisError(null);
+      setAnalysisRunning(false);
+      setCurrentFunction(null);
+      setCfgAddress(null);
+      setRenameRequest(null);
       const target =
         normalizeAddress(preferredAddress ?? null) ??
         normalizeAddress(result.info.entryPoint);
@@ -175,10 +220,18 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, [loadBinaryPath, log]);
 
   const closeBinary = useCallback(() => {
+    void cancelNativeAnalysis().catch(() => undefined);
     void closeNativeBinary();
     setBinary(null);
     setSelection(null);
     setStrings(null);
+    setAnalysis(null);
+    setAnalysisProgress(null);
+    setAnalysisError(null);
+    setAnalysisRunning(false);
+    setCurrentFunction(null);
+    setCfgAddress(null);
+    setRenameRequest(null);
     setNavigation({ nonce: Date.now() });
     log("info", "Binary closed.");
   }, [log]);
@@ -198,9 +251,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         setProject(snapshot);
         setProjectPath(picked);
         projectRef.current = snapshot;
+        setFunctionRevision((value) => value + 1);
         log(
           "success",
-          `Opened project “${snapshot.project.name}” (${snapshot.annotations.length} annotations).`,
+          `Opened project “${snapshot.project.name}” (${snapshot.annotations.length} annotations, ${snapshot.functionNames.length} custom function names).`,
         );
 
         if (snapshot.binaryStatus === "missing") {
@@ -263,6 +317,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         const snapshot: ProjectSnapshot = {
           project: info,
           annotations: [],
+          functionNames: [],
           binaryStatus: "unchanged",
         };
         setProject(snapshot);
@@ -372,6 +427,155 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     [log],
   );
 
+  const startAnalysis = useCallback(() => {
+    if (!binary || analysisInFlight.current) return;
+    analysisInFlight.current = true;
+    const runId = ++analysisRunId.current;
+    setAnalysisRunning(true);
+    setAnalysis(null);
+    setAnalysisError(null);
+    setAnalysisProgress({
+      stage: "preparing",
+      instructions: 0,
+      functions: 0,
+      blocks: 0,
+      currentAddress: null,
+    });
+
+    const finish = () => {
+      if (analysisRunId.current !== runId) return;
+      analysisInFlight.current = false;
+      setAnalysisRunning(false);
+      setAnalysisProgress(null);
+    };
+
+    const attempt = (retries: number) => {
+      void analyzeBinary()
+        .then((summary) => {
+          if (analysisRunId.current !== runId) return;
+          setAnalysis(summary);
+          setFunctionRevision((value) => value + 1);
+          const counts = `${summary.functionCount} functions, ${summary.blockCount} blocks, ${summary.xrefCount} xrefs from ${summary.instructionCount} instructions`;
+          if (summary.cancelled) {
+            log("warning", `Analysis cancelled — partial result: ${counts}.`);
+          } else {
+            log(
+              "success",
+              `Analysis complete: ${counts} in ${summary.elapsedMs} ms.`,
+            );
+          }
+          if (summary.truncated) {
+            log(
+              "warning",
+              "Analysis stopped at a configured safety limit; results are partial.",
+            );
+          }
+          if (summary.diagnostics.length > 0) {
+            const dropped =
+              summary.diagnosticsDropped > 0
+                ? ` (+${summary.diagnosticsDropped} dropped)`
+                : "";
+            log(
+              "warning",
+              `Analysis diagnostics: ${summary.diagnostics.length}${dropped}. First: ${summary.diagnostics[0].message}`,
+            );
+          }
+          finish();
+        })
+        .catch((err) => {
+          if (analysisRunId.current !== runId) return;
+          const message = errorMessage(err);
+          if (retries > 0 && /already running/i.test(message)) {
+            window.setTimeout(() => {
+              if (analysisRunId.current === runId) attempt(retries - 1);
+            }, 250);
+            return;
+          }
+          setAnalysisError(message);
+          log("error", `Analysis failed: ${message}`);
+          finish();
+        });
+    };
+
+    attempt(8);
+  }, [binary, log]);
+
+  useEffect(() => {
+    analysisRunId.current += 1;
+    analysisInFlight.current = false;
+    if (!binary) {
+      setAnalysisRunning(false);
+      setAnalysisProgress(null);
+      setCurrentFunction(null);
+      setCfgAddress(null);
+      return;
+    }
+    startAnalysis();
+  }, [binary, startAnalysis]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listen<AnalysisProgress>("analysis-progress", (event) => {
+      if (!disposed) setAnalysisProgress(event.payload);
+    })
+      .then((stop) => {
+        if (disposed) stop();
+        else unlisten = stop;
+      })
+      .catch((err) => {
+        log(
+          "warning",
+          `Unable to subscribe to analysis progress: ${errorMessage(err)}`,
+        );
+      });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [log]);
+
+  const cancelAnalysis = useCallback(() => {
+    void cancelNativeAnalysis()
+      .then((requested) => {
+        if (requested) log("info", "Cancelling analysis…");
+      })
+      .catch((err) => {
+        log("warning", `Unable to cancel analysis: ${errorMessage(err)}`);
+      });
+  }, [log]);
+
+  const renameFunction = useCallback(
+    (address: string, name: string) => {
+      if (!projectPath) {
+        log("warning", "Create or open a project to rename functions.");
+        return;
+      }
+      const normalized = normalizeAddress(address);
+      if (!normalized) return;
+      const trimmed = name.trim();
+      void (async () => {
+        try {
+          const result = await renameNativeFunction(
+            projectPath,
+            normalized,
+            trimmed,
+          );
+          log(
+            "success",
+            result.name
+              ? `Renamed ${result.address} to “${result.name}”.`
+              : `Removed the custom name for ${result.address}.`,
+          );
+          setFunctionRevision((value) => value + 1);
+        } catch (err) {
+          log("error", `Failed to rename function: ${errorMessage(err)}`);
+        }
+      })();
+    },
+    [projectPath, log],
+  );
+
   useEffect(() => {
     if (!binary) {
       setStrings(null);
@@ -469,6 +673,83 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     [binary, log, focusView],
   );
 
+  useEffect(() => {
+    const address = selection?.address;
+    if (!binary || !analysis || !address) {
+      setCurrentFunction(null);
+      return;
+    }
+    let cancelled = false;
+    const timeout = window.setTimeout(() => {
+      functionAt(address)
+        .then((detail) => {
+          if (!cancelled) setCurrentFunction(detail);
+        })
+        .catch(() => {
+          if (!cancelled) setCurrentFunction(null);
+        });
+    }, 90);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [binary, analysis, selection?.address, functionRevision]);
+
+  const openCfg = useCallback(
+    (address?: string | null) => {
+      const target = normalizeAddress(address ?? selection?.address ?? null);
+      if (!target) {
+        log("warning", "Select an address inside a function to view its CFG.");
+        return;
+      }
+      setCfgAddress(target);
+      setSelection({
+        address: target,
+        fileOffset: binary
+          ? addressToOffset(binary.sections, target)
+          : null,
+      });
+      showPanel("cfg");
+    },
+    [binary, selection?.address, log, showPanel],
+  );
+
+  const openXrefs = useCallback(
+    (address?: string | null) => {
+      const target = normalizeAddress(address ?? selection?.address ?? null);
+      if (!target) {
+        log("warning", "Select an address to inspect its references.");
+        return;
+      }
+      setSelection({
+        address: target,
+        fileOffset: binary ? addressToOffset(binary.sections, target) : null,
+      });
+      showPanel("xrefs");
+    },
+    [binary, selection?.address, log, showPanel],
+  );
+
+  const requestRename = useCallback(
+    (address?: string | null) => {
+      const target = normalizeAddress(
+        address ?? currentFunction?.address ?? selection?.address ?? null,
+      );
+      if (!target) {
+        log("warning", "Select a function to rename.");
+        return;
+      }
+      if (!projectPath) {
+        log("warning", "Create or open a project to rename functions.");
+        return;
+      }
+      setRenameRequest({ address: target });
+    },
+    [currentFunction?.address, selection?.address, projectPath, log],
+  );
+
+  const closeRename = useCallback(() => setRenameRequest(null), []);
+
   const value = useMemo<SessionContextValue>(
     () => ({
       binary,
@@ -480,6 +761,14 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       strings,
       scanning,
       busy,
+      analysis,
+      analysisRunning,
+      analysisProgress,
+      analysisError,
+      functionRevision,
+      currentFunction,
+      cfgAddress,
+      renameRequest,
       setSelection,
       navigate,
       openBinaryDialog,
@@ -490,6 +779,13 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       saveAnnotation,
       deleteAnnotation,
       scanStrings,
+      startAnalysis,
+      cancelAnalysis,
+      renameFunction,
+      openCfg,
+      openXrefs,
+      requestRename,
+      closeRename,
       focusView,
     }),
     [
@@ -502,6 +798,14 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       strings,
       scanning,
       busy,
+      analysis,
+      analysisRunning,
+      analysisProgress,
+      analysisError,
+      functionRevision,
+      currentFunction,
+      cfgAddress,
+      renameRequest,
       navigate,
       openBinaryDialog,
       loadBinaryPath,
@@ -511,6 +815,13 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       saveAnnotation,
       deleteAnnotation,
       scanStrings,
+      startAnalysis,
+      cancelAnalysis,
+      renameFunction,
+      openCfg,
+      openXrefs,
+      requestRename,
+      closeRename,
       focusView,
     ],
   );

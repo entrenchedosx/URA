@@ -3,6 +3,7 @@ import {
   BookMarked,
   Fingerprint,
   Layers,
+  ListTree,
   PackageOpen,
   Search,
   Tags,
@@ -10,15 +11,22 @@ import {
 import type { Annotation, SectionView } from "../lib/types";
 import { formatHex, formatSize, normalizeAddress } from "../lib/format";
 import { useSession } from "../state/session";
+import { FunctionExplorer } from "./FunctionExplorer";
 import { VirtualList } from "./VirtualList";
 
-type ExplorerTab = "sections" | "symbols" | "imports" | "exports";
+type ExplorerTab =
+  | "functions"
+  | "sections"
+  | "symbols"
+  | "imports"
+  | "exports";
 
 const tabs: Array<{
   id: ExplorerTab;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
 }> = [
+  { id: "functions", label: "Functions", icon: ListTree },
   { id: "sections", label: "Sections", icon: Layers },
   { id: "symbols", label: "Symbols", icon: Tags },
   { id: "imports", label: "Imports", icon: PackageOpen },
@@ -39,8 +47,8 @@ function sectionContains(section: SectionView, address: string | null): boolean 
 }
 
 export function Explorer() {
-  const { binary, project, selection, navigate } = useSession();
-  const [tab, setTab] = useState<ExplorerTab>("sections");
+  const { binary, project, selection, navigate, analysis } = useSession();
+  const [tab, setTab] = useState<ExplorerTab>("functions");
   const [filter, setFilter] = useState("");
 
   const annotations = project?.annotations ?? [];
@@ -107,6 +115,7 @@ export function Explorer() {
   }
 
   const counts: Record<ExplorerTab, number> = {
+    functions: analysis?.functionCount ?? 0,
     sections: sections.length,
     symbols: symbols.length,
     imports: imports.length,
@@ -124,7 +133,7 @@ export function Explorer() {
         </span>
       </div>
 
-      <div className="grid shrink-0 grid-cols-4 border-b border-edge">
+      <div className="grid shrink-0 grid-cols-5 border-b border-edge">
         {tabs.map((entry) => {
           const Icon = entry.icon;
           const active = tab === entry.id;
@@ -143,7 +152,7 @@ export function Explorer() {
               <span className="explorer-tab-label truncate text-[9.5px]">
                 {entry.label}
               </span>
-              <span className="font-mono text-[8.5px] text-ink-600">
+              <span className="explorer-tab-count font-mono text-[8.5px] text-ink-600">
                 {counts[entry.id]}
               </span>
             </button>
@@ -165,6 +174,8 @@ export function Explorer() {
       </div>
 
       <div className="min-h-0 flex-1">
+        {tab === "functions" && <FunctionExplorer search={filter} />}
+
         {tab === "sections" && (
           <VirtualList
             className="h-full"
@@ -329,6 +340,8 @@ export function Explorer() {
 
       <div className="flex h-6 shrink-0 items-center justify-between border-t border-edge px-2.5 font-mono text-[9.5px] text-ink-500">
         <span>
+          {tab === "functions" &&
+            `${counts.functions} functions${analysis?.cancelled ? " (partial)" : ""}`}
           {tab === "sections" && `${sections.length} sections`}
           {tab === "symbols" && `${symbols.length}/${binary.symbols.length} symbols`}
           {tab === "imports" && `${imports.length} imports`}

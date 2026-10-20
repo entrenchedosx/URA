@@ -1,5 +1,6 @@
 import {
   Binary,
+  CircleStop,
   Crosshair,
   Database,
   FilePlus2,
@@ -7,6 +8,7 @@ import {
   FolderSearch,
   Loader2,
   RotateCcw,
+  ScanSearch,
   Settings,
   X,
 } from "lucide-react";
@@ -28,6 +30,11 @@ export function Toolbar({ onOpenPalette, onOpenSettings }: ToolbarProps) {
     closeBinary,
     newProject,
     openProjectDialog,
+    analysis,
+    analysisRunning,
+    analysisProgress,
+    startAnalysis,
+    cancelAnalysis,
   } = useSession();
   const { resetLayout } = useWorkspace();
 
@@ -88,6 +95,44 @@ export function Toolbar({ onOpenPalette, onOpenSettings }: ToolbarProps) {
         <FolderSearch className="size-3.5" />
         Open Project
       </button>
+
+      {binary && (
+        <>
+          <button
+            className="btn"
+            onClick={startAnalysis}
+            disabled={analysisRunning}
+            title={
+              analysis
+                ? `Re-analyze functions — ${analysis.functionCount} functions, ${analysis.blockCount} blocks`
+                : "Discover functions, basic blocks and cross-references"
+            }
+          >
+            {analysisRunning ? (
+              <Loader2 className="size-3.5 animate-spin text-accent-400" />
+            ) : (
+              <ScanSearch className="size-3.5 text-accent-300" />
+            )}
+            {analysisRunning ? "Analyzing…" : "Analyze"}
+          </button>
+          {analysisRunning && (
+            <button
+              className="icon-btn"
+              onClick={cancelAnalysis}
+              title="Cancel function analysis"
+              aria-label="Cancel function analysis"
+            >
+              <CircleStop className="size-3.5 text-red-400" />
+            </button>
+          )}
+          {analysisRunning && analysisProgress && (
+            <span className="hidden max-w-56 truncate font-mono text-[10px] text-ink-500 xl:inline">
+              {analysisProgress.stage} · {analysisProgress.functions} fn ·{" "}
+              {analysisProgress.instructions} insn
+            </span>
+          )}
+        </>
+      )}
 
       {project && (
         <div

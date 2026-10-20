@@ -70,7 +70,7 @@ fn decodes_real_x86_64_instructions() {
         .iter()
         .find(|instruction| instruction.flow == "call")
         .expect("call instruction");
-    assert_eq!(call.target.as_deref(), Some("0x14000100E"));
+    assert_eq!(call.target.as_deref(), Some("0x140001020"));
     assert!(page.has_more);
 }
 

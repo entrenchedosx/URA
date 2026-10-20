@@ -1,6 +1,11 @@
 import type { ViewKind } from "./types";
 
-export type ToolPanelId = "explorer" | "inspector" | "messages";
+export type ToolPanelId =
+  | "explorer"
+  | "inspector"
+  | "messages"
+  | "cfg"
+  | "xrefs";
 export type WorkspacePanelId = ViewKind | ToolPanelId;
 
 export const VIEW_PANEL_IDS: ViewKind[] = [
@@ -18,6 +23,8 @@ export const WORKSPACE_PANEL_TITLES: Record<WorkspacePanelId, string> = {
   overview: "Overview",
   inspector: "Inspector",
   messages: "Messages",
+  cfg: "Control Flow",
+  xrefs: "Xrefs",
 };
 
 export function isViewPanel(id: string): id is ViewKind {
