@@ -33,6 +33,32 @@ fn setup() -> (TempDir, PathBuf) {
 }
 
 #[test]
+fn read_only_snapshots_preserve_legacy_schema_and_skip_binary_access() {
+    let (_directory, path) = setup();
+    create_project(&path, "Legacy", &identity(&fixture("ura64.exe"))).unwrap();
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection.execute_batch("DROP TABLE function_names; DROP TABLE manual_functions; DROP TABLE view_state; PRAGMA user_version=1;").unwrap();
+    connection
+        .execute(
+            "UPDATE project SET binary_path=?1",
+            ["outside-allowed-root.exe"],
+        )
+        .unwrap();
+    drop(connection);
+    let before = std::fs::read(&path).unwrap();
+    let snapshot = ura_project::read_project(&path).unwrap();
+    assert_eq!(snapshot.project.schema_version, 1);
+    assert_eq!(snapshot.binary_status, "unchecked");
+    assert!(snapshot.function_names.is_empty());
+    assert!(snapshot.manual_functions.is_empty());
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert_eq!(
+        open_project(&path).unwrap().project.schema_version,
+        SCHEMA_VERSION
+    );
+}
+
+#[test]
 fn creates_saves_and_reloads_annotations() {
     let (_directory, project_path) = setup();
     let binary_path = fixture("ura64.exe");

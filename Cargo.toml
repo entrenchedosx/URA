@@ -1,6 +1,14 @@
 ﻿[workspace]
 resolver = "2"
-members = ["crates/ura-core", "crates/ura-project", "crates/ura-native", "src-tauri"]
+members = [
+    "crates/ura-core",
+    "crates/ura-project",
+    "crates/ura-native",
+    "crates/ura-service",
+    "crates/ura-cli",
+    "crates/ura-mcp",
+    "src-tauri",
+]
 default-members = ["crates/ura-native"]
 
 [workspace.package]
@@ -18,3 +26,9 @@ object = { version = "0.37", features = ["read", "std"] }
 iced-x86 = "1.21"
 rusqlite = { version = "0.37", features = ["bundled"] }
 tempfile = "3"
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std"] }
+rmcp = { version = "3.6", features = ["server", "transport-io", "macros"] }
+schemars = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }

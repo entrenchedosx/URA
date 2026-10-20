@@ -783,7 +783,7 @@ pub fn analyze_image_mapped(
             if !visited.insert(address) {
                 continue;
             }
-            if address != seed.address {
+            {
                 if let Some(owner) = discovered.owner.get(&address) {
                     if *owner != seed.address {
                         continue;
@@ -815,6 +815,20 @@ pub fn analyze_image_mapped(
                 );
                 continue;
             };
+            // Traversal may reach this instruction after another branch has
+            // already decoded a later start. Check both ends, including seeds.
+            if discovered
+                .instructions
+                .range(address..instruction.end())
+                .next()
+                .is_some()
+            {
+                diagnostics.push(
+                    Some(address),
+                    "instruction overlaps an already decoded instruction".into(),
+                );
+                continue;
+            }
             discovered.instructions.insert(address, instruction.clone());
             discovered.owner.insert(address, seed.address);
             function_instructions.push(address);

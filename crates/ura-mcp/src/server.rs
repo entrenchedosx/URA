@@ -1,0 +1,321 @@
+use std::path::Path;
+use std::str::FromStr;
+use std::sync::{Arc, Mutex, MutexGuard};
+
+use rmcp::handler::server::router::tool::ToolRouter;
+use rmcp::handler::server::wrapper::Parameters;
+use rmcp::model::{CallToolResult, ServerCapabilities, ServerConfig};
+use rmcp::{tool, tool_handler, tool_router, ErrorData, ServerHandler};
+use serde::Serialize;
+use serde_json::Value;
+use ura_core::{AnalysisOptions, StringScanOptions, MAX_STRINGS};
+use ura_service::{ErrorView, FunctionSort, Service, ServiceError, XrefDirection};
+
+use crate::params::{
+    AddCommentParams, AnalyzeParams, BinaryHandleParams, CfgParams, DisassemblyParams,
+    ExportAnalysisParams, FunctionParams, GetFunctionsParams, OpenBinaryParams, ReadBytesParams,
+    RenameFunctionParams, SaveProjectParams, SearchStringsParams, XrefsParams,
+};
+
+const INSTRUCTIONS: &str = "URA performs local static analysis of PE, ELF and Mach-O binaries. \
+Samples are parsed and analysed, never executed. Call ura_open_binary first, keep the returned \
+handle, run ura_analyze, then query functions, disassembly, CFGs, cross-references, strings and raw \
+bytes. Every response carries schemaVersion 1. Failures are returned as tool errors whose \
+structured content is {\"schemaVersion\":1,\"error\":{\"code\":\"...\",\"message\":\"...\"}}. \
+Paths must resolve inside the roots passed with --allow. Project writes are disabled unless the \
+server was started with --enable-writes.";
+
+#[derive(Clone)]
+pub struct UraServer {
+    service: Arc<Mutex<Service>>,
+    tool_router: ToolRouter<Self>,
+}
+
+impl UraServer {
+    pub fn new(service: Service) -> Self {
+        Self {
+            service: Arc::new(Mutex::new(service)),
+            tool_router: Self::tool_router(),
+        }
+    }
+
+    fn service(&self) -> MutexGuard<'_, Service> {
+        self.service
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+#[tool_router]
+impl UraServer {
+    #[tool(
+        name = "ura_open_binary",
+        description = "Open a PE, ELF or Mach-O file for inspection. Returns a handle, binary metadata, sections, imports and exports. Optionally attaches an existing .ura project and applies its function names and manual function seeds."
+    )]
+    fn ura_open_binary(
+        &self,
+        Parameters(params): Parameters<OpenBinaryParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        respond(self.service().open_binary(
+            Path::new(&params.binary),
+            params.project.as_deref().map(Path::new),
+        ))
+    }
+
+    #[tool(
+        name = "ura_analyze",
+        description = "Discover functions, basic blocks and cross-references for an opened binary. Analysis results are cached on the handle for subsequent queries."
+    )]
+    fn ura_analyze(
+        &self,
+        Parameters(params): Parameters<AnalyzeParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let defaults = AnalysisOptions::default();
+        let options = AnalysisOptions {
+            max_instructions: params.max_instructions.unwrap_or(defaults.max_instructions),
+            max_functions: params.max_functions.unwrap_or(defaults.max_functions),
+            max_blocks: params.max_blocks.unwrap_or(defaults.max_blocks),
+            follow_calls: params.follow_calls.unwrap_or(defaults.follow_calls),
+            seed_symbols: true,
+        };
+        respond(self.service().analyze(&params.handle, &options))
+    }
+
+    #[tool(
+        name = "ura_get_binary_info",
+        description = "Return metadata for an opened binary: format, architecture, hashes, entry point, section counts and warnings."
+    )]
+    fn ura_get_binary_info(
+        &self,
+        Parameters(params): Parameters<BinaryHandleParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        respond(self.service().info(&params.handle))
+    }
+
+    #[tool(
+        name = "ura_get_functions",
+        description = "List discovered functions with pagination, optional substring query and sorting by address, name, instruction count or reference count. Requires ura_analyze."
+    )]
+    fn ura_get_functions(
+        &self,
+        Parameters(params): Parameters<GetFunctionsParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let result = (|| {
+            let sort = match params.sort.as_deref() {
+                Some(value) => FunctionSort::from_str(value)?,
+                None => FunctionSort::Address,
+            };
+            self.service().functions(
+                &params.handle,
+                params.query.as_deref(),
+                params.offset.unwrap_or(0),
+                params.limit.unwrap_or(100),
+                sort,
+            )
+        })();
+        respond(result)
+    }
+
+    #[tool(
+        name = "ura_get_function",
+        description = "Return one function's summary plus its callers and callees. The address may point anywhere inside the function. Requires ura_analyze."
+    )]
+    fn ura_get_function(
+        &self,
+        Parameters(params): Parameters<FunctionParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        respond(self.service().function(&params.handle, &params.address))
+    }
+
+    #[tool(
+        name = "ura_get_disassembly",
+        description = "Decode up to 2000 instructions starting at a virtual address. Returns instruction addresses, bytes, mnemonic text and the containing section. Does not require analysis."
+    )]
+    fn ura_get_disassembly(
+        &self,
+        Parameters(params): Parameters<DisassemblyParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        respond(self.service().disassembly(
+            &params.handle,
+            &params.address,
+            params.count.unwrap_or(50),
+        ))
+    }
+
+    #[tool(
+        name = "ura_get_cfg",
+        description = "Return the control-flow graph of a function: basic blocks, instruction addresses and successor edges. Requires ura_analyze."
+    )]
+    fn ura_get_cfg(
+        &self,
+        Parameters(params): Parameters<CfgParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        respond(self.service().cfg(
+            &params.handle,
+            &params.function,
+            params.max_blocks.unwrap_or(200),
+        ))
+    }
+
+    #[tool(
+        name = "ura_get_xrefs",
+        description = "List cross-references to or from an address, optionally filtered by kind (call, jump, conditionalJump, data). Requires ura_analyze."
+    )]
+    fn ura_get_xrefs(
+        &self,
+        Parameters(params): Parameters<XrefsParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let result = (|| {
+            let direction = match params.direction.as_deref() {
+                Some(value) => XrefDirection::from_str(value)?,
+                None => XrefDirection::To,
+            };
+            self.service().xrefs(
+                &params.handle,
+                &params.address,
+                direction,
+                params.kind.as_deref(),
+                params.limit.unwrap_or(200),
+            )
+        })();
+        respond(result)
+    }
+
+    #[tool(
+        name = "ura_search_strings",
+        description = "Scan the file for ASCII and UTF-16LE strings with pagination. Returns file offsets, virtual addresses where mapped, encoding and text."
+    )]
+    fn ura_search_strings(
+        &self,
+        Parameters(params): Parameters<SearchStringsParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let options = StringScanOptions {
+            min_length: params.min_length.unwrap_or(4),
+            ascii: params.ascii.unwrap_or(true),
+            utf16le: params.utf16le.unwrap_or(true),
+            max_results: MAX_STRINGS,
+        };
+        respond(self.service().strings(
+            &params.handle,
+            &options,
+            params.offset.unwrap_or(0),
+            params.limit.unwrap_or(100),
+        ))
+    }
+
+    #[tool(
+        name = "ura_read_bytes",
+        description = "Read raw file bytes by virtual address or file offset (exactly one), up to 65536 bytes. Returns hex and printable ASCII alongside the mapping."
+    )]
+    fn ura_read_bytes(
+        &self,
+        Parameters(params): Parameters<ReadBytesParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        respond(self.service().read_bytes(
+            &params.handle,
+            params.address.as_deref(),
+            params.offset.as_deref(),
+            params.length,
+        ))
+    }
+
+    #[tool(
+        name = "ura_rename_function",
+        description = "Persist a function name in an existing .ura project. Requires the server to be started with --enable-writes."
+    )]
+    fn ura_rename_function(
+        &self,
+        Parameters(params): Parameters<RenameFunctionParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        respond(self.service().rename_function(
+            &params.handle,
+            Path::new(&params.project),
+            &params.address,
+            &params.name,
+        ))
+    }
+
+    #[tool(
+        name = "ura_add_comment",
+        description = "Persist a comment on an address in an existing .ura project. Requires the server to be started with --enable-writes."
+    )]
+    fn ura_add_comment(
+        &self,
+        Parameters(params): Parameters<AddCommentParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        respond(self.service().add_comment(
+            &params.handle,
+            Path::new(&params.project),
+            &params.address,
+            params.name.as_deref(),
+            &params.note,
+        ))
+    }
+
+    #[tool(
+        name = "ura_save_project",
+        description = "Create or update a .ura project for an opened binary. Requires the server to be started with --enable-writes."
+    )]
+    fn ura_save_project(
+        &self,
+        Parameters(params): Parameters<SaveProjectParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        respond(self.service().save_project(
+            &params.handle,
+            Path::new(&params.project),
+            params.name.as_deref(),
+        ))
+    }
+
+    #[tool(
+        name = "ura_export_analysis",
+        description = "Export a project's annotations and function names as JSON. Requires the server to be started with --enable-writes."
+    )]
+    fn ura_export_analysis(
+        &self,
+        Parameters(params): Parameters<ExportAnalysisParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        respond(
+            self.service()
+                .export_analysis(Path::new(&params.project), Path::new(&params.export)),
+        )
+    }
+
+    #[tool(
+        name = "ura_close_binary",
+        description = "Close an opened binary and release its analysis results. The handle becomes invalid."
+    )]
+    fn ura_close_binary(
+        &self,
+        Parameters(params): Parameters<BinaryHandleParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        respond(self.service().close_binary(&params.handle))
+    }
+}
+
+#[tool_handler(router = self.tool_router)]
+impl ServerHandler for UraServer {
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
+            .with_instructions(INSTRUCTIONS)
+    }
+}
+
+fn respond<T: Serialize>(result: Result<T, ServiceError>) -> Result<CallToolResult, ErrorData> {
+    match result {
+        Ok(value) => structured(value),
+        Err(error) => {
+            let value = serde_json::to_value(ErrorView::new(&error)).map_err(serialization)?;
+            Ok(CallToolResult::structured_error(value))
+        }
+    }
+}
+
+fn structured<T: Serialize>(value: T) -> Result<CallToolResult, ErrorData> {
+    let value: Value = serde_json::to_value(value).map_err(serialization)?;
+    Ok(CallToolResult::structured(value))
+}
+
+fn serialization(error: serde_json::Error) -> ErrorData {
+    ErrorData::internal_error(format!("response serialization failed: {error}"), None)
+}

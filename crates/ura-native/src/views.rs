@@ -1,5 +1,5 @@
 use crate::{app::*, navigation::Location};
-use eframe::egui::{self, Align2, Color32, FontId, Key, RichText, Sense, Stroke, StrokeKind, Vec2};
+use eframe::egui::{self, Align2, Color32, FontId, Key, RichText, Sense};
 use egui_extras::{Column, TableBuilder};
 use ura_core::{format_address, parse_address};
 
@@ -30,6 +30,7 @@ impl egui_dock::TabViewer for Workspace {
             Panel::Overview => self.overview(ui),
             Panel::Inspector => self.inspector(ui),
             Panel::Messages => self.messages_view(ui),
+            Panel::GraphOverview => self.graph_overview(ui),
         }
     }
     fn scroll_bars(&self, _tab: &Panel) -> [bool; 2] {
@@ -57,161 +58,6 @@ impl egui_dock::TabViewer for Workspace {
 }
 
 impl Workspace {
-    pub fn toolbar(&mut self, ui: &mut egui::Ui) {
-        egui::MenuBar::new().ui(ui, |ui| {
-            ui.label(RichText::new("URA").strong().color(ACCENT).size(15.0));
-            ui.label(RichText::new("0.5").small().color(MUTED));
-            ui.separator();
-            ui.menu_button("File", |ui| {
-                for (label, action) in [
-                    ("Open binary…    Ctrl+O", Action::OpenDialog(false)),
-                    ("Open project…    Ctrl+Shift+O", Action::OpenDialog(true)),
-                    ("Create project…    Ctrl+N", Action::NewProject),
-                    ("Save workspace    Ctrl+S", Action::Save),
-                    ("Export annotations…", Action::Export),
-                    ("Close", Action::Close),
-                ] {
-                    if ui.button(label).clicked() {
-                        self.actions.push(action);
-                        ui.close();
-                    }
-                }
-                ui.separator();
-                ui.menu_button("Recent", |ui| {
-                    for path in &self.recent {
-                        if ui.button(path.to_string_lossy()).clicked() {
-                            self.actions.push(Action::Open(path.clone()));
-                            ui.close();
-                        }
-                    }
-                });
-            });
-            ui.menu_button("Navigate", |ui| {
-                for (label, action) in [
-                    ("Go to…    Ctrl+G", Action::Palette),
-                    ("Back    Alt+Left", Action::Back),
-                    ("Forward    Alt+Right", Action::Forward),
-                    ("Rename function…    F2", Action::Rename),
-                ] {
-                    if ui.button(label).clicked() {
-                        self.actions.push(action);
-                        ui.close();
-                    }
-                }
-            });
-            ui.menu_button("Analysis", |ui| {
-                for (label, action) in [
-                    ("Analyze functions", Action::Analyze),
-                    ("Cancel analysis", Action::Cancel),
-                    ("Rescan strings", Action::Scan),
-                    ("Define function here", Action::Manual(true)),
-                    ("Remove manual function", Action::Manual(false)),
-                ] {
-                    if ui.button(label).clicked() {
-                        self.actions.push(action);
-                        ui.close();
-                    }
-                }
-            });
-            ui.menu_button("View", |ui| {
-                for panel in Panel::ALL {
-                    if ui.button(panel.title()).clicked() {
-                        self.actions.push(Action::Show(panel));
-                        ui.close();
-                    }
-                }
-                ui.separator();
-                if ui.button("Reset layout").clicked() {
-                    self.actions.push(Action::ResetLayout);
-                    ui.close();
-                }
-                if ui.button("Preferences…    Ctrl+,").clicked() {
-                    self.actions.push(Action::Settings);
-                    ui.close();
-                }
-            });
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Commands    Ctrl+K").clicked() {
-                    self.actions.push(Action::Palette);
-                }
-                if let Some((_, p)) = &self.project {
-                    ui.label(RichText::new(&p.project.name).color(MUTED));
-                }
-            });
-        });
-        ui.separator();
-        ui.horizontal_wrapped(|ui| {
-            if ui.button("Open…").clicked() {
-                self.actions.push(Action::OpenDialog(false));
-            }
-            if ui
-                .add_enabled(self.history.index > 0, egui::Button::new("←"))
-                .on_hover_text("Back · Alt+Left")
-                .clicked()
-            {
-                self.actions.push(Action::Back);
-            }
-            if ui
-                .add_enabled(
-                    self.history.index + 1 < self.history.entries.len(),
-                    egui::Button::new("→"),
-                )
-                .on_hover_text("Forward · Alt+Right")
-                .clicked()
-            {
-                self.actions.push(Action::Forward);
-            }
-            ui.separator();
-            if ui
-                .add_enabled(
-                    self.binary.is_some() && !self.analyzing && !self.opening,
-                    egui::Button::new("Analyze"),
-                )
-                .clicked()
-            {
-                self.actions.push(Action::Analyze);
-            }
-            if self.analyzing && ui.button("Cancel").clicked() {
-                self.actions.push(Action::Cancel);
-            }
-            if ui
-                .add_enabled(self.binary.is_some(), egui::Button::new("Go to…"))
-                .clicked()
-            {
-                self.actions.push(Action::Palette);
-            }
-            ui.separator();
-            for panel in [
-                Panel::Disassembly,
-                Panel::Graph,
-                Panel::Hex,
-                Panel::Strings,
-                Panel::Xrefs,
-            ] {
-                if ui
-                    .selectable_label(self.active == panel, panel.title())
-                    .clicked()
-                {
-                    self.actions.push(Action::Show(panel));
-                }
-            }
-            if let Some(info) = &self.info {
-                ui.separator();
-                ui.label(RichText::new(&info.file_name).strong());
-                ui.label(
-                    RichText::new(format!("{} / {}", info.format, info.architecture)).color(MUTED),
-                );
-            }
-        });
-        if let Some(error) = self.last_error.clone() {
-            ui.horizontal_wrapped(|ui| {
-                ui.colored_label(GOLD, &error);
-                if ui.small_button("Dismiss").clicked() {
-                    self.last_error = None;
-                }
-            });
-        }
-    }
     pub fn status(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             if self.opening {
@@ -233,7 +79,7 @@ impl Workspace {
                     ui.label("Preparing analysis…");
                 }
             } else {
-                ui.colored_label(ACCENT, "●");
+                ui.colored_label(self.colors().accent, "●");
                 ui.label("Ready");
             }
             ui.separator();
@@ -241,7 +87,7 @@ impl Workspace {
                 ui.label(mono(format_address(address)));
             }
             if let Some(offset) = self.location.file_offset {
-                ui.label(RichText::new(format!("file {offset:#x}")).color(MUTED));
+                ui.label(RichText::new(format!("file {offset:#x}")).color(self.colors().muted));
             }
             if let Some(analysis) = &self.analysis {
                 ui.separator();
@@ -251,17 +97,22 @@ impl Workspace {
                     analysis.xrefs.len()
                 ));
                 if analysis.report.cancelled || analysis.report.truncated {
-                    ui.colored_label(GOLD, "Partial analysis");
+                    ui.colored_label(self.colors().gold, "Partial analysis");
                 }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(RichText::new("Rust / egui").small().color(MUTED));
+                if let Some(info) = &self.info {
+                    ui.label(&info.architecture);
+                }
+                if let Some((_, project)) = &self.project {
+                    ui.label(&project.project.name);
+                }
                 if let Some((_, p)) = &self.project {
                     ui.colored_label(
                         if p.binary_status == "unchanged" {
-                            MUTED
+                            self.colors().muted
                         } else {
-                            GOLD
+                            self.colors().gold
                         },
                         format!("Project: {}", p.binary_status),
                     );
@@ -273,9 +124,13 @@ impl Workspace {
         if self.binary.is_some() {
             return false;
         }
-        ui.add_space(12.0);
+        ui.add_space(6.0);
+        ui.image((self.icon.id(), egui::vec2(96.0, 96.0)));
         if let Some((_, snapshot)) = &self.project {
-            ui.colored_label(GOLD, format!("Binary {}", snapshot.binary_status));
+            ui.colored_label(
+                self.colors().gold,
+                format!("Binary {}", snapshot.binary_status),
+            );
             ui.label(&snapshot.project.binary_path);
         } else {
             ui.label(
@@ -283,7 +138,10 @@ impl Workspace {
                     .size(18.0)
                     .strong(),
             );
-            ui.label(RichText::new("PE · ELF · Mach-O  /  x86 and x64 disassembly").color(MUTED));
+            ui.label(
+                RichText::new("PE · ELF · Mach-O  /  x86 and x64 disassembly")
+                    .color(self.colors().muted),
+            );
         }
         ui.add_space(8.0);
         ui.horizontal_wrapped(|ui| {
@@ -296,7 +154,7 @@ impl Workspace {
         });
         if !self.recent.is_empty() {
             ui.add_space(16.0);
-            ui.label(RichText::new("RECENT").small().color(MUTED));
+            ui.label(RichText::new("RECENT").small().color(self.colors().muted));
             for p in &self.recent {
                 if ui.link(p.to_string_lossy()).clicked() {
                     self.actions.push(Action::Open(p.clone()));
@@ -379,7 +237,7 @@ impl Workspace {
         ui.label(
             RichText::new(format!("{} entries", self.explorer_filter.indices.len()))
                 .small()
-                .color(MUTED),
+                .color(self.colors().muted),
         );
         egui::ScrollArea::both()
             .id_salt("explorer-scroll")
@@ -484,21 +342,28 @@ impl Workspace {
         {
             self.function_filter.dirty = true;
         }
-        ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("Sort").color(MUTED));
-            for (i, name) in ["Address", "Name", "Instructions", "Blocks", "References"]
-                .iter()
-                .enumerate()
-            {
-                if ui
-                    .selectable_value(&mut self.function_filter.sort, i, *name)
-                    .changed()
-                {
-                    self.function_filter.dirty = true;
-                }
-            }
+        ui.horizontal(|ui| {
+            egui::ComboBox::from_id_salt("function-sort")
+                .selected_text(
+                    ["Address", "Name", "Instructions", "Blocks", "References"]
+                        [self.function_filter.sort.min(4)],
+                )
+                .width(90.0)
+                .show_ui(ui, |ui| {
+                    for (i, name) in ["Address", "Name", "Instructions", "Blocks", "References"]
+                        .iter()
+                        .enumerate()
+                    {
+                        if ui
+                            .selectable_value(&mut self.function_filter.sort, i, *name)
+                            .changed()
+                        {
+                            self.function_filter.dirty = true;
+                        }
+                    }
+                });
             if ui
-                .checkbox(&mut self.function_filter.descending, "Descending")
+                .checkbox(&mut self.function_filter.descending, "Reverse")
                 .changed()
             {
                 self.function_filter.dirty = true;
@@ -556,9 +421,49 @@ impl Workspace {
                 analysis.functions.len()
             ))
             .small()
-            .color(MUTED),
+            .color(self.colors().muted),
         );
         let selected = self.function().map(|f| f.address);
+        if ui.available_width() < 440.0 {
+            let mut jump = None;
+            egui::ScrollArea::both()
+                .id_salt("function-browser")
+                .show_rows(
+                    ui,
+                    self.settings.row_height,
+                    self.function_filter.indices.len(),
+                    |ui, range| {
+                        for row in range {
+                            let f = &analysis.functions[self.function_filter.indices[row]];
+                            ui.horizontal(|ui| {
+                                ui.colored_label(self.colors().accent, "ƒ");
+                                let response = ui
+                                    .selectable_label(
+                                        selected == Some(f.address),
+                                        mono(self.name(f)),
+                                    )
+                                    .on_hover_text(format!(
+                                        "{} · {} instructions · {} blocks",
+                                        format_address(f.address),
+                                        f.instruction_count,
+                                        f.blocks.len()
+                                    ));
+                                if response.clicked() {
+                                    jump = Some(f.address);
+                                }
+                                if response.double_clicked() {
+                                    self.actions.push(Action::Show(Panel::Disassembly));
+                                }
+                                response.context_menu(|ui| self.address_menu(ui, f.address));
+                            });
+                        }
+                    },
+                );
+            if let Some(address) = jump {
+                self.navigate_address(address);
+            }
+            return;
+        }
         egui::ScrollArea::horizontal()
             .id_salt("functions-horizontal")
             .show(ui, |ui| {
@@ -642,7 +547,7 @@ impl Workspace {
         }
         ui.horizontal_wrapped(|ui| {
             if let Some(f) = self.function() {
-                ui.colored_label(ACCENT, self.name(f));
+                ui.colored_label(self.colors().accent, self.name(f));
                 ui.label(
                     RichText::new(format!(
                         "{} instructions / {} blocks",
@@ -650,10 +555,14 @@ impl Workspace {
                         f.blocks.len()
                     ))
                     .small()
-                    .color(MUTED),
+                    .color(self.colors().muted),
                 );
             } else {
-                ui.label(RichText::new("LINEAR DISASSEMBLY").small().color(MUTED));
+                ui.label(
+                    RichText::new("LINEAR DISASSEMBLY")
+                        .small()
+                        .color(self.colors().muted),
+                );
             }
             if ui.small_button("Graph").clicked() {
                 self.actions.push(Action::Show(Panel::Graph));
@@ -666,14 +575,14 @@ impl Workspace {
             }
         });
         if self.page_loading {
-            ui.label(RichText::new("Decoding page…").color(MUTED));
+            ui.label(RichText::new("Decoding page…").color(self.colors().muted));
         }
         let Some(page) = self.page.take() else {
             ui.label("Navigate to an executable address to decode instructions.");
             return;
         };
         for warning in &page.warnings {
-            ui.colored_label(GOLD, warning);
+            ui.colored_label(self.colors().gold, warning);
         }
         ui.horizontal(|ui| {
             ui.label(
@@ -683,7 +592,7 @@ impl Workspace {
                     page.instructions.len()
                 ))
                 .small()
-                .color(MUTED),
+                .color(self.colors().muted),
             );
             if page.has_more
                 && ui
@@ -715,14 +624,14 @@ impl Workspace {
                     .striped(false)
                     .resizable(true)
                     .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-                    .column(Column::initial(28.0))
-                    .column(Column::initial(144.0));
+                    .column(Column::initial(21.0))
+                    .column(Column::initial(118.0));
                 if self.settings.show_bytes {
-                    table = table.column(Column::initial(160.0));
+                    table = table.column(Column::initial(137.0));
                 }
                 table = table
                     .column(Column::initial(78.0))
-                    .column(Column::initial(260.0))
+                    .column(Column::initial(235.0))
                     .column(Column::remainder().at_least(130.0));
                 if let Some(row) = scroll_to {
                     table = table.scroll_to_row(row, Some(egui::Align::Center));
@@ -731,22 +640,22 @@ impl Workspace {
                     .header(23.0, |mut header| {
                         header.col(|_| {});
                         header.col(|ui| {
-                            ui.colored_label(MUTED, "ADDRESS");
+                            ui.colored_label(self.colors().muted, "ADDRESS");
                         });
                         if self.settings.show_bytes {
                             header.col(|ui| {
-                                ui.colored_label(MUTED, "BYTES");
+                                ui.colored_label(self.colors().muted, "BYTES");
                             });
                         }
                         for text in ["MNEMONIC", "OPERANDS", "SYMBOL / COMMENT"] {
                             header.col(|ui| {
-                                ui.colored_label(MUTED, text);
+                                ui.colored_label(self.colors().muted, text);
                             });
                         }
                     })
                     .body(|body| {
                         body.rows(
-                            self.settings.row_height.max(self.settings.font_size + 6.0),
+                            self.settings.row_height.max(self.settings.font_size + 4.0),
                             page.instructions.len(),
                             |mut row| {
                                 if row.index() + 1 == page.instructions.len() {
@@ -766,11 +675,14 @@ impl Workspace {
                                         .map(|a| a.xrefs_to(address).count())
                                         .unwrap_or(0);
                                     if boundary.is_some() {
-                                        ui.colored_label(ACCENT, "ƒ")
+                                        ui.colored_label(self.colors().accent, "ƒ")
                                             .on_hover_text("Function start");
                                     } else if incoming > 0 {
                                         let r = ui
-                                            .colored_label(GOLD, format!("{incoming}↗"))
+                                            .colored_label(
+                                                self.colors().gold,
+                                                format!("{incoming}↗"),
+                                            )
                                             .on_hover_text("Incoming references");
                                         if r.clicked() {
                                             self.actions.push(Action::Show(Panel::Xrefs));
@@ -797,9 +709,9 @@ impl Workspace {
                                     let r = ui.selectable_label(
                                         selected,
                                         mono(&i.address).color(if boundary.is_some() {
-                                            ACCENT
+                                            self.colors().accent
                                         } else {
-                                            MUTED
+                                            self.colors().muted
                                         }),
                                     );
                                     if r.clicked() {
@@ -810,14 +722,17 @@ impl Workspace {
                                 if self.settings.show_bytes {
                                     row.col(|ui| {
                                         ui.add(
-                                            egui::Label::new(mono(&i.bytes).color(MUTED))
-                                                .truncate(),
+                                            egui::Label::new(
+                                                mono(&i.bytes).color(self.colors().muted),
+                                            )
+                                            .truncate(),
                                         )
                                         .on_hover_text(&i.bytes);
                                     });
                                 }
                                 row.col(|ui| {
-                                    let color = instruction_color(&i.flow, i.invalid);
+                                    let color =
+                                        instruction_color(&i.flow, i.invalid, self.colors());
                                     let r = ui.add(
                                         egui::Label::new(mono(&i.mnemonic).color(color))
                                             .sense(Sense::click()),
@@ -832,6 +747,7 @@ impl Workspace {
                                         egui::Label::new(assembly_job(
                                             &i.operands,
                                             self.settings.font_size,
+                                            self.colors(),
                                         ))
                                         .truncate()
                                         .sense(Sense::click()),
@@ -850,7 +766,7 @@ impl Workspace {
                                 });
                                 row.col(|ui| {
                                     if let Some(f) = boundary {
-                                        ui.colored_label(ACCENT, self.name(f));
+                                        ui.colored_label(self.colors().accent, self.name(f));
                                     }
                                     if let Some(target) =
                                         i.target.as_deref().and_then(|t| parse_address(t).ok())
@@ -875,7 +791,7 @@ impl Workspace {
                                                     a.label.as_deref().unwrap_or(""),
                                                     a.note
                                                 ))
-                                                .color(GOLD),
+                                                .color(self.colors().gold),
                                             )
                                             .truncate(),
                                         )
@@ -954,7 +870,11 @@ impl Workspace {
         }
         let binary = self.binary.clone().unwrap();
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("BYTES PER ROW").small().color(MUTED));
+            ui.label(
+                RichText::new("BYTES PER ROW")
+                    .small()
+                    .color(self.colors().muted),
+            );
             for n in [8, 16, 32] {
                 if ui
                     .selectable_value(&mut self.settings.hex_columns, n, n.to_string())
@@ -969,7 +889,7 @@ impl Workspace {
             ui.label(
                 RichText::new(format!("{} bytes", binary.bytes().len()))
                     .small()
-                    .color(MUTED),
+                    .color(self.colors().muted),
             );
         });
         let columns = self.settings.hex_columns;
@@ -984,7 +904,7 @@ impl Workspace {
         ui.label(
             RichText::new("FILE OFFSET        HEXADECIMAL                                  ASCII")
                 .monospace()
-                .color(MUTED),
+                .color(self.colors().muted),
         );
         let mut jump = None;
         egui::ScrollArea::horizontal()
@@ -1009,14 +929,14 @@ impl Workspace {
                         let offset = row * columns;
                         let painter = ui.painter();
                         if row % 2 != 0 {
-                            painter.rect_filled(rect, 0.0, PANEL);
+                            painter.rect_filled(rect, 0.0, self.colors().panel);
                         }
                         painter.text(
                             rect.left_center(),
                             Align2::LEFT_CENTER,
                             format!("{offset:08X}"),
                             font.clone(),
-                            MUTED,
+                            self.colors().muted,
                         );
                         for (j, byte) in binary.bytes()
                             [offset..binary.bytes().len().min(offset + columns)]
@@ -1032,7 +952,7 @@ impl Workspace {
                                         egui::vec2(cell, rect.height()),
                                     ),
                                     1.0,
-                                    SELECTED,
+                                    self.colors().selected,
                                 );
                                 painter.rect_filled(
                                     egui::Rect::from_min_size(
@@ -1040,7 +960,7 @@ impl Workspace {
                                         egui::vec2(ascii_cell, rect.height()),
                                     ),
                                     1.0,
-                                    SELECTED,
+                                    self.colors().selected,
                                 );
                             }
                             painter.text(
@@ -1048,7 +968,11 @@ impl Workspace {
                                 Align2::LEFT_CENTER,
                                 format!("{byte:02X}"),
                                 font.clone(),
-                                if *byte == 0 { MUTED } else { TEXT },
+                                if *byte == 0 {
+                                    self.colors().muted
+                                } else {
+                                    self.colors().text
+                                },
                             );
                             painter.text(
                                 egui::pos2(ax, rect.center().y),
@@ -1060,9 +984,9 @@ impl Workspace {
                                 },
                                 font.clone(),
                                 if (0x20..=0x7e).contains(byte) {
-                                    ACCENT
+                                    self.colors().accent
                                 } else {
-                                    MUTED
+                                    self.colors().muted
                                 },
                             );
                         }
@@ -1187,7 +1111,7 @@ impl Workspace {
                     ""
                 }
             ))
-            .color(MUTED),
+            .color(self.colors().muted),
         );
         let binary = self.binary.clone().unwrap();
         egui::ScrollArea::horizontal()
@@ -1235,7 +1159,7 @@ impl Workspace {
                                             self.actions.push(Action::Show(Panel::Disassembly));
                                         }
                                     } else {
-                                        ui.colored_label(MUTED, "unmapped");
+                                        ui.colored_label(self.colors().muted, "unmapped");
                                     }
                                 });
                                 row.col(|ui| {
@@ -1349,7 +1273,7 @@ impl Workspace {
                 format_address(start)
             ))
             .small()
-            .color(MUTED),
+            .color(self.colors().muted),
         );
         let binary = self.binary.clone().unwrap();
         egui::ScrollArea::both().id_salt("xref-scroll").show_rows(
@@ -1379,7 +1303,7 @@ impl Workspace {
                         .map(|s| s.name.as_str())
                         .unwrap_or("unmapped");
                     ui.colored_label(
-                        MUTED,
+                        self.colors().muted,
                         format!(
                             "{} {} · {} · {}",
                             x.kind.name(),
@@ -1393,222 +1317,6 @@ impl Workspace {
         );
     }
 
-    fn graph_view(&mut self, ui: &mut egui::Ui) {
-        if self.empty(ui) {
-            return;
-        }
-        self.ensure_graph();
-        let Some(function) = self.function().map(|f| f.address).or(self.graph_function) else {
-            ui.label("Select an analyzed function to view its control flow.");
-            return;
-        };
-        let mut fit = false;
-        ui.horizontal_wrapped(|ui| {
-            if let Some(f) = self.function() {
-                ui.colored_label(ACCENT, self.name(f));
-            }
-            ui.label(
-                RichText::new("Drag to pan · wheel to zoom · double-click instruction to open")
-                    .small()
-                    .color(MUTED),
-            );
-            if ui.small_button("Reset").clicked() {
-                self.graph_zoom = 1.0;
-                self.graph_pan = egui::vec2(30.0, 25.0);
-            }
-            if ui.small_button("Fit").clicked() {
-                fit = true;
-            }
-            ui.add(
-                egui::Slider::new(&mut self.graph_zoom, 0.25..=2.5)
-                    .show_value(false)
-                    .text("Zoom"),
-            );
-        });
-        let Some(graph) = self.graph.get(&function) else {
-            ui.spinner();
-            ui.label("Laying out graph…");
-            return;
-        };
-        if graph.total_blocks > graph.nodes.len() {
-            ui.colored_label(
-                GOLD,
-                format!(
-                    "Partial view: {} / {} blocks · at most 12 instructions per block",
-                    graph.nodes.len(),
-                    graph.total_blocks
-                ),
-            );
-        }
-        let Some(analysis) = self.analysis.clone() else {
-            return;
-        };
-        let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
-        if fit {
-            let width = graph.nodes.iter().map(|n| n.x + 390.0).fold(1.0, f32::max);
-            let height = graph
-                .nodes
-                .iter()
-                .map(|n| n.y + n.height + 30.0)
-                .fold(1.0, f32::max);
-            self.graph_zoom = ((rect.width() - 30.0) / width)
-                .min((rect.height() - 30.0) / height)
-                .clamp(0.25, 2.5);
-            self.graph_pan = egui::vec2((rect.width() - width * self.graph_zoom) * 0.5, 15.0);
-        }
-        if response.dragged() {
-            self.graph_pan += response.drag_delta();
-        }
-        if response.hovered() {
-            let scroll = ui.input(|i| i.smooth_scroll_delta.y);
-            if scroll != 0.0 {
-                let old = self.graph_zoom;
-                self.graph_zoom = (old * (scroll * 0.002).exp()).clamp(0.25, 2.5);
-                if let Some(pointer) = response.hover_pos() {
-                    let relative = pointer - rect.min;
-                    self.graph_pan =
-                        relative - (relative - self.graph_pan) * (self.graph_zoom / old);
-                }
-            }
-        }
-        let zoom = self.graph_zoom;
-        let origin = rect.min + self.graph_pan;
-        let transform = |x: f32, y: f32| origin + egui::vec2(x, y) * zoom;
-        let painter = ui.painter().with_clip_rect(rect);
-        for edge in &graph.edges {
-            let a = &graph.nodes[edge.source];
-            let b = &graph.nodes[edge.target];
-            let start = transform(a.x + 180.0, a.y + a.height);
-            let end = transform(b.x + 180.0, b.y);
-            let color = match edge.kind {
-                ura_core::EdgeKind::Taken => Color32::from_rgb(118, 171, 145),
-                ura_core::EdgeKind::Jump => GOLD,
-                _ => Color32::from_rgb(101, 130, 163),
-            };
-            let (p1, p2) = if b.y > a.y {
-                let middle = (start.y + end.y) * 0.5;
-                (egui::pos2(start.x, middle), egui::pos2(end.x, middle))
-            } else {
-                let side = transform(a.x + 380.0 + (edge.source % 3) as f32 * 5.0, 0.0).x;
-                (
-                    egui::pos2(side, start.y + 15.0 * zoom),
-                    egui::pos2(side, end.y - 15.0 * zoom),
-                )
-            };
-            let points = vec![start, p1, p2, end];
-            let bounds = egui::Rect::from_points(&points).expand(5.0);
-            if bounds.intersects(rect) {
-                painter.add(egui::Shape::line(points, Stroke::new(1.2, color)));
-                let direction = (end - p2).normalized();
-                let side = Vec2::new(-direction.y, direction.x);
-                painter.add(egui::Shape::convex_polygon(
-                    vec![
-                        end,
-                        end - direction * 8.0 + side * 3.5,
-                        end - direction * 8.0 - side * 3.5,
-                    ],
-                    color,
-                    Stroke::NONE,
-                ));
-            }
-        }
-        let mut jump = None;
-        let mut open = false;
-        for node in &graph.nodes {
-            let node_rect = egui::Rect::from_min_size(
-                transform(node.x, node.y),
-                egui::vec2(360.0, node.height) * zoom,
-            );
-            if !node_rect.intersects(rect) {
-                continue;
-            }
-            let selected = analysis
-                .block_containing(self.location.address.unwrap_or(0))
-                .is_some_and(|b| b.address == node.address);
-            painter.rect_filled(node_rect, 3.0, if selected { SELECTED } else { PANEL });
-            painter.rect_stroke(
-                node_rect,
-                3.0,
-                Stroke::new(1.0, if selected { ACCENT } else { BORDER }),
-                StrokeKind::Inside,
-            );
-            let node_painter = painter.with_clip_rect(rect.intersect(node_rect));
-            node_painter.text(
-                node_rect.min + egui::vec2(10.0, 9.0) * zoom,
-                Align2::LEFT_TOP,
-                format_address(node.address),
-                FontId::monospace(12.0 * zoom),
-                ACCENT,
-            );
-            for (row, address) in node.lines.iter().enumerate() {
-                let Some(i) = analysis.instructions.get(address) else {
-                    continue;
-                };
-                let y = 33.0 + row as f32 * 19.0;
-                let p = node_rect.min + egui::vec2(10.0, y) * zoom;
-                if self.location.address == Some(*address) {
-                    node_painter.rect_filled(
-                        egui::Rect::from_min_size(
-                            p - egui::vec2(3.0, 0.0),
-                            egui::vec2(340.0, 18.0) * zoom,
-                        ),
-                        0.0,
-                        Color32::from_rgb(49, 79, 94),
-                    );
-                }
-                node_painter.text(
-                    p,
-                    Align2::LEFT_TOP,
-                    &i.mnemonic,
-                    FontId::monospace(11.5 * zoom),
-                    instruction_color(i.flow.name(), i.invalid),
-                );
-                let operands = node_painter.layout_job(assembly_job(&i.operands, 11.5 * zoom));
-                node_painter.galley(p + egui::vec2(70.0 * zoom, 0.0), operands, TEXT);
-            }
-            if node.omitted > 0 {
-                node_painter.text(
-                    node_rect.left_bottom() + egui::vec2(10.0 * zoom, -19.0 * zoom),
-                    Align2::LEFT_TOP,
-                    format!("… {} more instructions", node.omitted),
-                    FontId::monospace(11.0 * zoom),
-                    MUTED,
-                );
-            }
-            if (response.clicked() || response.double_clicked())
-                && let Some(pos) = response.interact_pointer_pos()
-                && node_rect.contains(pos)
-            {
-                let row = (((pos.y - node_rect.top()) / zoom - 33.0) / 19.0)
-                    .floor()
-                    .max(0.0) as usize;
-                jump = Some(if pos.y < node_rect.top() + 33.0 * zoom {
-                    node.address
-                } else {
-                    node.lines.get(row).copied().unwrap_or(node.address)
-                });
-                open = response.double_clicked();
-            }
-        }
-        if let Some(address) = jump {
-            self.navigate_address(address);
-            if open {
-                self.actions.push(Action::Show(Panel::Disassembly));
-            }
-        }
-        response.context_menu(|ui| {
-            if ui.button("Open selected address in disassembly").clicked() {
-                self.actions.push(Action::Show(Panel::Disassembly));
-                ui.close();
-            }
-            if ui.button("Reset pan and zoom").clicked() {
-                self.graph_zoom = 1.0;
-                self.graph_pan = egui::vec2(30.0, 25.0);
-                ui.close();
-            }
-        });
-    }
-
     fn overview(&mut self, ui: &mut egui::Ui) {
         if self.empty(ui) {
             return;
@@ -1618,7 +1326,7 @@ impl Workspace {
         egui::ScrollArea::both().show(ui, |ui| {
             if let Some(info) = &self.info {
                 ui.label(RichText::new(&info.file_name).size(18.0).strong());
-                ui.label(RichText::new(&info.path).color(MUTED));
+                ui.label(RichText::new(&info.path).color(self.colors().muted));
                 ui.separator();
                 egui::Grid::new("binary-facts")
                     .num_columns(2)
@@ -1642,13 +1350,13 @@ impl Workspace {
                             ("Object kind", info.object_kind.clone()),
                             ("Debug symbols", info.has_debug_symbols.to_string()),
                         ] {
-                            ui.colored_label(MUTED, label);
+                            ui.colored_label(self.colors().muted, label);
                             ui.label(mono(value));
                             ui.end_row();
                         }
                     });
                 ui.add_space(8.0);
-                ui.colored_label(MUTED, "SHA-256");
+                ui.colored_label(self.colors().muted, "SHA-256");
                 ui.add(egui::Label::new(mono(&info.sha256)).wrap());
             }
             ui.add_space(12.0);
@@ -1666,7 +1374,7 @@ impl Workspace {
                         "File size",
                         "Permissions",
                     ] {
-                        ui.colored_label(MUTED, title);
+                        ui.colored_label(self.colors().muted, title);
                     }
                     ui.end_row();
                     for s in &a.sections {
@@ -1698,7 +1406,7 @@ impl Workspace {
                 ));
                 if analysis.report.cancelled || analysis.report.truncated {
                     ui.colored_label(
-                        GOLD,
+                        self.colors().gold,
                         "Analysis is partial; inspect Messages for diagnostics.",
                     );
                 }
@@ -1708,9 +1416,13 @@ impl Workspace {
 
     fn inspector(&mut self, ui: &mut egui::Ui) {
         egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.label(RichText::new("SELECTION").small().color(MUTED));
+            ui.label(
+                RichText::new("SELECTION")
+                    .small()
+                    .color(self.colors().muted),
+            );
             if let Some(address) = self.location.address {
-                ui.label(mono(format_address(address)).color(ACCENT));
+                ui.label(mono(format_address(address)).color(self.colors().accent));
             }
             if let Some(offset) = self.location.file_offset {
                 ui.label(mono(format!("File {offset:#x}")));
@@ -1725,7 +1437,7 @@ impl Workspace {
             }
             if let Some(f) = self.function() {
                 ui.separator();
-                ui.label(RichText::new("FUNCTION").small().color(MUTED));
+                ui.label(RichText::new("FUNCTION").small().color(self.colors().muted));
                 ui.label(self.name(f));
                 ui.label(mono(format!(
                     "{} — {}",
@@ -1763,7 +1475,11 @@ impl Workspace {
                 self.actions.push(Action::Show(Panel::Xrefs));
             }
             ui.add_space(8.0);
-            ui.label(RichText::new("ANNOTATION").small().color(MUTED));
+            ui.label(
+                RichText::new("ANNOTATION")
+                    .small()
+                    .color(self.colors().muted),
+            );
             if self.project.is_none() {
                 ui.label("Create a project to persist names and notes.");
                 if ui.button("Create project…").clicked() {
@@ -1825,7 +1541,7 @@ impl Workspace {
                         }
                         if annotations.len() > 1000 {
                             ui.colored_label(
-                                GOLD,
+                                self.colors().gold,
                                 "Showing first 1000 annotations; use the palette to search all.",
                             );
                         }
@@ -1840,7 +1556,7 @@ impl Workspace {
             ui.label(
                 RichText::new(format!("{} messages", self.messages.len()))
                     .small()
-                    .color(MUTED),
+                    .color(self.colors().muted),
             );
             if ui.small_button("Clear").clicked() {
                 self.messages.clear();
@@ -1865,7 +1581,11 @@ impl Workspace {
                     let (error, text) = &self.messages[row];
                     ui.horizontal(|ui| {
                         ui.colored_label(
-                            if *error { GOLD } else { ACCENT },
+                            if *error {
+                                self.colors().gold
+                            } else {
+                                self.colors().accent
+                            },
                             if *error { "!" } else { "·" },
                         );
                         ui.label(mono(text).size(11.0));
@@ -1875,17 +1595,55 @@ impl Workspace {
     }
 
     pub fn dialogs(&mut self, ctx: &egui::Context) {
+        if self.about_open {
+            let mut open = true;
+            egui::Window::new("About URA")
+                .open(&mut open)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.image((self.icon.id(), egui::vec2(96.0, 96.0)));
+                        ui.vertical(|ui| {
+                            ui.heading("URA");
+                            ui.label("Ultimate Reverse Engineer · 0.6");
+                            ui.label("Native Rust static analysis · MIT license");
+                            ui.hyperlink_to(
+                                "Source and documentation",
+                                "https://github.com/entrenchedosx/URA",
+                            );
+                        });
+                    });
+                    ui.separator();
+                    ui.label("Ctrl+O Open · Ctrl+G Go to · Ctrl+K Commands · F2 Rename");
+                    ui.label("Space Linear/Graph · Alt+Left/Right History · Ctrl+, Preferences");
+                    ui.label("Arrows/PageUp/PageDown Select instruction · Enter Follow branch");
+                    ui.label("Graph: drag to pan · wheel to zoom · double-click to open");
+                });
+            self.about_open = open;
+        }
         if self.palette_open {
             self.palette(ctx);
         }
         if self.settings_open {
             let mut open = true;
             egui::Window::new("Preferences").open(&mut open).resizable(false).collapsible(false).show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut self.settings.theme, crate::design::Theme::Classic, "Classic light");
+                    ui.selectable_value(&mut self.settings.theme, crate::design::Theme::Dark, "Professional dark");
+                });
+                ui.add(egui::Slider::new(&mut self.settings.ui_font_size, 10.0..=18.0).text("Interface font size"));
+                ui.add(egui::Slider::new(&mut self.settings.graph_font_size, 10.0..=18.0).text("Graph font size"));
                 ui.add(egui::Slider::new(&mut self.settings.font_size, 10.0..=18.0).text("Code font size"));
-                ui.add(egui::Slider::new(&mut self.settings.row_height, 18.0..=30.0).text("Row height"));
+                ui.add(egui::Slider::new(&mut self.settings.row_height, 16.0..=30.0).text("Row height"));
                 ui.checkbox(&mut self.settings.show_bytes, "Show instruction bytes");
-                ui.label(RichText::new("Columns resize by dragging table dividers. Settings save automatically.").color(MUTED));
+                ui.label(RichText::new("Columns resize by dragging table dividers. Settings save automatically.").color(self.colors().muted));
                 ui.separator();
+                ui.collapsing("Visible panels", |ui| {
+                    for panel in Panel::ALL {
+                        let mut visible = self.visible_panels.contains(&panel);
+                        if ui.checkbox(&mut visible, panel.title()).changed() { self.actions.push(Action::TogglePanel(panel)); }
+                    }
+                });
                 if ui.button("Reset panel layout").clicked() { self.actions.push(Action::ResetLayout); }
                 if ui.button("Reset preferences").clicked() { self.settings = Settings::default(); }
                 if ui.button("Close").clicked() { self.settings_open = false; }
@@ -1911,7 +1669,7 @@ impl Workspace {
                     ui.label(
                         RichText::new("An empty name restores the imported or generated name.")
                             .small()
-                            .color(MUTED),
+                            .color(self.colors().muted),
                     );
                     if ui.button("Save name").clicked()
                         || response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter))
@@ -1956,7 +1714,7 @@ impl Workspace {
                 ui.label(
                     RichText::new("Enter to open · ↑ / ↓ to select · Escape to close")
                         .small()
-                        .color(MUTED),
+                        .color(self.colors().muted),
                 );
                 let mut chosen = None;
                 egui::ScrollArea::vertical()
@@ -1979,7 +1737,10 @@ impl Workspace {
                             }
                         }
                         if self.palette_items.is_empty() {
-                            ui.colored_label(MUTED, "No matching address, symbol or command.");
+                            ui.colored_label(
+                                self.colors().muted,
+                                "No matching address, symbol or command.",
+                            );
                         }
                     });
                 if ui.input(|i| i.key_pressed(Key::Enter)) && !self.palette_items.is_empty() {
@@ -2122,19 +1883,27 @@ impl Workspace {
     }
 }
 
-fn instruction_color(flow: &str, invalid: bool) -> Color32 {
+pub(crate) fn instruction_color(
+    flow: &str,
+    invalid: bool,
+    colors: crate::design::Palette,
+) -> Color32 {
     if invalid {
-        Color32::from_rgb(216, 123, 122)
+        colors.error
     } else if flow.contains("call") {
-        GOLD
+        colors.gold
     } else if flow.contains("jump") || flow == "return" {
-        Color32::from_rgb(177, 151, 207)
+        colors.branch
     } else {
-        ACCENT
+        colors.accent
     }
 }
 
-fn assembly_job(text: &str, size: f32) -> egui::text::LayoutJob {
+pub(crate) fn assembly_job(
+    text: &str,
+    size: f32,
+    colors: crate::design::Palette,
+) -> egui::text::LayoutJob {
     let mut job = egui::text::LayoutJob::default();
     for token in text.split_inclusive(|c: char| !c.is_alphanumeric() && c != '_') {
         let word = token
@@ -2148,7 +1917,7 @@ fn assembly_job(text: &str, size: f32) -> egui::text::LayoutJob {
                     .chars()
                     .all(|c| c.is_ascii_hexdigit())
         {
-            GOLD
+            colors.gold
         } else if matches!(
             word.as_str(),
             "rax"
@@ -2182,9 +1951,9 @@ fn assembly_job(text: &str, size: f32) -> egui::text::LayoutJob {
                 | "r15"
         ) || word.starts_with("xmm")
         {
-            Color32::from_rgb(140, 181, 164)
+            colors.register
         } else {
-            TEXT
+            colors.text
         };
         job.append(
             token,

@@ -1,6 +1,6 @@
 [package]
 name = "ura-native"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 license.workspace = true
 rust-version = "1.95"
@@ -19,3 +19,6 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 
 [dev-dependencies]
 tempfile.workspace = true
+
+[target.'cfg(windows)'.build-dependencies]
+tauri-winres = "0.3.7"

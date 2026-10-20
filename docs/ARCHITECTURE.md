@@ -1,22 +1,24 @@
 # Architecture
 
-## Native desktop (v0.5)
+## Native desktop (v0.6)
 
 `crates/ura-native` is the default workspace member. Its eframe entry point
 renders egui directly through OpenGL and winit; no browser engine or IPC is
-involved. It depends on `ura-core` and `ura-project` directly. Those two crates
-and their schema migrations are unchanged by the native migration.
+involved. It depends on `ura-core` and `ura-project` directly. Schema v3 and its v1/v2 migrations remain compatible. A separate read-only
+snapshot API supports headless attachment without migration or binary-path IO.
 
 - `app.rs`: shared workspace, navigation/selection, project actions, settings,
   stale-result generations, docking and persistence.
-- `views.rs`: ten dockable analysis panels, virtualized tables and visible-range
-  hex rendering, graph painting, palette and dialogs.
+- `views.rs`: analysis panels, virtualized tables and visible-range
+  hex rendering, palette and dialogs.
 - `worker.rs`: serial background jobs, progress/cancellation and panic recovery.
   Immutable binaries and analysis results are shared with `Arc`. IO, parsing,
   decoding, analysis, string scanning and graph layout stay off the paint path.
 - `navigation.rs`: u64 address/offset mapping and bounded history.
 - `graph.rs`: deterministic, cycle-safe layered graph geometry with height-aware
-  spacing; at most 240 blocks and 12 displayed instructions per block.
+  spacing; at most 240 blocks and 32 displayed instructions per block.
+- `design.rs`, `menus.rs`, `graph_view.rs`: shared theme/metrics, conventional
+  menus and interactive graph/overview rendering.
 - `diagnostics.rs`: opt-in capture of the actual renderer and frame CPU metrics.
 
 Disassembly caches up to 16,000 formatted instructions, fetched in 2,000-row
@@ -30,6 +32,20 @@ member containing dock geometry, history, selection and the retained CFG
 function. Compatible top-level fields remain readable by v0.4. Global preferences
 and window geometry use eframe storage. Saving queues database writes and the
 worker drains them on shutdown. Samples remain read-only.
+
+## Headless adapters (v0.6)
+
+`ura-service` owns sessions, normalized analysis options, schema-versioned DTOs,
+path restrictions and explicit write permissions. It invokes the same core
+analysis and project functions used by the desktop. `ura-cli` is a synchronous
+text/JSON adapter; `ura-mcp` routes 15 stdio tools to the service. Neither starts
+the desktop. MCP uses rmcp and stderr logging; there is no network listener.
+Query pages and byte reads have explicit limits. Address-based byte reads must
+fit one file-backed section. Read-only project snapshots support v1-v3 and
+compare the supplied binary's hash, without reading a recorded external path.
+Service calls are serialized per process; cancellation/progress notifications and
+persisted analysis caches are not implemented in MCP. Strings are rescanned per
+query; future caching should be keyed by binary identity and scan options.
 
 ## Preserved v0.4 frontend architecture
 

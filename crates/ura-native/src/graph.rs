@@ -2,12 +2,13 @@ use std::collections::{BTreeMap, VecDeque};
 use ura_core::{EdgeKind, ProgramAnalysis};
 
 pub const BLOCK_CAP: usize = 240;
-pub const LINE_CAP: usize = 12;
+pub const LINE_CAP: usize = 32;
 pub struct GraphNode {
     pub address: u64,
     pub x: f32,
     pub y: f32,
     pub height: f32,
+    pub width: f32,
     pub lines: Vec<u64>,
     pub omitted: usize,
 }
@@ -52,11 +53,10 @@ pub fn layout(analysis: &ProgramAnalysis, address: u64) -> Result<GraphLayout, S
             }
         }
     }
-    let mut columns = BTreeMap::<usize, usize>::new();
     let mut heights = BTreeMap::<usize, f32>::new();
     for (i, address) in addresses.iter().enumerate() {
         let lines = analysis.blocks[address].instructions.len();
-        let height = 42.0 + (lines.min(LINE_CAP) + usize::from(lines > LINE_CAP)) as f32 * 19.0;
+        let height = 32.0 + (lines.min(LINE_CAP) + usize::from(lines > LINE_CAP)) as f32 * 16.0;
         heights
             .entry(ranks[i].unwrap_or(0))
             .and_modify(|h| *h = h.max(height))
@@ -66,15 +66,39 @@ pub fn layout(analysis: &ProgramAnalysis, address: u64) -> Result<GraphLayout, S
     let mut y = 0.0;
     for (rank, height) in heights {
         layer_y.insert(rank, y);
-        y += height + 70.0;
+        y += height + 42.0;
     }
+    let widths: Vec<f32> = addresses
+        .iter()
+        .map(|address| {
+            let block = &analysis.blocks[address];
+            let chars = block
+                .instructions
+                .iter()
+                .take(LINE_CAP)
+                .filter_map(|a| analysis.instructions.get(a))
+                .map(|i| 11 + i.operands.chars().count())
+                .max()
+                .unwrap_or(20);
+            (chars as f32 * 6.7 + 20.0).clamp(210.0, 760.0)
+        })
+        .collect();
+    let mut layer_widths = BTreeMap::<usize, f32>::new();
+    for (i, width) in widths.iter().enumerate() {
+        *layer_widths.entry(ranks[i].unwrap_or(0)).or_default() += width + 36.0;
+    }
+    let max_width = layer_widths.values().copied().fold(1.0_f32, f32::max);
+    let mut layer_x: BTreeMap<usize, f32> = layer_widths
+        .iter()
+        .map(|(rank, w)| (*rank, (max_width - w) * 0.5))
+        .collect();
     let mut nodes = Vec::new();
     let mut edges = Vec::new();
     // Layer pitch follows displayed block height, retaining space for routed edges.
     for (i, address) in addresses.iter().enumerate() {
         let block = &analysis.blocks[address];
         let rank = ranks[i].unwrap_or(0);
-        let column = columns.entry(rank).or_default();
+        let x = layer_x.entry(rank).or_default();
         let lines = block
             .instructions
             .iter()
@@ -84,13 +108,14 @@ pub fn layout(analysis: &ProgramAnalysis, address: u64) -> Result<GraphLayout, S
         let omitted = block.instructions.len().saturating_sub(LINE_CAP);
         nodes.push(GraphNode {
             address: *address,
-            x: *column as f32 * 400.0,
+            x: *x,
+            width: widths[i],
             y: layer_y[&rank],
-            height: 42.0 + (lines.len() + usize::from(omitted > 0)) as f32 * 19.0,
+            height: 32.0 + (lines.len() + usize::from(omitted > 0)) as f32 * 16.0,
             lines,
             omitted,
         });
-        *column += 1;
+        *x += widths[i] + 36.0;
         for edge in &block.successors {
             if let Some(&target) = index.get(&edge.target) {
                 edges.push(GraphEdge {

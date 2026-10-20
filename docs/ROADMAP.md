@@ -113,3 +113,17 @@ as heuristic.
   silently. (v1 → v2 implemented for function names.)
 - Measure large-file memory use and consider memory-mapped reads for hex and strings.
 - Expand integration coverage for ELF x64 disassembly and Mach-O metadata.
+
+## v0.6 — continuation checkpoint
+
+- [x] Recover service/CLI/MCP code and add actual MCP stdio process tests.
+- [x] Read-only project attachment without migrations or recorded binary IO.
+- [x] Official artwork, reproducible variants and native Windows resources.
+- [x] Compact classic light/dark native workspace, menus and graph overview.
+- [x] Reject overlapping instruction ranges and section-crossing byte reads.
+- [x] Study Ghidra source and record an honest feature/dependency matrix.
+- [ ] Semantic IR, additional ISAs, jump tables, type recovery and decompiler.
+- [ ] Debugger backend and public scripting/plugin API.
+
+The earlier v0.1-v0.4 sections are historical legacy milestones. Native and
+headless release details supersede them; see README and VERIFICATION-0.6.md.

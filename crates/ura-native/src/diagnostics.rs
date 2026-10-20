@@ -7,6 +7,36 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// Frame sampling is enabled only for the existing benchmark environment.
+/// It never requests a repaint, so idle measurements retain normal scheduling.
+pub struct IdleMetrics {
+    output: PathBuf,
+    started: Instant,
+    frames: Vec<serde_json::Value>,
+}
+impl IdleMetrics {
+    pub fn from_env() -> Option<Self> {
+        Some(Self {
+            output: PathBuf::from(std::env::var_os("URA_BENCHMARK_OUTPUT")?)
+                .join("idle-frames.json"),
+            started: Instant::now(),
+            frames: vec![],
+        })
+    }
+    pub fn record(&mut self, ctx: &egui::Context, cpu: Option<f32>) {
+        if self.frames.len() < 20_000 {
+            self.frames.push(serde_json::json!({"elapsed_ms":self.started.elapsed().as_secs_f64()*1000.0,"cpu_ms":cpu.map(|v|v*1000.0),"causes":format!("{:?}",ctx.repaint_causes())}));
+        }
+    }
+}
+impl Drop for IdleMetrics {
+    fn drop(&mut self) {
+        if let Ok(data) = serde_json::to_vec_pretty(&self.frames) {
+            let _ = std::fs::write(&self.output, data);
+        }
+    }
+}
+
 pub struct DisplayCheck {
     output: PathBuf,
     started: Instant,
@@ -16,6 +46,7 @@ pub struct DisplayCheck {
     frames: Vec<serde_json::Value>,
     navigation: Vec<f64>,
     first_ready: Option<f64>,
+    dark: bool,
 }
 const SIZES: [(f32, f32, f32); 4] = [
     (1280.0, 720.0, 1.0),
@@ -44,9 +75,15 @@ impl DisplayCheck {
             frames: vec![],
             navigation: vec![],
             first_ready: None,
+            dark: std::env::var("URA_DISPLAY_THEME").is_ok_and(|v| v == "dark"),
         })
     }
     pub fn update(&mut self, app: &mut NativeApp, ctx: &egui::Context, cpu_seconds: Option<f32>) {
+        app.workspace.settings.theme = if self.dark {
+            crate::design::Theme::Dark
+        } else {
+            crate::design::Theme::Classic
+        };
         // NativeOptions directs verification persistence to a separate file.
         ctx.request_repaint_after(Duration::from_millis(16));
         for event in ctx.input(|i| i.raw.events.clone()) {
@@ -73,7 +110,10 @@ impl DisplayCheck {
                             image::ColorType::Rgba8,
                         )
                         .map_err(|e| e.to_string())?;
-                        Ok(Event::Message(format!("Screenshot: {}", path.display())))
+                        Ok(Event::Message(format!(
+                            "Screenshot: {}",
+                            path.file_name().unwrap().to_string_lossy()
+                        )))
                     });
                 self.stage += 1;
                 self.phase = 0;

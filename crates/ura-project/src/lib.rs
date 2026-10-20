@@ -207,6 +207,53 @@ pub fn open_project(project_path: &Path) -> ProjectResult<ProjectSnapshot> {
     })
 }
 
+/// Read a v1-v3 project without migrating it or touching its recorded binary path.
+/// Callers that already opened a binary must compare its hash themselves.
+pub fn read_project(project_path: &Path) -> ProjectResult<ProjectSnapshot> {
+    if !project_path.exists() {
+        return Err(ProjectError::NotFound(
+            project_path.to_string_lossy().into_owned(),
+        ));
+    }
+    let connection =
+        Connection::open_with_flags(project_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    connection.busy_timeout(std::time::Duration::from_secs(5))?;
+    let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    if version > SCHEMA_VERSION {
+        return Err(ProjectError::UnsupportedSchema {
+            found: version,
+            supported: SCHEMA_VERSION,
+        });
+    }
+    if !(1..=SCHEMA_VERSION).contains(&version) {
+        return Err(ProjectError::InvalidProject(format!(
+            "unsupported schema version {version}"
+        )));
+    }
+    let mut project = load_project(&connection)?;
+    project.schema_version = version;
+    Ok(ProjectSnapshot {
+        project,
+        annotations: load_annotations(&connection)?,
+        function_names: if version >= 2 {
+            load_function_names(&connection)?
+        } else {
+            vec![]
+        },
+        manual_functions: if version >= 3 {
+            load_manual_functions(&connection)?
+        } else {
+            vec![]
+        },
+        view_state: if version >= 3 {
+            load_view_state(&connection)?
+        } else {
+            None
+        },
+        binary_status: "unchecked".into(),
+    })
+}
+
 pub fn save_annotation(
     project_path: &Path,
     address: &str,

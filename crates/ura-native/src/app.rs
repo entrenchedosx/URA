@@ -1,9 +1,10 @@
+use crate::design::{self, Palette, Theme};
 use crate::{
     graph::GraphLayout,
     navigation::{History, Location},
     worker::{Control, Event, TaskKind, Worker},
 };
-use eframe::egui::{self, Color32, FontId, Key, Modifiers, RichText};
+use eframe::egui::{self, Key, Modifiers, RichText};
 use egui_dock::{DockArea, DockState, NodeIndex};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -21,15 +22,6 @@ use ura_core::{
 };
 use ura_project::ProjectSnapshot;
 
-pub const BG: Color32 = Color32::from_rgb(20, 24, 30);
-pub const PANEL: Color32 = Color32::from_rgb(25, 30, 37);
-pub const BORDER: Color32 = Color32::from_rgb(47, 56, 67);
-pub const TEXT: Color32 = Color32::from_rgb(208, 216, 227);
-pub const MUTED: Color32 = Color32::from_rgb(129, 146, 164);
-pub const ACCENT: Color32 = Color32::from_rgb(103, 182, 206);
-pub const GOLD: Color32 = Color32::from_rgb(213, 180, 120);
-pub const SELECTED: Color32 = Color32::from_rgb(39, 65, 80);
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Panel {
     Explorer,
@@ -42,9 +34,10 @@ pub enum Panel {
     Overview,
     Inspector,
     Messages,
+    GraphOverview,
 }
 impl Panel {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Explorer,
         Self::Disassembly,
         Self::Functions,
@@ -55,10 +48,11 @@ impl Panel {
         Self::Overview,
         Self::Inspector,
         Self::Messages,
+        Self::GraphOverview,
     ];
     pub fn title(self) -> &'static str {
         match self {
-            Self::Explorer => "Explorer",
+            Self::Explorer => "Project structure",
             Self::Disassembly => "Disassembly",
             Self::Functions => "Functions",
             Self::Graph => "Graph",
@@ -67,7 +61,8 @@ impl Panel {
             Self::Xrefs => "Xrefs",
             Self::Overview => "Overview",
             Self::Inspector => "Inspector",
-            Self::Messages => "Messages",
+            Self::Messages => "Output",
+            Self::GraphOverview => "Graph overview",
         }
     }
     fn legacy(self) -> &'static str {
@@ -82,6 +77,7 @@ impl Panel {
             Self::Overview => "overview",
             Self::Inspector => "inspector",
             Self::Messages => "messages",
+            Self::GraphOverview => "graphOverview",
         }
     }
     fn from_legacy(s: &str) -> Option<Self> {
@@ -94,18 +90,19 @@ pub fn default_dock() -> DockState<Panel> {
         Panel::Graph,
         Panel::Hex,
         Panel::Strings,
+        Panel::Xrefs,
         Panel::Overview,
+        Panel::Inspector,
     ]);
-    let [center, _] = dock.main_surface_mut().split_left(
+    let [center, left] = dock.main_surface_mut().split_left(
         NodeIndex::root(),
-        0.19,
-        vec![Panel::Explorer, Panel::Functions],
+        0.18,
+        vec![Panel::Functions, Panel::Explorer],
     );
-    let [center, _] =
-        dock.main_surface_mut()
-            .split_right(center, 0.78, vec![Panel::Inspector, Panel::Xrefs]);
     dock.main_surface_mut()
-        .split_below(center, 0.80, vec![Panel::Messages]);
+        .split_below(left, 0.72, vec![Panel::GraphOverview]);
+    dock.main_surface_mut()
+        .split_below(center, 0.85, vec![Panel::Messages]);
     dock
 }
 
@@ -113,6 +110,9 @@ pub fn default_dock() -> DockState<Panel> {
 #[serde(default)]
 pub struct Settings {
     pub font_size: f32,
+    pub ui_font_size: f32,
+    pub graph_font_size: f32,
+    pub theme: Theme,
     pub row_height: f32,
     pub show_bytes: bool,
     pub hex_columns: usize,
@@ -124,7 +124,10 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             font_size: 12.0,
-            row_height: 22.0,
+            row_height: 18.0,
+            ui_font_size: 12.0,
+            graph_font_size: 11.0,
+            theme: Theme::Classic,
             show_bytes: true,
             hex_columns: 16,
             min_string: 4,
@@ -139,10 +142,19 @@ impl Settings {
             self.font_size = 12.0;
         }
         if !self.row_height.is_finite() {
-            self.row_height = 22.0;
+            self.row_height = 18.0;
         }
         self.font_size = self.font_size.clamp(10.0, 18.0);
-        self.row_height = self.row_height.clamp(self.font_size + 6.0, 30.0);
+        self.row_height = self.row_height.clamp(self.font_size + 4.0, 30.0);
+        for (value, default) in [
+            (&mut self.ui_font_size, 12.0),
+            (&mut self.graph_font_size, 11.0),
+        ] {
+            if !value.is_finite() {
+                *value = default;
+            }
+            *value = value.clamp(10.0, 18.0);
+        }
         self.hex_columns = match self.hex_columns {
             8 | 16 | 32 => self.hex_columns,
             _ => 16,
@@ -179,6 +191,7 @@ pub enum Action {
     Cancel,
     Navigate(Location, bool),
     Show(Panel),
+    TogglePanel(Panel),
     Back,
     Forward,
     ResetLayout,
@@ -247,12 +260,26 @@ pub struct Workspace {
     pub palette_index: usize,
     pub palette_items: Vec<(String, String, Action)>,
     pub settings_open: bool,
+    pub about_open: bool,
+    pub icon: egui::TextureHandle,
+    pub visible_panels: Vec<Panel>,
     pub last_error: Option<String>,
     pub recent: Vec<PathBuf>,
 }
 
 impl Workspace {
     fn new(ctx: egui::Context, settings: Settings, recent: Vec<PathBuf>) -> Self {
+        let image = image::load_from_memory(include_bytes!("../assets/icon.png"))
+            .expect("bundled icon")
+            .into_rgba8();
+        let icon = ctx.load_texture(
+            "ura-official-icon",
+            egui::ColorImage::from_rgba_unmultiplied(
+                [image.width() as usize, image.height() as usize],
+                image.as_raw(),
+            ),
+            Default::default(),
+        );
         Self {
             worker: Worker::new(ctx.clone()),
             ctx,
@@ -283,7 +310,7 @@ impl Workspace {
             settings,
             actions: vec![],
             restore: None,
-            messages: vec![(false, "URA 0.5 · Native Rust workspace ready".into())],
+            messages: vec![(false, "URA 0.6 · Native analysis workspace ready".into())],
             names: BTreeMap::new(),
             annotation_indices: BTreeMap::new(),
             function_filter: Filter::default(),
@@ -308,9 +335,15 @@ impl Workspace {
             palette_index: 0,
             palette_items: Vec::new(),
             settings_open: false,
+            about_open: false,
+            icon,
+            visible_panels: vec![],
             last_error: None,
             recent,
         }
+    }
+    pub fn colors(&self) -> Palette {
+        self.settings.theme.palette()
     }
     pub fn log(&mut self, error: bool, message: impl Into<String>) {
         let message = message.into();
@@ -786,20 +819,33 @@ impl Workspace {
             }
         }
         if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
+            egui::Popup::close_all(&ctx);
             self.palette_open = false;
             self.settings_open = false;
             self.rename_open = false;
+            self.about_open = false;
             self.last_error = None;
         }
         if self.palette_open
             || self.settings_open
             || self.rename_open
+            || egui::Popup::is_any_open(&ctx)
             || ctx.egui_wants_keyboard_input()
         {
             return;
         }
         if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::F2)) {
             self.actions.push(Action::Rename);
+        }
+        if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Space))
+            && matches!(self.active, Panel::Disassembly | Panel::Graph)
+        {
+            self.actions
+                .push(Action::Show(if self.active == Panel::Graph {
+                    Panel::Disassembly
+                } else {
+                    Panel::Graph
+                }));
         }
         if self.active == Panel::Disassembly {
             for (key, delta) in [
@@ -849,6 +895,8 @@ pub struct NativeApp {
     pub dock: DockState<Panel>,
     last_save: Instant,
     pub display_check: Option<crate::diagnostics::DisplayCheck>,
+    applied_style: Option<(Theme, u32, u32)>,
+    idle_metrics: Option<crate::diagnostics::IdleMetrics>,
 }
 impl NativeApp {
     pub fn new(cc: &eframe::CreationContext<'_>, startup: Option<PathBuf>) -> Self {
@@ -858,19 +906,22 @@ impl NativeApp {
             .and_then(|s| eframe::get_value(s, "ura.settings.v1"))
             .unwrap_or_default();
         settings.normalize();
+        design::apply(&cc.egui_ctx, &settings);
         let recent = cc
             .storage
             .and_then(|s| eframe::get_value(s, "ura.recent.v1"))
             .unwrap_or_default();
         let dock = cc
             .storage
-            .and_then(|s| eframe::get_value(s, "ura.dock.v1"))
+            .and_then(|s| eframe::get_value(s, "ura.dock.v2"))
             .unwrap_or_else(default_dock);
         let mut app = Self {
             workspace: Workspace::new(cc.egui_ctx.clone(), settings, recent),
             dock,
             last_save: Instant::now(),
             display_check: None,
+            applied_style: None,
+            idle_metrics: crate::diagnostics::IdleMetrics::from_env(),
         };
         if let Some(path) = startup {
             app.workspace.actions.push(Action::Open(path));
@@ -1000,6 +1051,13 @@ impl NativeApp {
             for action in actions {
                 match action {
                     Action::Show(panel) => self.show_panel(panel),
+                    Action::TogglePanel(panel) => {
+                        if let Some(path) = self.dock.find_tab(&panel) {
+                            self.dock.remove_tab(path);
+                        } else {
+                            self.show_panel(panel);
+                        }
+                    }
                     Action::ResetLayout => self.dock = default_dock(),
                     Action::Save => self.persist_project(),
                     Action::Open(path) => {
@@ -1248,33 +1306,43 @@ impl NativeApp {
 
 impl eframe::App for NativeApp {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        if let Some(metrics) = &mut self.idle_metrics {
+            metrics.record(ui.ctx(), frame.info().cpu_usage);
+        }
         self.workspace.settings.normalize();
+        let s = &self.workspace.settings;
+        let style_key = (s.theme, s.ui_font_size.to_bits(), s.font_size.to_bits());
+        if self.applied_style != Some(style_key) {
+            design::apply(ui.ctx(), s);
+            self.applied_style = Some(style_key);
+        }
         self.workspace.poll();
         self.restore_project();
         self.workspace.keyboard();
         self.process_actions();
         let ctx = ui.ctx().clone();
+        self.workspace.visible_panels = self.dock.iter_all_tabs().map(|(_, tab)| *tab).collect();
         if let Some(mut check) = self.display_check.take() {
             check.update(self, &ctx, frame.info().cpu_usage);
             self.display_check = Some(check);
         }
         egui::Panel::top("toolbar").show(ui, |ui| self.workspace.toolbar(ui));
         egui::Panel::bottom("status")
-            .exact_size(27.0)
+            .exact_size(design::STATUS_HEIGHT)
             .show(ui, |ui| self.workspace.status(ui));
         egui::CentralPanel::default()
-            .frame(egui::Frame::NONE.fill(BG))
+            .frame(egui::Frame::NONE.fill(self.workspace.colors().bg))
             .show(ui, |ui| {
                 let mut style = egui_dock::Style::from_egui(ui.style());
-                style.tab_bar.height = 29.0;
-                style.tab_bar.bg_fill = PANEL;
-                style.tab.active.bg_fill = BG;
-                style.tab.focused.bg_fill = BG;
-                style.tab.focused.text_color = ACCENT;
-                style.tab.tab_body.bg_fill = BG;
-                style.tab.tab_body.inner_margin = egui::Margin::same(6);
-                style.separator.width = 3.0;
-                style.separator.color_idle = BORDER;
+                style.tab_bar.height = design::TAB_HEIGHT;
+                style.tab_bar.bg_fill = self.workspace.colors().panel;
+                style.tab.active.bg_fill = self.workspace.colors().bg;
+                style.tab.focused.bg_fill = self.workspace.colors().bg;
+                style.tab.focused.text_color = self.workspace.colors().accent;
+                style.tab.tab_body.bg_fill = self.workspace.colors().bg;
+                style.tab.tab_body.inner_margin = egui::Margin::same(3);
+                style.separator.width = 2.0;
+                style.separator.color_idle = self.workspace.colors().border;
                 DockArea::new(&mut self.dock)
                     .style(style)
                     .show_inside(ui, &mut self.workspace);
@@ -1290,7 +1358,7 @@ impl eframe::App for NativeApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, "ura.settings.v1", &self.workspace.settings);
         eframe::set_value(storage, "ura.recent.v1", &self.workspace.recent);
-        eframe::set_value(storage, "ura.dock.v1", &self.dock);
+        eframe::set_value(storage, "ura.dock.v2", &self.dock);
         self.persist_project();
     }
     fn auto_save_interval(&self) -> Duration {
@@ -1321,34 +1389,7 @@ fn theme(ctx: &egui::Context) {
         }
     }
     ctx.set_fonts(fonts);
-    let mut style = egui::Style::default();
-    let mut visuals = egui::Visuals::dark();
-    visuals.panel_fill = BG;
-    visuals.window_fill = PANEL;
-    visuals.extreme_bg_color = Color32::from_rgb(16, 20, 25);
-    visuals.faint_bg_color = PANEL;
-    visuals.override_text_color = Some(TEXT);
-    visuals.selection.bg_fill = SELECTED;
-    visuals.selection.stroke = egui::Stroke::new(1.0, ACCENT);
-    visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, BORDER);
-    visuals.widgets.inactive.weak_bg_fill = PANEL;
-    visuals.widgets.hovered.weak_bg_fill = SELECTED;
-    visuals.widgets.active.weak_bg_fill = SELECTED;
-    visuals.window_corner_radius = egui::CornerRadius::same(5);
-    style.visuals = visuals;
-    style.spacing.item_spacing = egui::vec2(7.0, 5.0);
-    style.spacing.button_padding = egui::vec2(8.0, 4.0);
-    style
-        .text_styles
-        .insert(egui::TextStyle::Body, FontId::proportional(12.0));
-    style
-        .text_styles
-        .insert(egui::TextStyle::Button, FontId::proportional(12.0));
-    style
-        .text_styles
-        .insert(egui::TextStyle::Monospace, FontId::monospace(12.0));
-    ctx.set_theme(egui::Theme::Dark);
-    ctx.set_style_of(egui::Theme::Dark, style);
+    design::apply(ctx, &Settings::default());
 }
 
 pub fn mono(text: impl Into<String>) -> RichText {
@@ -1394,6 +1435,8 @@ mod tests {
             dock: default_dock(),
             last_save: Instant::now(),
             display_check: None,
+            applied_style: None,
+            idle_metrics: crate::diagnostics::IdleMetrics::from_env(),
         }
     }
     fn pump(app: &mut NativeApp, condition: impl Fn(&NativeApp) -> bool) {
@@ -1415,12 +1458,19 @@ mod tests {
     fn every_panel_tessellates_at_required_sizes_and_scale() {
         let mut app = test_app();
         let ctx = app.workspace.ctx.clone();
-        for (width, height, scale) in [
-            (1280.0, 720.0, 1.0),
-            (1440.0, 900.0, 1.0),
-            (1920.0, 1080.0, 1.0),
-            (1920.0, 1080.0, 1.5),
-        ] {
+        for (theme, width, height, scale) in
+            [Theme::Classic, Theme::Dark].into_iter().flat_map(|theme| {
+                [
+                    (1280.0, 720.0, 1.0),
+                    (1440.0, 900.0, 1.0),
+                    (1920.0, 1080.0, 1.0),
+                    (1920.0, 1080.0, 1.5),
+                ]
+                .map(move |(w, h, s)| (theme, w, h, s))
+            })
+        {
+            app.workspace.settings.theme = theme;
+            design::apply(&ctx, &app.workspace.settings);
             ctx.set_pixels_per_point(scale);
             for mut panel in Panel::ALL {
                 let mut output = ctx.run_ui(
@@ -1515,7 +1565,7 @@ mod tests {
         reopened.restore_project();
         assert_eq!(reopened.workspace.location.address, Some(manual));
         assert_eq!(reopened.workspace.active, Panel::Graph);
-        assert_eq!(reopened.dock.iter_all_tabs().count(), 10);
+        assert_eq!(reopened.dock.iter_all_tabs().count(), Panel::ALL.len());
         assert!(reopened.workspace.history.entries.len() >= 2);
         let destination = dir.path().join("annotations.json");
         let export = ura_project::export_annotations(&path, &destination).unwrap();

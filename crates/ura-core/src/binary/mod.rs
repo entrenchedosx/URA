@@ -101,7 +101,7 @@ impl Section {
         if delta >= self.file_size {
             return None;
         }
-        self.file_offset.map(|start| start + delta)
+        self.file_offset.and_then(|start| start.checked_add(delta))
     }
 
     pub fn address_for_file_offset(&self, offset: u64) -> Option<u64> {
@@ -109,7 +109,7 @@ impl Section {
             return None;
         }
         let start = self.file_offset?;
-        Some(self.address + (offset - start))
+        self.address.checked_add(offset - start)
     }
 
     pub fn permissions(&self) -> String {

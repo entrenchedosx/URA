@@ -1,0 +1,300 @@
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+
+use serde_json::Value;
+use ura_core::AnalysisOptions;
+use ura_service::{PathPolicy, Service};
+
+fn repo_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .unwrap()
+}
+
+fn fixture(name: &str) -> PathBuf {
+    repo_root().join("tests").join("fixtures").join(name)
+}
+
+fn run<S: AsRef<OsStr>>(args: impl IntoIterator<Item = S>) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_ura-cli"))
+        .arg("--allow")
+        .arg(repo_root())
+        .args(args)
+        .output()
+        .expect("ura-cli should run")
+}
+
+fn stdout(output: &Output) -> String {
+    String::from_utf8(output.stdout.clone()).unwrap()
+}
+
+fn stderr(output: &Output) -> String {
+    String::from_utf8(output.stderr.clone()).unwrap()
+}
+
+fn json(output: &Output) -> Value {
+    serde_json::from_str(&stdout(output)).unwrap_or_else(|error| {
+        panic!(
+            "stdout was not valid JSON: {error}\nstdout: {}\nstderr: {}",
+            stdout(output),
+            stderr(output)
+        )
+    })
+}
+
+fn text(path: &Path) -> &str {
+    path.to_str().unwrap()
+}
+
+#[test]
+fn info_reports_identity_in_text_and_json() {
+    let binary = fixture("ura64.exe");
+    let text_output = run(["info", text(&binary)]);
+    assert!(text_output.status.success(), "{}", stderr(&text_output));
+    let rendered = stdout(&text_output);
+    assert!(rendered.contains("Entry point: 0x140001000"));
+    assert!(rendered.contains(".rdata"));
+    assert!(rendered.contains("b3af30012bbcd6fc3186ef5b65d3c8460bc09cade3870a614fbf2bd3d41eb92d"));
+
+    let json_output = run(["info", text(&binary), "--json"]);
+    assert!(json_output.status.success(), "{}", stderr(&json_output));
+    let value = json(&json_output);
+    assert_eq!(value["schemaVersion"], 1);
+    assert_eq!(value["handle"], "bin1");
+    assert_eq!(value["info"]["format"], "PE");
+    assert_eq!(value["info"]["architecture"], "x86-64");
+    assert_eq!(value["info"]["entryPoint"], "0x140001000");
+    assert_eq!(value["info"]["imageBase"], "0x140000000");
+    assert_eq!(value["sections"].as_array().unwrap().len(), 2);
+    assert!(value["attachedProject"].is_null());
+}
+
+#[test]
+fn analyze_functions_and_cfg_expose_analysis_results() {
+    let binary = fixture("ura64.exe");
+    let output = run([
+        "analyze",
+        text(&binary),
+        "--json",
+        "--max-instructions",
+        "1000",
+        "--no-follow-calls",
+    ]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let value = json(&output);
+    assert_eq!(value["options"]["maxInstructions"], 1000);
+    assert_eq!(value["options"]["followCalls"], false);
+
+    let output = run([
+        "analyze",
+        text(&binary),
+        "--json",
+        "--max-instructions",
+        "64",
+    ]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let value = json(&output);
+    assert_eq!(value["report"]["functionCount"], 2);
+    assert_eq!(value["report"]["instructionCount"], 15);
+
+    let output = run([
+        "functions",
+        text(&binary),
+        "--json",
+        "--sort",
+        "instructions",
+        "--limit",
+        "1",
+    ]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let value = json(&output);
+    assert_eq!(value["total"], 2);
+    assert_eq!(value["returned"], 1);
+    assert_eq!(value["limit"], 1);
+    assert_eq!(value["functions"][0]["instructionCount"], 8);
+
+    let output = run([
+        "cfg",
+        text(&binary),
+        "--function",
+        "0x140001020",
+        "--max-cfg-blocks",
+        "2",
+        "--json",
+    ]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let value = json(&output);
+    assert_eq!(value["function"]["name"], "sub_140001020");
+    assert_eq!(value["truncated"], true);
+    assert_eq!(value["blocks"].as_array().unwrap().len(), 2);
+    assert_eq!(value["blocks"][1]["successors"][0]["kind"], "taken");
+    assert_eq!(value["blocks"][1]["successors"][0]["target"], "0x140001026");
+}
+
+#[test]
+fn disassembly_hex_strings_and_xrefs_are_queryable() {
+    let binary = fixture("ura64.exe");
+    let output = run([
+        "disasm",
+        text(&binary),
+        "--address",
+        "0x140001000",
+        "--count",
+        "2",
+        "--json",
+    ]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let value = json(&output);
+    let instructions = value["instructions"].as_array().unwrap();
+    assert_eq!(instructions.len(), 2);
+    assert_eq!(instructions[0]["address"], "0x140001000");
+    assert_eq!(instructions[0]["text"], "push rbp");
+    assert_eq!(instructions[0]["bytes"], "55");
+
+    let output = run([
+        "hex",
+        text(&binary),
+        "--offset",
+        "0x400",
+        "--length",
+        "16",
+        "--json",
+    ]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let value = json(&output);
+    assert_eq!(value["address"], "0x140002000");
+    assert_eq!(value["section"], ".rdata");
+    assert_eq!(value["returnedLength"], 16);
+    assert_eq!(
+        value["hex"],
+        "55 52 41 20 66 69 78 74 75 72 65 20 73 74 72 69"
+    );
+    assert_eq!(value["ascii"], "URA fixture stri");
+
+    let output = run(["strings", text(&binary), "--json", "--limit", "20"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let value = json(&output);
+    let strings = value["strings"].as_array().unwrap();
+    assert!(strings
+        .iter()
+        .any(|entry| entry["value"] == "URA fixture string"));
+    assert!(strings.iter().any(|entry| entry["value"] == "Wide URA"));
+    assert_eq!(value["total"], 4);
+
+    let output = run(["xrefs", text(&binary), "--address", "0x140001020", "--json"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let value = json(&output);
+    assert_eq!(value["total"], 1);
+    let xrefs = value["xrefs"].as_array().unwrap();
+    assert_eq!(xrefs[0]["from"], "0x140001004");
+    assert_eq!(xrefs[0]["kind"], "call");
+    assert_eq!(xrefs[0]["fromName"], "sub_140001000");
+    assert_eq!(xrefs[0]["toName"], "sub_140001020");
+}
+
+#[test]
+fn errors_are_structured_json_with_exit_code_one() {
+    let binary = fixture("ura64.exe");
+
+    let output = run([
+        "hex",
+        text(&binary),
+        "--offset",
+        "0x200",
+        "--length",
+        "0",
+        "--json",
+    ]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(stderr(&output).is_empty());
+    let value = json(&output);
+    assert_eq!(value["schemaVersion"], 1);
+    assert_eq!(value["error"]["code"], "limit_exceeded");
+
+    let outside = tempfile::tempdir().unwrap();
+    let outside_file = outside.path().join("sample.bin");
+    std::fs::write(&outside_file, b"MZ").unwrap();
+    let output = run(["info", text(&outside_file), "--json"]);
+    assert_eq!(output.status.code(), Some(1));
+    let value = json(&output);
+    assert_eq!(value["error"]["code"], "path_denied");
+    assert!(!value["error"]["message"]
+        .as_str()
+        .unwrap()
+        .starts_with(r"\\?\"));
+
+    let missing = outside.path().join("missing.ura");
+    let output = run([
+        "--allow",
+        text(outside.path()),
+        "info",
+        text(&binary),
+        "--project",
+        text(&missing),
+        "--json",
+    ]);
+    assert_eq!(output.status.code(), Some(1));
+    let value = json(&output);
+    assert_eq!(value["error"]["code"], "project_not_found");
+
+    let text_output = run(["info", text(&missing)]);
+    assert_eq!(text_output.status.code(), Some(1));
+    assert!(stderr(&text_output).starts_with("error: "));
+    assert!(stdout(&text_output).is_empty());
+}
+
+#[test]
+fn project_function_names_reach_the_cli() {
+    let directory = tempfile::tempdir().unwrap();
+    let project_path = directory.path().join("fixture.ura");
+
+    let mut service = Service::new(
+        PathPolicy::new([repo_root(), directory.path().to_path_buf()]).unwrap(),
+        true,
+    );
+    let opened = service.open_binary(&fixture("ura64.exe"), None).unwrap();
+    service
+        .analyze(&opened.handle, &AnalysisOptions::default())
+        .unwrap();
+    service
+        .save_project(&opened.handle, &project_path, Some("CLI"))
+        .unwrap();
+    service
+        .rename_function(&opened.handle, &project_path, "0x140001020", "loop_fn")
+        .unwrap();
+
+    let output = run([
+        "--allow",
+        text(directory.path()),
+        "functions",
+        text(&fixture("ura64.exe")),
+        "--project",
+        text(&project_path),
+        "--json",
+        "--query",
+        "loop_fn",
+    ]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let value = json(&output);
+    assert_eq!(value["total"], 1);
+    assert_eq!(value["functions"][0]["name"], "loop_fn");
+    assert_eq!(value["functions"][0]["address"], "0x140001020");
+
+    let output = run([
+        "--allow",
+        text(directory.path()),
+        "info",
+        text(&fixture("ura64.exe")),
+        "--project",
+        text(&project_path),
+        "--json",
+    ]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let attached = json(&output)["attachedProject"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(attached.ends_with("fixture.ura"), "{attached}");
+}

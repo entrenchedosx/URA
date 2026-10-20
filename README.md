@@ -1,242 +1,217 @@
-# URA — Ultimate Reverse Engineer
+<p align="center"><img src="icon.webp" width="160" alt="URA application artwork"></p>
 
-## v0.5 native Rust workspace
+# URA
 
-The default desktop application is now `ura-native`: Rust + eframe/egui,
-egui_dock and egui_extras, with native file dialogs. Its executable uses no
-Tauri, WebView2, React, JavaScript, HTML or CSS. The existing analysis and SQLite
-crates are reused directly and the project schema remains v3.
+Ultimate Reverse Engineer
 
-```powershell
-# Rust 1.95+ and the Windows MSVC build tools; no Node or WebView required
-cargo run --release -p ura-native -- tests/fixtures/ura64.exe
-cargo build --release -p ura-native
-.\target\release\ura-native.exe [path\to\binary-or-project.ura]
+## Overview
 
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
-```
+URA is a native Rust static-analysis workbench for executable files. The desktop,
+CLI and MCP server use the same analysis engine. Samples are read locally and
+are never executed by URA. This is an early engineering release, with explicit
+analysis limits; it is not a replacement for the full feature sets of IDA or Ghidra.
 
-The native workspace includes Explorer, Disassembly, Functions, Graph, Hex,
-Strings, Xrefs, Overview, Inspector and Messages. Panels can be moved, split,
-closed and restored from View. Projects preserve annotations, custom names,
-manual seeds, selection, navigation history and native layouts. Ctrl+S saves
-workspace state; automatic saves also run every ten seconds and on close.
-Preferences and window geometry persist through eframe. Ctrl+K opens the
-command palette; the v0.4 shortcut table below remains applicable.
+## Current capabilities
 
-The v0.4 application is retained for regression and performance comparison;
-frontend retirement has a separate verification gate. Browser-only preferences
-and Dockview layouts are preserved but are not converted into native settings.
-See [migration audit](docs/NATIVE-MIGRATION.md) and
-[verification report](docs/NATIVE-VERIFICATION.md) for limits and measurements.
+- Executable metadata, SHA-256 identity, sections, symbols, imports and exports.
+- x86/x64 linear disassembly with bytes, flow classification and direct targets.
+- Recursive function discovery from entry points, exports, symbols and calls.
+- Basic blocks, conditional/loop edges and incoming/outgoing code references.
+- Data references for provable RIP-relative and absolute memory operands.
+- ASCII/UTF-16LE strings and bounded hex reads.
+- SQLite projects with annotations, name overrides, manual function starts,
+  navigation history and saved workspace state.
+- Native CLI with text/JSON output and a local stdio MCP server with 15 tools.
 
-## Preserved v0.4 baseline
+There is no decompiler, debugger, semantic IR, type recovery, jump-table recovery,
+PDB loader or public plugin API. Indirect transfers remain unresolved. Discovery
+is conservative and can miss code, reject ambiguous seeds or stop at limits.
 
-URA is a native desktop workbench for static analysis of executable images. A Rust analysis
-engine does the parsing, mapping, disassembly and scanning; a Tauri 2 shell hosts a React +
-TypeScript interface. Every result comes from the bytes on disk — URA never executes or patches
-the files you open.
+## Supported architectures and executable formats
 
-v0.4 adds navigation history, go-to navigation, user-defined functions, data cross-references,
-per-project view state and portable annotation export on top of the v0.3 analysis workbench. It
-targets Windows PE x64, with static metadata for ELF and Mach-O images and x86/x64 disassembly
-for any executable section URA can map.
+| Input | Support |
+|---|---|
+| PE, ELF, Mach-O | Metadata and section-based inspection through `object` |
+| x86 and x86-64 | Decoding and function/CFG analysis |
+| ARM, AArch64, RISC-V, MIPS, PowerPC and other recognized CPUs | Metadata only; no instruction analysis |
 
-## Highlights
+PE and ELF x64 fixtures and Windows system binaries are exercised by tests.
+Mach-O and other host operating systems need broader validation. Maximum input
+size is 512 MiB; resources are also bounded during analysis and string scanning.
 
-- **Dockable workspace** — Explorer, Disassembly, Overview, Strings, Hex, Inspector and Messages
-  live in resizable panels powered by Dockview. The layout is stored per project, can be reset
-  from the toolbar or preferences, and the core views adapt to narrow panels.
-- **Binary overview** — format, architecture, bitness, endianness, image base, entry point,
-  file size, SHA-256 and section permissions.
-- **Function analysis** — recursive-descent discovery from the entry point, exports,
-  function symbols, call targets and analyst-defined seeds. Every function is partitioned into
-  basic blocks with fall-through, jump and taken edges. The engine runs off the UI thread with
-  progress events, cancellation and explicit safety limits; partial results and diagnostics are
-  surfaced rather than hidden. User-defined functions survive re-analysis, close and reopen.
-- **Functions explorer** — searchable, sortable, paginated function list with origin badges,
-  instruction/block/reference counts and selection sync. Double-click opens linear disassembly;
-  the context menu opens the CFG, references or rename dialog. Custom names override imported
-  symbols and persist in the project.
-- **Control-flow graph** — layered, zoomable and pannable graph for the selected function.
-  Blocks show their instructions and branch targets; block and instruction selection is shared
-  with the rest of the workspace, and double-click jumps to linear disassembly. Large functions
-  are capped with a visible partial-result badge.
-- **Cross-references** — call, jump, conditional-jump and data references are indexed per
-  address and displayed in both the Inspector and a dedicated Xrefs panel, with function-level
-  or exact address scope. Data references distinguish RIP-relative and absolute addressing, show
-  the mapped target section, and are only recorded when they point inside the image. Indirect
-  transfers are labelled as unresolved rather than guessed.
-- **Explorer** — functions, sections, symbols, imports and exports with filters and virtualized
-  lists. Selecting an entry navigates the workspace to it.
-- **Disassembly** — Intel-syntax x86/x64 decoding via `iced-x86`, with instruction bytes,
-  flow classification, resolved branch targets and section mapping. Pages are fetched on demand
-  (320 instructions) and the list is virtualized; keyboard navigation and branch following are
-  built in.
-- **Hex viewer** — offset/ASCII gutter with 8, 16 or 32 bytes per row, chunked reads,
-  section/address mapping and jump-to-offset. Navigating from strings or disassembly lands on the
-  exact row.
-- **Strings explorer** — ASCII and UTF-16LE scanning starts when a binary opens and can be re-run
-  with a configurable minimum length. Per-encoding filters and substring search are applied
-  client-side. Each result can jump to the hex view or, when the string maps to an executable
-  section, the disassembly view.
-- **Inspector and annotations** — selection facts, project facts, binary identity, and an
-  annotation editor (label + note). Annotations are listed and can be edited or deleted.
-  Annotations, custom names and manual functions can be exported to a portable JSON document.
-- **Navigation** — go-to accepts hexadecimal virtual addresses, explicit file offsets
-  (`@0x…`, `file:…` or `offset …`), relative deltas (`+0x10`), section-relative targets
-  (`.text+0x30`), pasted hex dumps, and searches functions, sections, symbols, exports and
-  annotations. Back and forward history follows every navigation, with deduplication and a
-  bounded depth.
-- **Analysis projects** — `.ura` files are SQLite databases that record the source binary path
-  and SHA-256, the selected address, annotations, custom function names, user-defined functions
-  and the saved view state. Reopening restores the working context and verifies the binary
-  against the recorded hash. Schema version 3 migrates version 1 and 2 projects automatically.
-- **Command palette** — jump to an address, symbol, section, or run a command from one input.
-- **Startup argument** — pass a binary path on the command line and URA opens it on launch.
+## Desktop application
 
-## Status
+The default application uses eframe, egui and OpenGL. It has no WebView dependency.
+Compact native menus and docking provide Functions, Project structure,
+Disassembly, Graph, Hex View, Strings, Xrefs, Overview, Inspector, Output and
+Graph overview panels. Project structure includes sections, symbols, imports and
+exports. Imports without mapped addresses are informational.
 
-v0.4 adds navigation history, expanded go-to navigation, user-defined functions, data
-cross-references, per-project view state and annotation export. Jump-table recovery was
-deliberately deferred: tables live in data sections that the current walker does not read, so
-indirect transfers are labelled as unresolved instead of guessed. The deterministic PE64/ELF
-fixtures in `tests/fixtures` cover open, metadata, disassembly, hex, strings, projects,
-analysis, manual functions, view state and export. Automated Rust tests exercise the engine and
-persistence layers; the manual desktop flow is documented in
-[DEVELOPMENT.md](docs/DEVELOPMENT.md). See [ROADMAP.md](docs/ROADMAP.md) for what comes next.
+Classic light and professional dark themes share one rendering implementation.
+Preferences control interface/code/graph fonts, row height, bytes and panel
+visibility. Tabs can be moved, closed and reopened from Windows; reset restores
+the default layout. The graph uses actual analysis blocks, with pan, zoom, fit,
+selection and an interactive overview. Large graphs are capped at 240 displayed
+blocks and 32 displayed instructions per block; truncation is shown explicitly.
 
-## Requirements
+## Building from source
 
-- Windows 10/11 with the Evergreen WebView2 runtime (preinstalled on Windows 11).
-- Rust 1.80 or newer with the MSVC toolchain.
-- Node.js 20 or newer with npm.
-- For installers: the standard Tauri 2 Windows bundling prerequisites.
-
-URA was developed and verified with Rust 1.99.1, Node 26.7.0 and npm 11.19.0.
-
-## Build and run
+Windows x64 is the verified host. Install Rust with the MSVC toolchain and Visual
+Studio C++ build tools/Windows SDK. The native crate declares Rust 1.95 or newer;
+this iteration was verified with Rust 1.99.1. Build dependencies may require a
+newer compiler than the older core-crate minimum.
 
 ```powershell
-npm install
-
-# Development (Vite dev server + Tauri shell)
-npm run tauri dev
-
-# Tests
-cargo test --workspace
-npm run build          # tsc --noEmit && vite build
-
-# Production executable
-npm run tauri build
+cargo build --release -p ura-native -p ura-cli -p ura-mcp
+cargo run --release -p ura-native -- path/to/sample.exe
 ```
 
-To build a standalone debug executable without the Tauri bundler:
+Generated icons are committed. Regeneration requires Python and Pillow:
 
 ```powershell
-npm run build
-cargo build -p ura-app --features custom-protocol
-.\target\debug\ura-app.exe [path\to\sample.exe]
+python scripts/generate_icons.py
 ```
 
-The `custom-protocol` feature embeds `dist/` into the executable. Without it, a plain
-`cargo build` produces a binary that expects the Vite dev server at `http://localhost:1420`
-and will show an empty window when started on its own.
+## Usage
 
-The integration fixtures are generated deterministically:
-
-```powershell
-python scripts/generate_fixtures.py
-```
-
-`tests/fixtures/ura64.exe` maps `.text` at `0x140001000` (file offset `0x200`) and `.rdata` at
-`0x140002000` (file offset `0x400`); strings are reachable at file offsets `0x400` and `0x460`.
-
-## Keyboard shortcuts
+Open a binary with Ctrl+O or pass its path at startup. Analysis and string
+scanning run in a background worker. Create a project with Ctrl+N to persist
+comments, renamed functions and manual starts. The Inspector edits annotations;
+F2 renames a function. Save/reopen retains analysis seeds and view state;
+analysis results themselves are recomputed.
 
 | Shortcut | Action |
-| --- | --- |
-| `Ctrl+O` | Open a binary |
-| `Ctrl+K` | Open the command palette |
-| `Ctrl+N` | Create a project for the open binary |
-| `Ctrl+Shift+O` | Open an existing project |
-| `Ctrl+G` | Go to an address, file offset or symbol |
-| `Alt+Left` / `Alt+Right` | Navigate back / forward |
-| `Ctrl+,` | Open settings |
-| `Ctrl+1` … `Ctrl+4` | Disassembly / Hex / Strings / Overview |
-| `Ctrl+Enter` | Save the current annotation from the inspector |
-| `F2` | Rename the function containing the selection |
-| `Esc` | Close the command palette, preferences or rename dialog |
-| `Up` / `Down` | Move the disassembly selection by one instruction |
-| `PageUp` / `PageDown` | Move the disassembly selection by 20 instructions |
-| `Enter` | Run the highlighted item in the command palette |
+|---|---|
+| Ctrl+G / Ctrl+K | Address, symbol, offset or command navigation |
+| Alt+Left / Alt+Right | Navigation history |
+| Space | Switch linear disassembly and graph |
+| Arrow / PageUp / PageDown | Select an instruction in the linear view |
+| Enter | Follow selected direct branch/call |
+| Ctrl+S | Save project workspace |
+| Ctrl+, | Preferences |
+| Alt+F/E/J/S/V/D/O/W/H | Open the corresponding top menu |
 
-Branch targets in the disassembly and string results expose jump buttons that navigate to the
-mapped section, or back to the hex view when the target is not executable.
+Addresses are hexadecimal, with an optional `0x` prefix. Desktop navigation also
+accepts `@200` file offsets, relative deltas and expressions such as `.text+10`.
 
-## Projects on disk
+## Headless CLI
 
-A `.ura` project is a single SQLite database (`PRAGMA user_version = 3`) with five tables:
+The CLI does not start a GUI. Paths must resolve inside `--allow` roots; the
+default root is the current directory. Use repeatable `--allow DIR` for samples
+elsewhere. Commands are `info`, `analyze`, `functions`, `disasm`, `strings`,
+`xrefs`, `cfg` and `hex`.
 
-- `project` — name, timestamps, binary path, binary SHA-256, file size, format, architecture
-  and the last selected address.
-- `annotations` — one row per address with an optional label, a note and timestamps.
-- `function_names` — one custom name per function address, with a timestamp. Names override
-  imported symbols and are independent of the binary on disk.
-- `manual_functions` — addresses explicitly marked as functions by the analyst, with a
-  timestamp. They seed every re-analysis.
-- `view_state` — one bounded JSON document describing the active panel, address, CFG function
-  and navigation history.
+```powershell
+ura-cli info sample.exe --json
+ura-cli functions sample.exe --limit 50 --sort name --json
+ura-cli disasm sample.exe --address 140001000 --count 20 --json
+ura-cli cfg sample.exe --function 140001020 --json
+ura-cli hex sample.exe --offset 200 --length 32 --json
+ura-cli functions sample.exe --project analysis.ura --json
+```
 
-Opening a project resolves the recorded binary path. A missing file leaves the project open in
-a warning state; a hash mismatch opens the binary with a `modified` status so stale annotations
-are obvious. Version 1 and 2 projects are migrated automatically; newer schema versions are
-rejected with a clear error. URA only reads the binary and never writes to it.
+JSON responses carry `schemaVersion: 1`; addresses are strings. Operation errors
+use a structured error object and exit code 1. Invalid command-line syntax uses
+Clap's usage errors. `--help` documents per-command limits. The CLI reads project
+names/manual starts without migrating the database. Project creation and editing
+are currently exposed through the desktop and MCP tools, not CLI subcommands.
 
-Annotation export writes a single JSON document with the binary identity, annotations, custom
-names and manual functions. It refuses to overwrite the project file or the analyzed binary and
-is not an import format.
+## MCP integration
 
-## Safety model
+Configure an MCP client to start `ura-mcp` with stdio transport:
 
-- Samples are opened read-only. There is no execution, emulation, patching or code injection.
-- Binary identity is recorded as SHA-256 and re-checked on every project open.
-- Analysis is bounded: 512 MiB files, 50,000 symbols, 20,000 imports/exports, 200,000 strings,
-  2,000 instructions per page and, for function analysis, 200,000 instructions, 8,192 functions
-  and 150,000 basic blocks.
-- The webview runs under a restrictive CSP and talks only to the local Tauri IPC channel.
-- All parsing and decoding happens in safe Rust (`object`, `iced-x86`, `rusqlite`).
+```json
+{
+  "mcpServers": {
+    "ura": {
+      "command": "C:/tools/URA/ura-mcp.exe",
+      "args": ["--allow", "C:/samples"]
+    }
+  }
+}
+```
 
-## Limitations
+Call `ura_open_binary`, retain the returned handle, call `ura_analyze`, then query
+`ura_get_binary_info`, `ura_get_functions`, `ura_get_function`,
+`ura_get_disassembly`, `ura_get_cfg`, `ura_get_xrefs`, `ura_search_strings` or
+`ura_read_bytes`. Close handles with `ura_close_binary`.
 
-- Disassembly is x86/x64 only; other architectures are limited to metadata and raw views.
-- Function discovery is heuristic: indirect calls, tail calls, jump tables and unreachable code
-  are not recovered, so some functions or references can be missing. Indirect jumps are marked
-  as unresolved. Results are explicitly marked partial when a safety limit or cancellation is
-  hit.
-- Data references cover RIP-relative and absolute memory operands. They are recorded only when
-  the target lies inside a mapped section; immediates and unmodelled addressing are ignored.
-- No debugger, PDB/type support, binary diffing or annotation import yet.
-- COFF relocatable objects, WebAssembly and XCOFF are rejected with a clear error.
-- The UI is optimized for a desktop window of 1100x680 or larger.
+`ura_save_project`, `ura_rename_function`, `ura_add_comment` and
+`ura_export_analysis` require the explicit `--enable-writes` process option.
+No network listener is started. Stdout contains MCP JSON only; logs go to stderr.
+Read-only project attachments support schema v1-v3 without migration or following
+the database's recorded binary path. The opened binary's SHA-256 must match.
+Allowed roots constrain resolved paths, but are not an operating-system sandbox
+against a concurrent local attacker changing files or links.
 
-## Repository layout
+## Screenshots
 
-| Path | Contents |
-| --- | --- |
-| `crates/ura-core` | Binary parsing, address mapping, disassembly, function/CFG/xref/data-reference analysis, hex reads, string scanning |
-| `crates/ura-project` | SQLite project, annotation, function-name, manual-function and view-state persistence |
-| `src-tauri` | Tauri application, command layer, session state |
-| `src` | React UI, views, inspector, command palette, typed IPC client |
-| `tests/fixtures` | Deterministic PE64 and ELF64 samples |
-| `scripts` | Fixture generator |
-| `docs` | Architecture, development and roadmap notes |
+Actual captures of URA's native renderer, using the deterministic regression
+fixture (not simulated analysis):
 
-More detail: [Architecture](docs/ARCHITECTURE.md) ·
-[Development](docs/DEVELOPMENT.md) · [Roadmap](docs/ROADMAP.md).
+![Classic graph workspace](docs/screenshots/classic-graph.png)
 
-## License
+![Classic linear disassembly](docs/screenshots/classic-disassembly.png)
 
-MIT. See [LICENSE](LICENSE).
+![Professional dark graph](docs/screenshots/dark-graph.png)
+
+See [verification](docs/VERIFICATION-0.6.md) for sizes, scaling and remaining
+manual checks. The small fixture verifies known instructions and loop edges;
+real Windows binaries were inspected separately.
+
+## Project structure and architecture
+
+| Path | Responsibility |
+|---|---|
+| `crates/ura-core` | Loading, decoding, functions, CFGs, references, strings |
+| `crates/ura-project` | SQLite persistence and compatible migrations |
+| `crates/ura-native` | Native desktop and background worker |
+| `crates/ura-service` | Shared headless sessions, DTOs and path/write policy |
+| `crates/ura-cli` | Native command-line interface |
+| `crates/ura-mcp` | MCP stdio adapter |
+| `tests/fixtures`, `scripts` | Reproducible fixtures, icons and measurements |
+| `src`, `src-tauri` | Retained legacy UI for migration comparison |
+
+The desktop calls core/project directly; CLI/MCP share the service adapter over
+the same core/project implementation. No analysis engine is duplicated. The
+legacy frontend remains for comparison and is not required by the native build.
+See [architecture](docs/ARCHITECTURE.md) and [recovery](docs/RECOVERY-2026-10-20.md).
+
+## Testing
+
+```powershell
+cargo fmt --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo build --workspace --release
+```
+
+Tests cover deterministic PE/ELF decoding, malformed input, CFG/reference
+behavior, database migrations and annotation persistence, service restrictions,
+CLI processes, actual MCP handshakes/tool calls, and native-panel tessellation.
+Renderer checks are opt-in; see [verification](docs/VERIFICATION-0.6.md).
+
+## Roadmap
+
+Priorities are CFG validation under limits, bounded data-memory access,
+relocation/import references and improved function recovery. Architecture-neutral
+semantics must precede SSA, type inference and decompilation. See the
+[Ghidra source study and feature matrix](docs/GHIDRA-RESEARCH.md) for dependencies,
+complexity and verification strategies. OS-level high-DPI, cross-platform input,
+packaging and broader executable-format coverage remain follow-ups.
+
+## Contributing
+
+Keep engine code independent of GUI types, preserve existing project schemas,
+and add deterministic regression coverage for correctness changes. Run the
+workspace checks above. Do not commit proprietary samples, credentials or local
+analysis projects. Discuss new architectures and persistence changes before
+introducing a new format or dependency.
+
+## License and third-party notices
+
+URA retains its [MIT license](LICENSE). Dependencies retain their own licenses;
+see [third-party notices and release generation](THIRD_PARTY.md).
+The original `icon.webp` is the user-supplied official artwork; its owner confirmed
+permission to redistribute it with URA. Native variants preserve the full image.
+No IDA artwork or source is included; Ghidra was studied as a reference only.

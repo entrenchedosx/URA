@@ -31,6 +31,38 @@ fn analyze_code(
 }
 
 #[test]
+fn rejects_seed_inside_an_instruction() {
+    let bytes = [
+        0x48, 0xB8, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0xC3,
+    ];
+    let analysis = analyze_code(
+        &bytes,
+        0x1000,
+        0x1000,
+        &[AnalysisSeed {
+            address: 0x1002,
+            name: None,
+            origin: FunctionOrigin::UserDefined,
+        }],
+        &AnalysisOptions::default(),
+    );
+    assert!(!analysis.instructions.contains_key(&0x1002));
+    assert!(analysis.function_by_start(0x1002).is_none());
+}
+
+#[test]
+fn reverse_traversal_cannot_decode_over_a_later_instruction() {
+    // Taken path decodes the nop at +5 before the fall-through mov at +2,
+    // whose 10-byte encoding would consume it.
+    let bytes = [0x75, 0x03, 0x48, 0xB8, 0x90, 0x90, 0xC3, 0, 0, 0, 0, 0];
+    let analysis = analyze_code(&bytes, 0x1000, 0x1000, &[], &AnalysisOptions::default());
+    let instructions: Vec<_> = analysis.instructions.values().collect();
+    for pair in instructions.windows(2) {
+        assert!(pair[0].end() <= pair[1].address);
+    }
+}
+
+#[test]
 fn discovers_entry_and_call_target_functions() {
     let analysis = analyze_fixture(&AnalysisOptions::default());
     assert!(!analysis.report.cancelled);

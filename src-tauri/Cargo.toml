@@ -6,7 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [lib]
-name = "ura_app"
+name = "ura_legacy"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
