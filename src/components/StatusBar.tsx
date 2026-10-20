@@ -1,0 +1,130 @@
+import {
+  AlertTriangle,
+  CircleCheck,
+  CircleDot,
+  Database,
+  MessageSquare,
+  ShieldAlert,
+  ShieldCheck,
+} from "lucide-react";
+import type { BinaryOpenResult, ProjectInfo, Selection } from "../lib/types";
+import { formatHex, formatSize } from "../lib/format";
+
+interface StatusBarProps {
+  binary: BinaryOpenResult | null;
+  project: ProjectInfo | null;
+  projectPath: string | null;
+  binaryStatus: string | null;
+  selection: Selection | null;
+  viewLabel: string;
+  messageCount: number;
+  messagesOpen: boolean;
+  onToggleMessages: () => void;
+}
+
+function StatusBadge({ status }: { status: string | null }) {
+  if (!status) {
+    return (
+      <span className="flex items-center gap-1 text-ink-500">
+        <CircleDot className="size-3" />
+        no project
+      </span>
+    );
+  }
+  if (status === "unchanged") {
+    return (
+      <span className="flex items-center gap-1 text-emerald-400">
+        <ShieldCheck className="size-3" />
+        binary verified
+      </span>
+    );
+  }
+  if (status === "modified") {
+    return (
+      <span className="flex items-center gap-1 text-amber-400">
+        <ShieldAlert className="size-3" />
+        binary modified
+      </span>
+    );
+  }
+  return (
+    <span className="flex items-center gap-1 text-red-400">
+      <AlertTriangle className="size-3" />
+      binary missing
+    </span>
+  );
+}
+
+export function StatusBar({
+  binary,
+  project,
+  projectPath,
+  binaryStatus,
+  selection,
+  viewLabel,
+  messageCount,
+  messagesOpen,
+  onToggleMessages,
+}: StatusBarProps) {
+  return (
+    <footer className="flex h-7 shrink-0 items-center gap-3 border-t border-edge bg-obsidian-900 px-3 font-mono text-[10.5px] text-ink-400 select-none">
+      {binary ? (
+        <>
+          <span className="flex min-w-0 items-center gap-1.5 text-ink-300">
+            <CircleCheck className="size-3 shrink-0 text-emerald-400" />
+            <span className="max-w-64 truncate">{binary.info.fileName}</span>
+          </span>
+          <span className="text-ink-600">|</span>
+          <span className="uppercase">{binary.info.format}</span>
+          <span>{binary.info.architecture}</span>
+          <span>{binary.info.bitness}-bit</span>
+          <span className="text-ink-600">|</span>
+          <span>{formatSize(binary.info.fileSize)}</span>
+          <span>{binary.sections.length} sections</span>
+          <span>{binary.symbols.length} symbols</span>
+        </>
+      ) : (
+        <span className="text-ink-500">No binary loaded</span>
+      )}
+
+      <div className="flex-1" />
+
+      {project && (
+        <span className="flex items-center gap-1.5">
+          <Database className="size-3 text-ink-500" />
+          <span className="max-w-40 truncate" title={projectPath ?? project.name}>
+            {project.name}
+          </span>
+          <StatusBadge status={binaryStatus} />
+        </span>
+      )}
+
+      <span className="text-ink-600">|</span>
+      <span className="text-ink-500">{viewLabel}</span>
+
+      {selection?.address && (
+        <>
+          <span className="text-ink-600">|</span>
+          <span className="text-accent-300">{formatHex(selection.address)}</span>
+        </>
+      )}
+      {selection?.fileOffset && (
+        <span className="text-ink-500">@{formatHex(selection.fileOffset)}</span>
+      )}
+
+      <span className="text-ink-600">|</span>
+      <button
+        className={`flex items-center gap-1 rounded px-1 py-0.5 transition-colors hover:bg-obsidian-750 hover:text-ink-200 ${
+          messagesOpen ? "text-accent-300" : ""
+        }`}
+        onClick={onToggleMessages}
+        title="Toggle message log"
+      >
+        <MessageSquare className="size-3" />
+        {messageCount}
+      </button>
+      <span className="text-ink-600">|</span>
+      <span className="text-ink-500">Ready</span>
+    </footer>
+  );
+}

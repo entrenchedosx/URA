@@ -1,0 +1,130 @@
+@import "tailwindcss";
+
+@theme {
+  --color-obsidian-950: #07090d;
+  --color-obsidian-900: #0a0c10;
+  --color-obsidian-850: #0d1016;
+  --color-obsidian-800: #11151d;
+  --color-obsidian-750: #151a24;
+  --color-obsidian-700: #1b212d;
+  --color-obsidian-600: #242c3b;
+  --color-edge: #1e2532;
+  --color-edge-strong: #2a3446;
+  --color-ink-100: #e7ecf5;
+  --color-ink-200: #d3dae7;
+  --color-ink-300: #b3bdd0;
+  --color-ink-400: #8b95a7;
+  --color-ink-500: #6b7488;
+  --color-ink-600: #4d5668;
+  --color-accent-300: #8ec5ff;
+  --color-accent-400: #5aa8ff;
+  --color-accent-500: #3b82f6;
+  --color-accent-600: #2563eb;
+
+  --font-sans: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Mono", "Cascadia Code", "Consolas", "JetBrains Mono",
+    ui-monospace, monospace;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-obsidian-950 text-ink-200 antialiased;
+    overflow: hidden;
+    font-family: var(--font-sans);
+    font-size: 13px;
+  }
+
+  ::selection {
+    background: rgba(59, 130, 246, 0.32);
+    color: #eaf2ff;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #2a3446 transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: #262f3f;
+    border: 2px solid transparent;
+    border-radius: 999px;
+    background-clip: content-box;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background: #344054;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  button {
+    cursor: pointer;
+  }
+
+  input,
+  textarea,
+  select {
+    font-family: inherit;
+  }
+}
+
+@layer components {
+  .panel {
+    @apply border border-edge bg-obsidian-850;
+  }
+
+  .panel-header {
+    @apply flex h-8 shrink-0 items-center justify-between gap-2 border-b border-edge bg-obsidian-800 px-2.5 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-ink-400 select-none;
+  }
+
+  .btn {
+    @apply inline-flex h-7.5 items-center gap-1.5 rounded-md border border-edge-strong bg-obsidian-750 px-2.5 text-[12px] font-medium text-ink-200 transition-colors hover:border-accent-500/50 hover:bg-obsidian-700 hover:text-ink-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent-500 disabled:pointer-events-none disabled:opacity-40;
+  }
+
+  .btn-primary {
+    @apply inline-flex h-7.5 items-center gap-1.5 rounded-md border border-accent-500/60 bg-accent-600 px-3 text-[12px] font-semibold text-white shadow-[0_1px_0_rgba(255,255,255,0.12)_inset] transition-colors hover:bg-accent-500 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent-400 disabled:pointer-events-none disabled:opacity-40;
+  }
+
+  .icon-btn {
+    @apply inline-flex size-7 items-center justify-center rounded-md text-ink-400 transition-colors hover:bg-obsidian-700 hover:text-ink-100 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent-500 disabled:pointer-events-none disabled:opacity-40;
+  }
+
+  .input {
+    @apply h-7.5 w-full rounded-md border border-edge-strong bg-obsidian-900 px-2 text-[12px] text-ink-100 placeholder:text-ink-600 focus:border-accent-500/70 focus:outline-none;
+  }
+
+  .kbd {
+    @apply inline-flex h-4.5 items-center rounded border border-edge-strong bg-obsidian-800 px-1 font-mono text-[10px] font-medium text-ink-400;
+  }
+
+  .tab {
+    @apply relative flex h-9 items-center gap-1.5 border-b-2 border-transparent px-3 text-[12px] font-medium text-ink-400 transition-colors hover:text-ink-200;
+  }
+
+  .tab-active {
+    @apply border-accent-500 text-ink-100;
+  }
+
+  .row-hover {
+    @apply hover:bg-obsidian-750/70;
+  }
+
+  .addr {
+    @apply font-mono tabular-nums tracking-tight;
+  }
+}

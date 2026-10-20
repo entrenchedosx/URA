@@ -1,0 +1,28 @@
+﻿[package]
+name = "ura-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "ura_app"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+default = []
+custom-protocol = ["tauri/custom-protocol"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde.workspace = true
+serde_json.workspace = true
+ura-core = { path = "../crates/ura-core" }
+ura-project = { path = "../crates/ura-project" }
+
+[dev-dependencies]
+tempfile.workspace = true

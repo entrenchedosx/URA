@@ -1,0 +1,25 @@
+# Rust build artifacts
+/target/
+/src-tauri/target/
+**/*.rs.bk
+
+# Node / Vite build artifacts
+/node_modules/
+/dist/
+npm-debug.log*
+
+# Tauri generated files
+/src-tauri/gen/
+
+# URA projects and local analysis scratch
+*.ura
+*.ura-journal
+*.db
+*.sqlite
+*.sqlite3
+
+# OS and editor cruft
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
