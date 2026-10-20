@@ -1,6 +1,7 @@
 ﻿[workspace]
 resolver = "2"
-members = ["crates/ura-core", "crates/ura-project", "src-tauri"]
+members = ["crates/ura-core", "crates/ura-project", "crates/ura-native", "src-tauri"]
+default-members = ["crates/ura-native"]
 
 [workspace.package]
 version = "0.1.0"

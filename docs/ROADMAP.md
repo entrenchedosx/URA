@@ -69,7 +69,19 @@ proven from decoded instructions. A future pass should add a bounded data reader
 table extents and entry count against the preceding bounds check, and mark any recovered table
 as heuristic.
 
-## v0.5 — depth
+## v0.5 — native Rust desktop migration
+
+- [x] eframe/egui application using the existing Rust engine and SQLite crate.
+- [x] Ten dockable views, native dialogs, command palette and keyboard navigation.
+- [x] Virtualized disassembly/functions/strings, visible-range hex and cached CFGs.
+- [x] Annotation/name/manual-function editing, export and project state restoration.
+- [x] Native render integration tests, Release builds and actual-renderer captures.
+- [x] Verify idle CPU, memory and startup against the fixture and real binaries.
+- [x] Preserve the v0.4 application for comparison; see the verification report.
+- [ ] Complete the frontend-retirement gate, including OS-level 150% DPI,
+      GPU/presentation timing and live input/dialog verification.
+
+## Later analysis depth
 
 - Signature scanning for known libraries and patterns.
 - PDB loading for symbols and types.
@@ -83,7 +95,7 @@ as heuristic.
 - Plugin API with a narrow, audited surface for extending views.
 - Type reconstruction and structure overlays for data addresses.
 - Multi-tab sessions and side-by-side binaries.
-- macOS and Linux host support (the Rust engine is portable; the UI is Tauri-native).
+- macOS and Linux host verification (the Rust engine and native GUI are portable).
 - Signed installers and automatic updates.
 
 ## Explicit non-goals

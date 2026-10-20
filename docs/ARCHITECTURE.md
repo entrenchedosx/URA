@@ -1,5 +1,38 @@
 # Architecture
 
+## Native desktop (v0.5)
+
+`crates/ura-native` is the default workspace member. Its eframe entry point
+renders egui directly through OpenGL and winit; no browser engine or IPC is
+involved. It depends on `ura-core` and `ura-project` directly. Those two crates
+and their schema migrations are unchanged by the native migration.
+
+- `app.rs`: shared workspace, navigation/selection, project actions, settings,
+  stale-result generations, docking and persistence.
+- `views.rs`: ten dockable analysis panels, virtualized tables and visible-range
+  hex rendering, graph painting, palette and dialogs.
+- `worker.rs`: serial background jobs, progress/cancellation and panic recovery.
+  Immutable binaries and analysis results are shared with `Arc`. IO, parsing,
+  decoding, analysis, string scanning and graph layout stay off the paint path.
+- `navigation.rs`: u64 address/offset mapping and bounded history.
+- `graph.rs`: deterministic, cycle-safe layered graph geometry with height-aware
+  spacing; at most 240 blocks and 12 displayed instructions per block.
+- `diagnostics.rs`: opt-in capture of the actual renderer and frame CPU metrics.
+
+Disassembly caches up to 16,000 formatted instructions, fetched in 2,000-row
+pages; reaching the cache budget starts a new page. Graph geometry caches up to
+16 functions. Filtering/sorting indices update when inputs or results change.
+Hex reads borrow the original bytes and format visible rows only. There is no
+continuous repaint loop in normal use; background replies request repaints.
+
+Native project view state extends the existing v1 JSON document with a `native`
+member containing dock geometry, history, selection and the retained CFG
+function. Compatible top-level fields remain readable by v0.4. Global preferences
+and window geometry use eframe storage. Saving queues database writes and the
+worker drains them on shutdown. Samples remain read-only.
+
+## Preserved v0.4 frontend architecture
+
 URA separates binary analysis from presentation. The Rust workspace owns all parsing and
 decoding; the React UI only renders projections received over Tauri IPC.
 

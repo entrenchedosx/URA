@@ -1,5 +1,39 @@
 # URA — Ultimate Reverse Engineer
 
+## v0.5 native Rust workspace
+
+The default desktop application is now `ura-native`: Rust + eframe/egui,
+egui_dock and egui_extras, with native file dialogs. Its executable uses no
+Tauri, WebView2, React, JavaScript, HTML or CSS. The existing analysis and SQLite
+crates are reused directly and the project schema remains v3.
+
+```powershell
+# Rust 1.95+ and the Windows MSVC build tools; no Node or WebView required
+cargo run --release -p ura-native -- tests/fixtures/ura64.exe
+cargo build --release -p ura-native
+.\target\release\ura-native.exe [path\to\binary-or-project.ura]
+
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+```
+
+The native workspace includes Explorer, Disassembly, Functions, Graph, Hex,
+Strings, Xrefs, Overview, Inspector and Messages. Panels can be moved, split,
+closed and restored from View. Projects preserve annotations, custom names,
+manual seeds, selection, navigation history and native layouts. Ctrl+S saves
+workspace state; automatic saves also run every ten seconds and on close.
+Preferences and window geometry persist through eframe. Ctrl+K opens the
+command palette; the v0.4 shortcut table below remains applicable.
+
+The v0.4 application is retained for regression and performance comparison;
+frontend retirement has a separate verification gate. Browser-only preferences
+and Dockview layouts are preserved but are not converted into native settings.
+See [migration audit](docs/NATIVE-MIGRATION.md) and
+[verification report](docs/NATIVE-VERIFICATION.md) for limits and measurements.
+
+## Preserved v0.4 baseline
+
 URA is a native desktop workbench for static analysis of executable images. A Rust analysis
 engine does the parsing, mapping, disassembly and scanning; a Tauri 2 shell hosts a React +
 TypeScript interface. Every result comes from the bytes on disk — URA never executes or patches

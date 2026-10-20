@@ -1,0 +1,21 @@
+[package]
+name = "ura-native"
+version = "0.5.0"
+edition = "2024"
+license.workspace = true
+rust-version = "1.95"
+default-run = "ura-native"
+
+[dependencies]
+ura-core = { path = "../ura-core" }
+ura-project = { path = "../ura-project" }
+eframe = { version = "0.36.2", default-features = false, features = ["default_fonts", "glow", "persistence", "accesskit", "x11", "wayland"] }
+egui_dock = { version = "0.21.1", features = ["serde"] }
+egui_extras = "0.36.2"
+rfd = "0.17.2"
+serde.workspace = true
+serde_json.workspace = true
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[dev-dependencies]
+tempfile.workspace = true

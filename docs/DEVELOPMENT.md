@@ -1,5 +1,56 @@
 # Development
 
+## Native desktop
+
+Use Rust 1.95+ with the MSVC toolchain and Visual C++ build tools on Windows.
+The native target does not need Node, npm or WebView2:
+
+```powershell
+cargo run --release -p ura-native -- tests/fixtures/ura64.exe
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+```
+
+All non-rendering engine/project checks also run through the unchanged core and
+project suites. Native integration checks exercise all ten panels at the requested
+sizes/scales, database edits, manual seed reanalysis, export, legacy state and
+stale responses. Headless tessellation checks supplement real window inspection.
+
+To capture the real Windows renderer (28 PNGs plus CPU metrics), with separate
+verification settings and automatic exit after capture:
+
+```powershell
+$env:URA_DISPLAY_CHECK = "$PWD/target/display-check"
+.\target\release\ura-native.exe tests/fixtures/ura64.exe
+Remove-Item Env:/URA_DISPLAY_CHECK
+```
+
+The 150% case changes application zoom, not the Windows display setting. Do not
+report it as an OS DPI-switch test. Metrics exclude GPU presentation time.
+
+For repeatable process-level comparisons, first build both Release executables,
+then run `scripts/benchmark-desktop.ps1`. It snapshots the executables, uses
+dedicated settings/WebView profiles and samples complete process families.
+The large case expects VS Code at its standard per-user Windows installation;
+edit the input list if unavailable. Do not run builds or other benchmark jobs
+concurrently. The fixed settle interval does not prove analysis completion, so
+do not report a first run as idle CPU; use the longer method and current results
+in [NATIVE-VERIFICATION.md](NATIVE-VERIFICATION.md). Engine timings can be
+reproduced with:
+
+```powershell
+cargo run --release -p ura-native --example measure -- tests/fixtures/ura64.exe C:/Windows/System32/ntdll.dll
+```
+
+Manual checks: open a binary, use the palette to navigate to a function, inspect
+its graph/xrefs, create a project, rename and annotate, define/remove a manual
+function, export JSON, move/close/restore panels, close and reopen the project.
+Use Alt+Left/Right, Ctrl+1..4, F2, Ctrl+Enter and Escape while checking text-field
+focus. Panic diagnostics are written to `%TEMP%/ura-native-panic.log`.
+
+## Preserved v0.4 development instructions
+
 ## Prerequisites
 
 - Windows 10/11 with Evergreen WebView2.
