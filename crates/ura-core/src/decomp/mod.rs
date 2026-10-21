@@ -8,6 +8,7 @@ pub mod abi;
 pub mod api;
 pub mod callgraph;
 pub mod hir;
+pub mod postdom;
 pub mod signature;
 pub mod stack;
 pub mod types;
@@ -15,6 +16,7 @@ pub mod types;
 pub use abi::{SignatureHints, SignatureRecovery};
 pub use callgraph::{CallGraph, CallGraphEdge, CallGraphNode};
 pub use hir::{HighLevelFunction, HighLevelLine};
+pub use postdom::{PostDominators, SINK};
 pub use signature::{
     CallingConvention, FunctionSignature, Location, Parameter, ReturnValue, SignatureOverride,
     SignatureParameterInput,
