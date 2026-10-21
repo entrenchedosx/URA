@@ -20,6 +20,93 @@ const MAX_CALL_GRAPH_EDGES: usize = 20_000;
 const MAX_STACK_OFFSET: i64 = 1 << 30;
 
 impl Service {
+    fn require_override_project(&self, handle: &str, resolved: &Path) -> ServiceResult<()> {
+        let attached = self.session(handle)?.project.as_deref().ok_or_else(|| {
+            ServiceError::InvalidArgument(
+                "Attach the project to this binary before editing overrides".into(),
+            )
+        })?;
+        if self.policy.allow_write(attached)? != resolved {
+            return Err(ServiceError::InvalidArgument(
+                "Attach the target project to this binary before editing its overrides".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn type_library(&self, handle: &str) -> ServiceResult<crate::dto::TypeLibraryResponse> {
+        let session = self.session(handle)?;
+        Ok(crate::dto::TypeLibraryResponse {
+            schema_version: RESPONSE_SCHEMA_VERSION,
+            handle: handle.into(),
+            binary_hash: session.info.sha256.clone(),
+            database: session.type_library.clone(),
+        })
+    }
+
+    pub fn structure_definition(
+        &self,
+        handle: &str,
+        name: &str,
+    ) -> ServiceResult<crate::dto::StructureResponse> {
+        let session = self.session(handle)?;
+        let structure = session
+            .type_library
+            .structures
+            .get(name)
+            .cloned()
+            .ok_or_else(|| {
+                ServiceError::InvalidArgument(format!(
+                    "structure '{name}' is not defined in the project type library"
+                ))
+            })?;
+        Ok(crate::dto::StructureResponse {
+            schema_version: RESPONSE_SCHEMA_VERSION,
+            handle: handle.into(),
+            binary_hash: session.info.sha256.clone(),
+            structure,
+        })
+    }
+
+    pub fn set_type_library(
+        &mut self,
+        handle: &str,
+        project: &Path,
+        library: &TypeDatabase,
+    ) -> ServiceResult<crate::dto::TypeLibraryResponse> {
+        self.require_writes()?;
+        let session = self.session(handle)?;
+        if library.address_bits != session.binary.analysis().bitness as u16 {
+            return Err(ServiceError::InvalidArgument(
+                "type library target width differs from the binary".into(),
+            ));
+        }
+        let errors = library.validation_errors();
+        if !errors.is_empty() {
+            return Err(ServiceError::InvalidArgument(errors.join("; ")));
+        }
+        let resolved = self.policy.allow_write(project)?;
+        let snapshot = ura_project::read_project(&resolved)?;
+        if !snapshot
+            .project
+            .binary_hash
+            .eq_ignore_ascii_case(&session.info.sha256)
+        {
+            return Err(ServiceError::ProjectBinaryMismatch);
+        }
+        self.require_override_project(handle, &resolved)?;
+        ura_project::save_type_library(&resolved, library)?;
+        let session = self
+            .sessions
+            .get_mut(handle)
+            .ok_or_else(|| ServiceError::UnknownHandle(handle.into()))?;
+        session.type_library = library.clone();
+        session.project = Some(resolved);
+        session.decomp_cache.clear();
+        session.decomp_cache_order.clear();
+        self.type_library(handle)
+    }
+
     pub(crate) fn decompiled(
         &mut self,
         handle: &str,
@@ -100,7 +187,7 @@ impl Service {
     pub fn inferred_types(&mut self, handle: &str, address: &str) -> ServiceResult<TypesResponse> {
         let decompilation = self.decompiled(handle, address)?;
         let session = self.session(handle)?;
-        let database = TypeDatabase::new(decompilation.frame.address_width);
+        let database = session.type_library.clone();
         Ok(TypesResponse {
             schema_version: RESPONSE_SCHEMA_VERSION,
             handle: handle.into(),
@@ -327,7 +414,8 @@ impl Service {
         signature_override: &SignatureOverride,
     ) -> ServiceResult<SignatureResponse> {
         self.require_writes()?;
-        let errors = signature_override.validate();
+        let errors = signature_override
+            .validate_for_width(self.session(handle)?.binary.analysis().bitness as u16);
         if !errors.is_empty() {
             return Err(ServiceError::InvalidArgument(format!(
                 "signature override rejected: {}",
@@ -352,6 +440,7 @@ impl Service {
         if !snapshot.project.binary_hash.eq_ignore_ascii_case(&hash) {
             return Err(ServiceError::ProjectBinaryMismatch);
         }
+        self.require_override_project(handle, &resolved)?;
         ura_project::save_function_signature(
             &resolved,
             &format_address(function),
@@ -380,7 +469,7 @@ impl Service {
         ty: Option<&TypeRef>,
     ) -> ServiceResult<StackVariableResponse> {
         self.require_writes()?;
-        if offset.abs() > MAX_STACK_OFFSET {
+        if offset.unsigned_abs() > MAX_STACK_OFFSET as u64 {
             return Err(ServiceError::InvalidArgument(format!(
                 "stack offset {offset} is outside the supported range"
             )));
@@ -413,6 +502,7 @@ impl Service {
         if !snapshot.project.binary_hash.eq_ignore_ascii_case(&hash) {
             return Err(ServiceError::ProjectBinaryMismatch);
         }
+        self.require_override_project(handle, &resolved)?;
         let removed = name.is_none() && ty.is_none();
         let entry = if removed {
             ura_project::delete_stack_variable(
@@ -475,6 +565,7 @@ fn decomp_context(
 ) -> decomp::DecompContext {
     let address_bits = session.binary.analysis().bitness as u16;
     let mut context = decomp::DecompContext::new(address_bits);
+    context.type_database = session.type_library.clone();
     let mut hints = SignatureHints::default();
     for (address, signature_override) in &session.signature_overrides {
         let hint_name = analysis

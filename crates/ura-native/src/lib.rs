@@ -1,6 +1,7 @@
 pub mod app;
 pub mod design;
 pub mod diagnostics;
+mod editors;
 pub mod graph;
 mod graph_view;
 mod menus;

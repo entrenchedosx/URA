@@ -1,21 +1,26 @@
 # Roadmap
 
-## v0.8 — decompiler foundations (development checkpoint)
+## v0.8 - foundations checkpoint, full checklist unfinished
 
-- [x] Evidence-based ABI and signature recovery for Win64, SysV64 and 32-bit x86 conventions.
-- [x] Physical stack frames: slots, overlaps, saved registers, alignment and bounds.
-- [x] Conservative type system, SSA constraint inference and 41 curated API prototypes.
-- [x] Guarded signature/stack overrides persisted in project schema v4.
-- [x] Bounded interprocedural call graph with cycles, roots, leaves and focused queries.
-- [x] Experimental high-level C-like rendering from verified SSA, explicitly not source.
-- [x] Native Function signature, Stack frame, Types, Call graph and Analysis inspector panels.
-- [x] Five new CLI commands and ten new MCP tools (29 total), all routed through the service.
-- [x] Existing v1-v3 projects migrate forward; no original test or UI feature removed.
-- [ ] Validate decompilation against additional compilers, PDB types and C++ constructs.
-- [ ] Explain/fix variable process CPU outside UI painting (carried from v0.7).
+- [x] Tested scalar ABI evidence and conservative return/argument uncertainty.
+- [x] Monotone SP/FP dataflow and physical stack slots with instruction references.
+- [x] Scalar type constraints; bounded, validated manual structures/unions/aliases.
+- [x] Native signature/stack/type editors and project schema v5 persistence.
+- [x] Direct-call sites, SCCs, indirect-transfer counts and bounded graph queries.
+- [x] Shared CLI/MCP queries and explicit writes; 30 MCP tools.
+- [x] Independent adversarial review and regressions for the repaired subset.
+- [ ] Complete vector/aggregate ABI models and caller return-consumer evidence.
+- [ ] Bind trustworthy imported signatures and imported call-graph nodes.
+- [ ] Solve interprocedural type/signature constraints to a bounded fixed point.
+- [ ] Add a typed high-level AST, postdominators and validated control structuring.
+- [ ] Implement verified IR rewriting/alias refinements and semantic comparisons.
+- [ ] Broaden compiler/optimization/debug-metadata and malformed-input validation.
+- [ ] Resolve idle CPU and collect OS wakeup/GPU/presentation/latency measurements.
+- [ ] Accept and publish a new artifact after remaining semantic gates are met.
 
-See [decompiler design](DECOMPILER.md) and
-[verification](VERIFICATION-0.8.md).
+The earlier `v0.8.0-dev` public archive predates the audit repairs. See
+[checklist audit](AUDIT-0.8.md), [independent review](REVIEW-0.8.md),
+[decompiler design](DECOMPILER.md) and [verification](VERIFICATION-0.8.md).
 
 ## v0.7 — development checkpoint, release blocked
 

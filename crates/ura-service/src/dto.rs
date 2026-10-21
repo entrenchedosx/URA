@@ -485,3 +485,21 @@ pub struct StackVariableResponse {
     pub variable: Option<StackVariableOverride>,
     pub frame: StackFrame,
 }
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TypeLibraryResponse {
+    pub schema_version: u32,
+    pub handle: String,
+    pub binary_hash: String,
+    pub database: ura_core::decomp::TypeDatabase,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StructureResponse {
+    pub schema_version: u32,
+    pub handle: String,
+    pub binary_hash: String,
+    pub structure: ura_core::decomp::Structure,
+}

@@ -4,7 +4,7 @@
 
 `crates/ura-native` is the default workspace member. Its eframe entry point
 renders egui directly through OpenGL and winit; no browser engine or IPC is
-involved. It depends on `ura-core` and `ura-project` directly. Schema v4 and its v1/v2/v3 migrations remain compatible. A separate read-only
+involved. It depends on `ura-core` and `ura-project` directly. Schema v5 and its v1/v2/v3 migrations remain compatible. A separate read-only
 snapshot API supports headless attachment without migration or binary-path IO.
 
 - `app.rs`: shared workspace, navigation/selection, project actions, settings,
@@ -45,16 +45,15 @@ worker drains them on shutdown. Samples remain read-only.
 `ura-service` owns sessions, normalized analysis options, schema-versioned DTOs,
 path restrictions and explicit write permissions. It invokes the same core
 analysis and project functions used by the desktop. `ura-cli` is a synchronous
-text/JSON adapter; `ura-mcp` routes 29 stdio tools to the service. Neither starts
+text/JSON adapter; `ura-mcp` routes 30 stdio tools to the service. Neither starts
 the desktop. MCP uses rmcp and stderr logging; there is no network listener.
 Query pages and byte reads have explicit limits. Address-based byte reads must
-fit one file-backed section. Read-only project snapshots support v1-v3 and
+fit one file-backed section. Read-only project snapshots support v1-v5 and
 compare the supplied binary's hash, without reading a recorded external path.
 Service calls are serialized per process; cancellation/progress notifications and
 persisted analysis caches are not implemented in MCP. Verified IR bundles are
 cached in memory, at most two per handle and eight handles. Normalized options
-and binary identity accompany IR pages; reanalysis invalidates the cache. SQLite
-remains schema v4; decompiler overrides use the v3-to-v4 migration. Strings are rescanned per
+and binary identity accompany IR pages; reanalysis invalidates the cache. SQLite is schema v5; v3-to-v4 adds signature/stack overrides and v4-to-v5 adds the validated user type library. Strings are rescanned per
 query; future caching should be keyed by binary identity and scan options.
 
 ## Semantic analysis
@@ -337,3 +336,5 @@ annotations remain readable, and the UI clears any binary-dependent views.
 - No network access is required or used at runtime.
 - File paths come from user-driven native dialogs or an explicit command-line argument.
 - SQLite access is parameterized; project names and annotations are stored as data, not SQL.
+
+The v0.8 completion audit is [AUDIT-0.8.md](AUDIT-0.8.md). The current high-level view is text, not a separately typed semantic AST; a whole-program iterative type solver remains future work.

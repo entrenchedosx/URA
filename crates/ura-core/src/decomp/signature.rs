@@ -80,7 +80,7 @@ impl Location {
                 if *offset >= 0 {
                     format!("stack+0x{offset:x}")
                 } else {
-                    format!("stack-0x{:x}", -offset)
+                    format!("stack-0x{:x}", offset.unsigned_abs())
                 }
             }
             Self::Unknown { reason } => format!("unknown ({reason})"),
@@ -183,6 +183,24 @@ pub struct SignatureParameterInput {
     pub ty: TypeRef,
 }
 impl SignatureOverride {
+    pub fn validate_for_width(&self, bits: u16) -> Vec<String> {
+        let mut errors = self.validate();
+        let valid = match self.convention {
+            CallingConvention::Win64 | CallingConvention::SysV64 => bits == 64,
+            CallingConvention::Cdecl
+            | CallingConvention::Stdcall
+            | CallingConvention::Fastcall
+            | CallingConvention::Thiscall => bits == 32,
+            CallingConvention::Unknown => matches!(bits, 32 | 64),
+        };
+        if !valid {
+            errors.push(format!(
+                "calling convention {} is not supported for {bits}-bit code",
+                self.convention.name()
+            ));
+        }
+        errors
+    }
     pub fn validate(&self) -> Vec<String> {
         let mut errors = Vec::new();
         if self.parameters.len() > 64 {
@@ -193,6 +211,7 @@ impl SignatureOverride {
         }
         for parameter in &self.parameters {
             if parameter.name.chars().count() > 256
+                || parameter.name.starts_with(|c: char| c.is_ascii_digit())
                 || !parameter
                     .name
                     .chars()
@@ -203,9 +222,50 @@ impl SignatureOverride {
             if !parameter.ty.valid() {
                 errors.push(format!("invalid type for '{}'", parameter.name));
             }
+            match &parameter.location {
+                Location::Stack { offset, width }
+                    if offset.unsigned_abs() > 1 << 30 || !(1..=64).contains(width) =>
+                {
+                    errors.push(format!("invalid stack location for '{}'", parameter.name))
+                }
+                Location::Register { name } if !valid_register_location(name, self.convention) => {
+                    errors.push(format!("unsupported register location '{name}'"))
+                }
+                Location::Unknown { reason } if reason.len() > 4096 => {
+                    errors.push("location reason exceeds 4096 bytes".into())
+                }
+                _ => {}
+            }
+        }
+        let mut names = std::collections::BTreeSet::new();
+        for parameter in &self.parameters {
+            if !parameter.name.is_empty() && !names.insert(&parameter.name) {
+                errors.push(format!("duplicate parameter name '{}'", parameter.name));
+            }
         }
         errors
     }
+}
+
+fn valid_register_location(name: &str, convention: CallingConvention) -> bool {
+    let x64 = [
+        "rax", "rbx", "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10", "r11", "r12", "r13", "r14",
+        "r15",
+    ];
+    let x86 = ["eax", "ebx", "ecx", "edx", "esi", "edi"];
+    let general = match convention {
+        CallingConvention::Win64 | CallingConvention::SysV64 => x64.contains(&name),
+        CallingConvention::Cdecl
+        | CallingConvention::Stdcall
+        | CallingConvention::Fastcall
+        | CallingConvention::Thiscall => x86.contains(&name),
+        CallingConvention::Unknown => x64.contains(&name) || x86.contains(&name),
+    };
+    general
+        || name
+            .strip_prefix("xmm")
+            .and_then(|n| n.parse::<u8>().ok())
+            .is_some_and(|n| n < 16 && name == format!("xmm{n}"))
 }
 
 /// Build a signature from a user override alone. Used for call-site hints when
@@ -246,6 +306,16 @@ pub fn apply_override(
     result.convention = override_signature.convention;
     result.convention_confidence = Confidence::High;
     result.return_value.ty = override_signature.return_type.clone();
+    if matches!(
+        result.return_value.ty,
+        TypeRef::Void
+            | TypeRef::Float { .. }
+            | TypeRef::Struct { .. }
+            | TypeRef::Union { .. }
+            | TypeRef::Array { .. }
+    ) {
+        result.return_value.location = None;
+    }
     result.return_value.confidence = Confidence::High;
     result.return_value.evidence = vec![Evidence {
         kind: "userOverride".into(),

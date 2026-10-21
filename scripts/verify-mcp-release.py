@@ -1,6 +1,7 @@
 """Exercise the built Release MCP transport and prepare a disposable project.
-Samples are parsed statically. Only target/v08-profile/fixture.ura is written.
+Samples are parsed statically. Only the selected disposable output folder is written.
 """
+import argparse
 import json
 from pathlib import Path
 import queue
@@ -8,8 +9,14 @@ import subprocess
 import threading
 import time
 
+parser = argparse.ArgumentParser()
+parser.add_argument('--exe', default='target/release/ura-mcp.exe')
+parser.add_argument('--output', default='target/v08-audit')
+args = parser.parse_args()
 root = Path.cwd().resolve()
-child = subprocess.Popen(['target/release/ura-mcp.exe','--allow',str(root),'--enable-writes','--log','off'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,text=True)
+folder = Path(args.output).resolve()
+folder.mkdir(parents=True, exist_ok=True)
+child = subprocess.Popen([str(Path(args.exe).resolve()),'--allow',str(root),'--allow',str(folder),'--enable-writes','--log','off'],cwd=Path(args.exe).resolve().parent,stdin=subprocess.PIPE,stdout=subprocess.PIPE,text=True,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
 replies = queue.Queue()
 def reader():
     for line in child.stdout:
@@ -32,7 +39,7 @@ def tool(name,args):
 try:
     request('initialize',{'protocolVersion':'2025-03-26','capabilities':{},'clientInfo':{'name':'ura-release-check','version':'1'}})
     child.stdin.write(json.dumps({'jsonrpc':'2.0','method':'notifications/initialized'})+'\n');child.stdin.flush()
-    assert len(request('tools/list',{})['tools']) == 29
+    assert len(request('tools/list',{})['tools']) == 30
     opened = tool('ura_open_binary',{'binary':str(root/'tests/fixtures/ura64.exe')})
     handle = opened['handle'];tool('ura_analyze',{'handle':handle})
     timings = {}
@@ -42,15 +49,20 @@ try:
         timings[name] = (time.perf_counter()-start)*1000
         assert data['irVersion'] == 1
     decompiler = {}
-    for name in ['ura_get_function_signature','ura_get_calling_convention','ura_get_stack_variables','ura_get_types','ura_get_structure','ura_get_type_constraints','ura_get_high_level_ir']:
+    for name in ['ura_get_function_signature','ura_get_calling_convention','ura_get_stack_variables','ura_get_types','ura_get_type_constraints','ura_get_high_level_ir']:
+        start = time.perf_counter()
         decompiler[name] = tool(name,{'handle':handle,'function':'140001020','limit':20})['schemaVersion']
+        timings[name] = (time.perf_counter()-start)*1000
     graph = tool('ura_get_call_graph',{'handle':handle,'function':'140001000','depth':1,'maxNodes':50})
     assert graph['schemaVersion'] == 1
-    project = root/'target/v08-profile/fixture.ura'
+    project = folder/'fixture.ura'
     project.parent.mkdir(parents=True,exist_ok=True)
-    if not project.exists():
-        tool('ura_save_project',{'handle':handle,'project':str(project)})
-    result = {'tools':29,'irSchema':1,'decompilerSchema':decompiler,'callGraphNodes':graph['returnedNodes'],'fixtureQueryMs':timings,'projectPrepared':project.name}
+    tool('ura_save_project',{'handle':handle,'project':str(project)})
+    library = {'addressBits':64,'structures':{'Header':{'name':'Header','size':4,'alignment':4,'union':False,'source':'user','fields':[{'name':'length','offset':0,'ty':{'kind':'int','bits':32,'signed':False},'source':'user','size':None}]}},'typedefs':{}}
+    tool('ura_set_type_library',{'handle':handle,'project':str(project),'database':library})
+    assert tool('ura_get_structure',{'handle':handle,'name':'Header'})['structure']['fields'][0]['name'] == 'length'
+    assert tool('ura_get_types',{'handle':handle})['database'] == library
+    result = {'tools':30,'irSchema':1,'decompilerSchema':decompiler,'callGraphNodes':graph['returnedNodes'],'fixtureQueryMs':timings,'projectPrepared':project.name,'typeLibraryRoundTrip':True}
     (project.parent/'mcp-release.json').write_text(json.dumps(result,indent=2),encoding='utf-8')
     print(json.dumps(result,indent=2))
 finally:

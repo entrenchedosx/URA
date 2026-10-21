@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub const MAX_CALL_GRAPH_NODES: usize = 8_192;
+pub const MAX_CALL_GRAPH_EDGES: usize = 20_000;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -72,42 +73,58 @@ impl CallGraph {
 pub fn build(analysis: &ProgramAnalysis) -> CallGraph {
     let mut functions = analysis.functions.iter().collect::<Vec<_>>();
     functions.sort_by_key(|function| function.address);
-    let truncated = functions.len() > MAX_CALL_GRAPH_NODES;
+    let mut truncated = functions.len() > MAX_CALL_GRAPH_NODES;
     functions.truncate(MAX_CALL_GRAPH_NODES);
     let known: BTreeSet<u64> = functions.iter().map(|function| function.address).collect();
     let mut edges = Vec::new();
     let mut seen = BTreeSet::new();
     let mut unresolved_indirect = 0usize;
+    // Preserve every actual call site. A function-pair edge alone loses repeated
+    // calls and cannot support caller-side argument evidence or navigation.
+    for xref in &analysis.xrefs {
+        let Some(caller) = xref.function else {
+            continue;
+        };
+        if xref.kind != crate::XrefKind::Call
+            || !known.contains(&caller)
+            || !known.contains(&xref.to)
+        {
+            continue;
+        }
+        if !seen.insert((caller, xref.to, xref.from, "call")) {
+            continue;
+        }
+        if edges.len() == MAX_CALL_GRAPH_EDGES {
+            truncated = true;
+            break;
+        }
+        edges.push(CallGraphEdge {
+            from: caller,
+            to: xref.to,
+            kind: "call".into(),
+            instruction: Some(xref.from),
+        });
+    }
     for function in &functions {
         let facts = analysis.flow_facts(function);
         unresolved_indirect += facts.unresolved_indirect.len();
-        for callee in &function.callees {
-            if !known.contains(callee) {
-                continue;
-            }
-            if seen.insert((function.address, *callee, "call")) {
-                let instruction = analysis
-                    .xrefs
-                    .iter()
-                    .find(|xref| {
-                        xref.kind == crate::XrefKind::Call
-                            && xref.function == Some(function.address)
-                            && xref.to == *callee
-                    })
-                    .map(|xref| xref.from);
-                edges.push(CallGraphEdge {
-                    from: function.address,
-                    to: *callee,
-                    kind: "call".into(),
-                    instruction,
-                });
-            }
-        }
+        unresolved_indirect += function
+            .blocks
+            .iter()
+            .filter_map(|address| analysis.blocks.get(address))
+            .flat_map(|block| &block.instructions)
+            .filter_map(|address| analysis.instructions.get(address))
+            .filter(|instruction| instruction.flow == crate::InstructionFlow::IndirectCall)
+            .count();
         for (instruction, target) in &facts.tail_calls {
             if !known.contains(target) {
                 continue;
             }
-            if seen.insert((function.address, *target, "tail")) {
+            if edges.len() == MAX_CALL_GRAPH_EDGES {
+                truncated = true;
+                break;
+            }
+            if seen.insert((function.address, *target, *instruction, "tail")) {
                 edges.push(CallGraphEdge {
                     from: function.address,
                     to: *target,
@@ -117,7 +134,7 @@ pub fn build(analysis: &ProgramAnalysis) -> CallGraph {
             }
         }
     }
-    edges.sort_by_key(|edge| (edge.from, edge.to, edge.kind.clone()));
+    edges.sort_by_key(|edge| (edge.from, edge.to, edge.instruction, edge.kind.clone()));
     let mut adjacency: BTreeMap<u64, Vec<u64>> = functions
         .iter()
         .map(|function| (function.address, Vec::new()))
@@ -133,16 +150,14 @@ pub fn build(analysis: &ProgramAnalysis) -> CallGraph {
         targets.dedup();
     }
     let (component_of, cycles) = strongly_connected(&adjacency);
+    let mut incoming: BTreeMap<u64, BTreeSet<u64>> = BTreeMap::new();
+    for edge in &edges {
+        incoming.entry(edge.to).or_default().insert(edge.from);
+    }
     let mut nodes = Vec::with_capacity(functions.len());
     for function in &functions {
-        let callers = edges
-            .iter()
-            .filter(|edge| edge.to == function.address)
-            .count();
-        let callees = edges
-            .iter()
-            .filter(|edge| edge.from == function.address)
-            .count();
+        let callers = incoming.get(&function.address).map_or(0, BTreeSet::len);
+        let callees = adjacency[&function.address].len();
         let component = component_of.get(&function.address).copied();
         nodes.push(CallGraphNode {
             address: function.address,
@@ -173,7 +188,7 @@ pub fn build(analysis: &ProgramAnalysis) -> CallGraph {
     ];
     if truncated {
         notes.push(format!(
-            "the call graph is limited to {MAX_CALL_GRAPH_NODES} functions"
+            "the call graph is limited to {MAX_CALL_GRAPH_NODES} functions and {MAX_CALL_GRAPH_EDGES} call sites"
         ));
     }
     if unresolved_indirect > 0 {

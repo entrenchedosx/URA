@@ -17,6 +17,51 @@ fn fixture(name: &str) -> PathBuf {
     repo_root().join("tests").join("fixtures").join(name)
 }
 
+#[test]
+fn cli_type_library_writes_are_explicit_and_persist_for_structure_queries() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = directory.path().join("types.ura");
+    let definitions = directory.path().join("types.json");
+    let sample = fixture("ura64.exe");
+    let mut service = Service::new(PathPolicy::allow_all(), true);
+    let handle = service.open_binary(&sample, None).unwrap().handle;
+    service.save_project(&handle, &project, None).unwrap();
+    let database = serde_json::json!({"addressBits":64,"structures":{"Header":{"name":"Header","size":4,"alignment":4,"fields":[{"name":"length","offset":0,"ty":{"kind":"int","bits":32,"signed":false},"source":"user","size":null}],"union":false,"source":"user"}},"typedefs":{}});
+    std::fs::write(&definitions, database.to_string()).unwrap();
+    let invoke = |write: bool, args: &[&str]| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_ura-cli"));
+        command
+            .arg("--allow")
+            .arg(repo_root())
+            .arg("--allow")
+            .arg(directory.path());
+        if write {
+            command.arg("--enable-writes");
+        }
+        command
+            .arg("type-library")
+            .arg(&sample)
+            .arg("--project")
+            .arg(&project)
+            .arg("--json")
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let input = definitions.to_str().unwrap();
+    let denied = invoke(false, &["--import", input]);
+    assert!(!denied.status.success());
+    assert_eq!(json(&denied)["error"]["code"], "write_disabled");
+    let saved = invoke(true, &["--import", input]);
+    assert!(saved.status.success(), "{}", stderr(&saved));
+    let query = invoke(false, &["--name", "Header"]);
+    assert!(query.status.success(), "{}", stderr(&query));
+    assert_eq!(json(&query)["structure"]["fields"][0]["name"], "length");
+    let outside = invoke(true, &["--import", "C:\\Windows\\win.ini"]);
+    assert!(!outside.status.success());
+    assert_eq!(json(&outside)["error"]["code"], "path_denied");
+}
+
 fn run<S: AsRef<OsStr>>(args: impl IntoIterator<Item = S>) -> Output {
     Command::new(env!("CARGO_BIN_EXE_ura-cli"))
         .arg("--allow")
@@ -382,7 +427,19 @@ fn decompiler_commands_match_the_shared_service_and_render_text() {
         "--function",
         "140001020",
     ]));
-    assert!(rendered.contains("int64"));
+    // The fixture returns a value derived from an opaque call; its type must
+    // remain unknown rather than becoming an inferred integer through copies.
+    assert_eq!(
+        service
+            .function_signature(&handle, "140001020")
+            .unwrap()
+            .signature
+            .return_value
+            .ty
+            .display(),
+        "unknown64"
+    );
+    assert!(rendered.contains("unknown64"));
     assert!(rendered.contains("Convention: win64"));
 
     let output = run(["stack", text(&binary), "--function", "140001020", "--json"]);

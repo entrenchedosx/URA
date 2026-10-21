@@ -33,6 +33,71 @@ fn setup() -> (TempDir, PathBuf) {
 }
 
 #[test]
+fn migrates_v4_and_persists_validated_type_libraries_without_losing_user_data() {
+    use ura_core::decomp::{StructField, Structure, TypeDatabase, TypeRef};
+    let (_dir, path) = setup();
+    create_project(&path, "Types", &identity(&fixture("ura64.exe"))).unwrap();
+    save_annotation(&path, "140001000", None, "keep me").unwrap();
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute_batch("DROP TABLE type_library; PRAGMA user_version=4;")
+        .unwrap();
+    drop(conn);
+    let before = std::fs::read(&path).unwrap();
+    assert!(ura_project::read_project(&path)
+        .unwrap()
+        .type_library
+        .is_none());
+    assert_eq!(before, std::fs::read(&path).unwrap());
+    let migrated = open_project(&path).unwrap();
+    assert_eq!(migrated.project.schema_version, 5);
+    assert_eq!(migrated.annotations[0].note, "keep me");
+    let mut db = TypeDatabase::new(64);
+    db.structures.insert(
+        "Record".into(),
+        Structure {
+            name: "Record".into(),
+            size: Some(8),
+            alignment: Some(4),
+            union: false,
+            source: "user".into(),
+            fields: vec![StructField {
+                name: "count".into(),
+                offset: 0,
+                ty: TypeRef::uint(32),
+                size: None,
+                source: "user".into(),
+            }],
+        },
+    );
+    db.typedefs.insert("Count".into(), TypeRef::uint(32));
+    ura_project::save_type_library(&path, &db).unwrap();
+    let reopened = open_project(&path).unwrap();
+    assert_eq!(
+        serde_json::to_value(reopened.type_library.unwrap()).unwrap(),
+        serde_json::to_value(&db).unwrap()
+    );
+    assert_eq!(reopened.annotations[0].note, "keep me");
+    let mut invalid = db.clone();
+    invalid.typedefs.insert(
+        "Cycle".into(),
+        TypeRef::Named {
+            name: "Cycle".into(),
+        },
+    );
+    assert!(ura_project::save_type_library(&path, &invalid).is_err());
+    assert_eq!(
+        serde_json::to_value(
+            ura_project::read_project(&path)
+                .unwrap()
+                .type_library
+                .unwrap()
+        )
+        .unwrap(),
+        serde_json::to_value(db).unwrap()
+    );
+}
+
+#[test]
 fn read_only_snapshots_preserve_legacy_schema_and_skip_binary_access() {
     let (_directory, path) = setup();
     create_project(&path, "Legacy", &identity(&fixture("ura64.exe"))).unwrap();

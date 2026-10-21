@@ -42,32 +42,32 @@ pub const API_DATABASE: &[ApiPrototype] = &[
     api(
         "memcpy",
         "void*",
-        &["void*", "const void*", "u64"],
+        &["void*", "const void*", "size_t"],
         false,
         ApiFamily::C,
     ),
     api(
         "memmove",
         "void*",
-        &["void*", "const void*", "u64"],
+        &["void*", "const void*", "size_t"],
         false,
         ApiFamily::C,
     ),
     api(
         "memset",
         "void*",
-        &["void*", "i32", "u64"],
+        &["void*", "i32", "size_t"],
         false,
         ApiFamily::C,
     ),
     api(
         "memcmp",
         "i32",
-        &["const void*", "const void*", "u64"],
+        &["const void*", "const void*", "size_t"],
         false,
         ApiFamily::C,
     ),
-    api("strlen", "u64", &["const char*"], false, ApiFamily::C),
+    api("strlen", "size_t", &["const char*"], false, ApiFamily::C),
     api(
         "strcmp",
         "i32",
@@ -78,7 +78,7 @@ pub const API_DATABASE: &[ApiPrototype] = &[
     api(
         "strncmp",
         "i32",
-        &["const char*", "const char*", "u64"],
+        &["const char*", "const char*", "size_t"],
         false,
         ApiFamily::C,
     ),
@@ -89,9 +89,21 @@ pub const API_DATABASE: &[ApiPrototype] = &[
         false,
         ApiFamily::C,
     ),
-    api("malloc", "void*", &["u64"], false, ApiFamily::C),
-    api("calloc", "void*", &["u64", "u64"], false, ApiFamily::C),
-    api("realloc", "void*", &["void*", "u64"], false, ApiFamily::C),
+    api("malloc", "void*", &["size_t"], false, ApiFamily::C),
+    api(
+        "calloc",
+        "void*",
+        &["size_t", "size_t"],
+        false,
+        ApiFamily::C,
+    ),
+    api(
+        "realloc",
+        "void*",
+        &["void*", "size_t"],
+        false,
+        ApiFamily::C,
+    ),
     api("free", "void", &["void*"], false, ApiFamily::C),
     api("printf", "i32", &["const char*"], true, ApiFamily::C),
     api(
@@ -114,20 +126,20 @@ pub const API_DATABASE: &[ApiPrototype] = &[
     ),
     api(
         "fread",
-        "u64",
-        &["void*", "u64", "u64", "void*"],
+        "size_t",
+        &["void*", "size_t", "size_t", "void*"],
         false,
         ApiFamily::C,
     ),
     api(
         "fwrite",
-        "u64",
-        &["const void*", "u64", "u64", "void*"],
+        "size_t",
+        &["const void*", "size_t", "size_t", "void*"],
         false,
         ApiFamily::C,
     ),
     api("fclose", "i32", &["void*"], false, ApiFamily::C),
-    api("time", "i64", &["i64*"], false, ApiFamily::C),
+    api("time", "time_t", &["time_t*"], false, ApiFamily::C),
     api("rand", "i32", &[], false, ApiFamily::C),
     api("srand", "void", &["u32"], false, ApiFamily::C),
     api("GetLastError", "u32", &[], false, ApiFamily::Win64),
@@ -164,14 +176,14 @@ pub const API_DATABASE: &[ApiPrototype] = &[
     api(
         "VirtualAlloc",
         "void*",
-        &["void*", "u64", "u32", "u32"],
+        &["void*", "size_t", "u32", "u32"],
         false,
         ApiFamily::Win64,
     ),
     api(
         "VirtualFree",
         "i32",
-        &["void*", "u64", "u32"],
+        &["void*", "size_t", "u32"],
         false,
         ApiFamily::Win64,
     ),
@@ -268,6 +280,8 @@ pub fn instantiate(
             } else {
                 CallingConvention::SysV64
             }
+        } else if prototype.family == ApiFamily::Win64 {
+            CallingConvention::Stdcall
         } else {
             CallingConvention::Cdecl
         }
@@ -294,10 +308,15 @@ pub fn instantiate(
             }],
         });
     }
-    let return_location = convention
-        .return_register(address_bits)
-        .map(|name| Location::Register {
-            name: name.to_string(),
+    let return_location = return_type
+        .bits(&database)
+        .filter(|width| *width <= u64::from(address_bits))
+        .and_then(|_| {
+            convention
+                .return_register(address_bits)
+                .map(|name| Location::Register {
+                    name: name.to_string(),
+                })
         });
     Ok(FunctionSignature {
         function: 0,
@@ -390,7 +409,14 @@ mod tests {
                     assert_eq!(signature.convention, CallingConvention::Win64);
                 }
                 if bits == 32 {
-                    assert_eq!(signature.convention, CallingConvention::Cdecl);
+                    assert_eq!(
+                        signature.convention,
+                        if prototype.family == ApiFamily::Win64 {
+                            CallingConvention::Stdcall
+                        } else {
+                            CallingConvention::Cdecl
+                        }
+                    );
                 }
             }
         }

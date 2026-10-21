@@ -25,12 +25,49 @@ struct Cli {
     /// Directory that binary, project and export paths must resolve inside (repeatable)
     #[arg(long = "allow", value_name = "DIR", global = true)]
     allow: Vec<PathBuf>,
+    /// Permit explicit project-editing commands
+    #[arg(long, global = true)]
+    enable_writes: bool,
     #[command(subcommand)]
     command: Command,
 }
 
 #[derive(Subcommand)]
 enum Command {
+    /// Read a project type library, inspect one structure, or import validated definitions
+    TypeLibrary {
+        #[command(flatten)]
+        common: CommonArgs,
+        /// Exact structure or union name
+        #[arg(long, conflicts_with = "import")]
+        name: Option<String>,
+        /// Replace the project type library from a TypeDatabase JSON file (requires --enable-writes)
+        #[arg(long, value_name = "FILE")]
+        import: Option<PathBuf>,
+    },
+    /// Save a user signature from a SignatureOverride JSON file
+    SetSignature {
+        #[command(flatten)]
+        common: CommonArgs,
+        #[arg(long)]
+        function: String,
+        #[arg(long, value_name = "FILE")]
+        input: PathBuf,
+    },
+    /// Save or clear a physical stack slot's name/type override
+    SetVariableType {
+        #[command(flatten)]
+        common: CommonArgs,
+        #[arg(long)]
+        function: String,
+        #[arg(long, allow_hyphen_values = true)]
+        offset: i64,
+        #[arg(long)]
+        name: Option<String>,
+        /// Type spelling; omit both --name and --type to restore inference
+        #[arg(long = "type")]
+        ty: Option<String>,
+    },
     /// Summarize binary metadata, sections, imports and exports
     Info {
         #[command(flatten)]
@@ -246,6 +283,9 @@ impl Command {
     fn json(&self) -> bool {
         match self {
             Command::Info { common }
+            | Command::TypeLibrary { common, .. }
+            | Command::SetSignature { common, .. }
+            | Command::SetVariableType { common, .. }
             | Command::Analyze { common, .. }
             | Command::Functions { common, .. }
             | Command::Disasm { common, .. }
@@ -329,8 +369,121 @@ fn main() -> ExitCode {
 
 fn run(cli: Cli) -> Result<(), ServiceError> {
     let policy = PathPolicy::new(cli.allow)?;
-    let mut service = Service::new(policy, false);
+    let mut service = Service::new(policy.clone(), cli.enable_writes);
     match cli.command {
+        Command::TypeLibrary {
+            common,
+            name,
+            import,
+        } => {
+            let handle = open(&mut service, &common)?.handle;
+            if let Some(path) = import {
+                let library = read_definition(&policy, &path)?;
+                let project = common.project.as_deref().ok_or_else(|| {
+                    ServiceError::InvalidArgument(
+                        "--project is required to save a type library".into(),
+                    )
+                })?;
+                service.set_type_library(&handle, project, &library)?;
+            }
+            if let Some(name) = name {
+                let response = service.structure_definition(&handle, &name)?;
+                if common.json {
+                    print_json(&response)
+                } else {
+                    println!(
+                        "{} {} (size {:?}, alignment {:?})",
+                        if response.structure.union {
+                            "union"
+                        } else {
+                            "struct"
+                        },
+                        response.structure.name,
+                        response.structure.size,
+                        response.structure.alignment
+                    );
+                    for field in response.structure.fields {
+                        println!("  +{}  {} {}", field.offset, field.ty.display(), field.name);
+                    }
+                    Ok(())
+                }
+            } else {
+                let response = service.type_library(&handle)?;
+                if common.json {
+                    print_json(&response)
+                } else {
+                    for structure in response.database.structures.values() {
+                        println!(
+                            "{} {} ({} fields)",
+                            if structure.union { "union" } else { "struct" },
+                            structure.name,
+                            structure.fields.len()
+                        );
+                    }
+                    for (name, ty) in &response.database.typedefs {
+                        println!("{name} = {}", ty.display());
+                    }
+                    Ok(())
+                }
+            }
+        }
+        Command::SetSignature {
+            common,
+            function,
+            input,
+        } => {
+            let project = common.project.as_deref().ok_or_else(|| {
+                ServiceError::InvalidArgument("--project is required to save a signature".into())
+            })?;
+            let signature = read_definition(&policy, &input)?;
+            let handle = open(&mut service, &common)?.handle;
+            service.analyze(&handle, &AnalysisOptions::default())?;
+            let response =
+                service.set_function_signature(&handle, project, &function, &signature)?;
+            if common.json {
+                print_json(&response)
+            } else {
+                render_signature(&response);
+                Ok(())
+            }
+        }
+        Command::SetVariableType {
+            common,
+            function,
+            offset,
+            name,
+            ty,
+        } => {
+            let project = common.project.as_deref().ok_or_else(|| {
+                ServiceError::InvalidArgument(
+                    "--project is required to save a variable override".into(),
+                )
+            })?;
+            let handle = open(&mut service, &common)?.handle;
+            service.analyze(&handle, &AnalysisOptions::default())?;
+            let bits = service.info(&handle)?.info.bitness as u16;
+            let ty = ty
+                .map(|text| ura_core::decomp::TypeRef::parse(&text, bits))
+                .transpose()
+                .map_err(ServiceError::InvalidArgument)?;
+            let response = service.set_stack_variable(
+                &handle,
+                project,
+                &function,
+                offset,
+                name.as_deref(),
+                ty.as_ref(),
+            )?;
+            if common.json {
+                print_json(&response)
+            } else {
+                println!(
+                    "Stack override {}",
+                    if response.removed { "removed" } else { "saved" }
+                );
+                Ok(())
+            }
+        }
         Command::Info { common } => {
             let opened = open(&mut service, &common)?;
             if common.json {
@@ -611,6 +764,26 @@ fn run(cli: Cli) -> Result<(), ServiceError> {
             }
         }
     }
+}
+
+fn read_definition<T: serde::de::DeserializeOwned>(
+    policy: &PathPolicy,
+    path: &std::path::Path,
+) -> Result<T, ServiceError> {
+    use std::io::Read;
+    let path = policy.allow_read(path)?;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .map_err(|e| ServiceError::Io(e.to_string()))?
+        .take(1024 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| ServiceError::Io(e.to_string()))?;
+    if bytes.len() > 1024 * 1024 {
+        return Err(ServiceError::LimitExceeded(
+            "definition file exceeds 1 MiB".into(),
+        ));
+    }
+    serde_json::from_slice(&bytes).map_err(|e| ServiceError::InvalidArgument(e.to_string()))
 }
 
 fn open(service: &mut Service, common: &CommonArgs) -> Result<OpenBinaryResponse, ServiceError> {

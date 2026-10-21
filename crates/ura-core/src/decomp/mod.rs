@@ -68,15 +68,23 @@ pub fn analyze_function(
     context: &DecompContext,
     control: &dyn AnalysisControl,
 ) -> Result<FunctionDecompilation, String> {
+    if context.type_database.address_bits != binary.analysis().bitness as u16 {
+        return Err("type database target width differs from the binary".into());
+    }
+    let type_errors = context.type_database.validation_errors();
+    if !type_errors.is_empty() {
+        return Err(format!("invalid type database: {}", type_errors.join("; ")));
+    }
     let bundle = inspect::analyze(binary, analysis, address, control)?;
     if control.is_cancelled() {
         return Err("decompiler analysis cancelled".into());
     }
-    let mut frame = stack::recover(binary, analysis, address, None)?;
-    let recovery = abi::recover(binary, analysis, &bundle, &frame, &context.hints)?;
+    let mut frame = stack::recover_with_control(binary, analysis, address, None, control)?;
+    let recovery =
+        abi::recover_with_control(binary, analysis, &bundle, &frame, &context.hints, control)?;
     let mut signature = recovery.signature;
     if let Some(override_signature) = &context.override_signature {
-        let errors = override_signature.validate();
+        let errors = override_signature.validate_for_width(binary.analysis().bitness as u16);
         if !errors.is_empty() {
             return Err(format!(
                 "signature override rejected: {}",
@@ -84,11 +92,18 @@ pub fn analyze_function(
             ));
         }
         signature = signature::apply_override(&signature, override_signature);
+        for parameter in &mut signature.parameters {
+            parameter.width = parameter
+                .ty
+                .bits(&context.type_database)
+                .unwrap_or(0)
+                .min(u64::from(u16::MAX)) as u16;
+        }
     }
     if control.is_cancelled() {
         return Err("decompiler analysis cancelled".into());
     }
-    frame = stack::recover(binary, analysis, address, Some(&signature))?;
+    frame = stack::recover_with_control(binary, analysis, address, Some(&signature), control)?;
     stack::apply_overrides(&mut frame, &context.stack_overrides);
     let mut inferred = types::infer_types(&bundle);
     abi::merge_value_constraints(&mut inferred, &recovery.value_constraints);
@@ -99,6 +114,9 @@ pub fn analyze_function(
         &context.hints,
         Some(&frame),
     );
+    if control.is_cancelled() {
+        return Err("decompiler analysis cancelled".into());
+    }
     let mut diagnostics = recovery.notes;
     let mut seen = std::collections::BTreeSet::new();
     for diagnostic in &bundle.raw.diagnostics {

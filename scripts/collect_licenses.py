@@ -4,6 +4,7 @@ Run after cargo metadata --format-version 1 > target/release-metadata.json.
 Output stays under target/; original dependencies are never modified.
 """
 import json
+import argparse
 import shutil
 import urllib.request
 import urllib.error
@@ -22,7 +23,9 @@ while pending:
     seen.add(package_id)
     pending.extend(d["pkg"] for d in nodes[package_id]["deps"])
 
-output = ROOT / "target/release-licenses"
+parser = argparse.ArgumentParser()
+parser.add_argument('--output', type=Path, default=ROOT / "target/release-licenses")
+output = parser.parse_args().output.resolve()
 output.mkdir(parents=True, exist_ok=True)
 index = ["# Dependency inventory", "", "Generated from Cargo.lock via cargo metadata. Unmodified dependency sources are linked below.", "", "| Package | Declared license | Source |", "|---|---|---|"]
 missing = []

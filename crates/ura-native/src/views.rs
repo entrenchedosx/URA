@@ -313,6 +313,17 @@ impl Workspace {
             );
         });
         let signature = &data.signature;
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(self.project.is_some(), egui::Button::new("Edit signature…"))
+                .clicked()
+            {
+                self.edit_signature(&data);
+            }
+            if self.project.is_none() {
+                ui.small("Create or open a project to save signatures.");
+            }
+        });
         ui.add_space(4.0);
         ui.label(
             RichText::new(signature.declaration())
@@ -357,7 +368,7 @@ impl Workspace {
         if signature.parameters.is_empty() {
             ui.label("No parameters were observed in the verified IR.");
         } else {
-            egui::ScrollArea::vertical()
+            egui::ScrollArea::both()
                 .id_salt(("signature-parameters", function))
                 .max_height(ui.available_height() * 0.55)
                 .auto_shrink([false, true])
@@ -476,9 +487,10 @@ impl Workspace {
             frame.slots.len(),
             if frame.truncated { " · truncated" } else { "" }
         ));
+        ui.small("Double-click a name to edit; right-click for all instruction references.");
         ui.separator();
         let mut navigate = None;
-        egui::ScrollArea::vertical()
+        egui::ScrollArea::both()
             .id_salt(("stack-slots", function))
             .auto_shrink([false, false])
             .show(ui, |ui| {
@@ -502,10 +514,42 @@ impl Workspace {
                         ui.end_row();
                         for slot in &frame.slots {
                             ui.label(format!("{:+}", slot.offset));
-                            ui.label(
+                            let response = ui.selectable_label(
+                                false,
                                 RichText::new(slot.user_name.as_deref().unwrap_or(&slot.name))
                                     .monospace(),
                             );
+                            response.context_menu(|ui| {
+                                if ui
+                                    .add_enabled(
+                                        self.project.is_some(),
+                                        egui::Button::new("Edit name / type…"),
+                                    )
+                                    .clicked()
+                                {
+                                    self.edit_stack_slot(function, slot);
+                                    ui.close();
+                                }
+                                ui.separator();
+                                for access in &slot.accesses {
+                                    if ui
+                                        .button(format!(
+                                            "{}  {}{}  {}",
+                                            format_address(access.instruction),
+                                            if access.read { "R" } else { "" },
+                                            if access.write { "W" } else { "" },
+                                            access.mnemonic
+                                        ))
+                                        .clicked()
+                                    {
+                                        navigate = Some(access.instruction);
+                                        ui.close();
+                                    }
+                                }
+                            });
+                            if response.double_clicked() && self.project.is_some() {
+                                self.edit_stack_slot(function, slot);
+                            }
                             ui.label(&slot.kind);
                             ui.label(slot.user_type.as_ref().unwrap_or(&slot.ty).display());
                             ui.label(format!("{}/{}", slot.reads, slot.writes));
@@ -554,6 +598,49 @@ impl Workspace {
         }
     }
     fn types_view(&mut self, ui: &mut egui::Ui) {
+        let library = self.project.as_ref().and_then(|p| p.1.type_library.clone());
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(self.project.is_some(), egui::Button::new("New structure…"))
+                .clicked()
+            {
+                self.edit_structure(None);
+            }
+            if ui
+                .add_enabled(self.project.is_some(), egui::Button::new("New type alias…"))
+                .clicked()
+            {
+                self.edit_alias(None, None);
+            }
+        });
+        if let Some(library) = library {
+            egui::CollapsingHeader::new(format!(
+                "Project types ({})",
+                library.structures.len() + library.typedefs.len()
+            ))
+            .default_open(true)
+            .show(ui, |ui| {
+                for structure in library.structures.values() {
+                    if ui
+                        .button(format!(
+                            "{} {} · {} fields",
+                            if structure.union { "union" } else { "struct" },
+                            structure.name,
+                            structure.fields.len()
+                        ))
+                        .clicked()
+                    {
+                        self.edit_structure(Some(structure));
+                    }
+                }
+                for (name, ty) in &library.typedefs {
+                    if ui.button(format!("{name} = {}", ty.display())).clicked() {
+                        self.edit_alias(Some(name), Some(ty));
+                    }
+                }
+            });
+        }
+        ui.separator();
         let Some((function, name)) = self.decomp_target(ui, "types") else {
             return;
         };
@@ -2303,6 +2390,7 @@ impl Workspace {
     }
 
     pub fn dialogs(&mut self, ctx: &egui::Context) {
+        self.decompiler_editor(ctx);
         if self.about_open {
             let mut open = true;
             egui::Window::new("About URA")

@@ -56,6 +56,7 @@ struct RootEvidence {
     pointer_roots: BTreeSet<usize>,
     zero_compare_roots: BTreeSet<usize>,
     register_names: BTreeMap<usize, String>,
+    truncated: bool,
 }
 
 pub fn recover(
@@ -65,12 +66,24 @@ pub fn recover(
     frame: &StackFrame,
     hints: &SignatureHints,
 ) -> Result<SignatureRecovery, String> {
+    recover_with_control(binary, analysis, bundle, frame, hints, &())
+}
+
+pub fn recover_with_control(
+    binary: &LoadedBinary,
+    analysis: &ProgramAnalysis,
+    bundle: &Bundle,
+    frame: &StackFrame,
+    hints: &SignatureHints,
+    control: &dyn crate::AnalysisControl,
+) -> Result<SignatureRecovery, String> {
+    check_cancelled(control)?;
     let ssa = &bundle.ssa;
     if !ssa.variables.iter().any(|variable| variable.is_register()) {
         return Err("ABI recovery requires architectural registers".into());
     }
     let bits = ssa.address_width;
-    let evidence = collect_roots(ssa);
+    let evidence = collect_roots(ssa, control)?;
     let platform = platform_default(binary, bits);
     let cleanup = return_cleanup(binary, analysis, ssa);
     let (convention, convention_confidence, mut convention_evidence, mut conflicts) =
@@ -87,20 +100,29 @@ pub fn recover(
                 .into(),
         );
     }
-    let hints_constraints = call_site_constraints(ssa, hints);
-    let stack_offsets = incoming_stack_offsets(ssa);
+    if evidence.truncated {
+        notes.push("Register-root recovery reached a depth or value budget; parameter evidence is incomplete.".into());
+    }
+    let hints_constraints = call_site_constraints(ssa, hints, control)?;
     let mut parameters: BTreeMap<usize, Parameter> = BTreeMap::new();
     let argument_registers = convention.argument_registers(bits);
 
     let mut max_index = None;
     for (index, register) in argument_registers.iter().enumerate() {
+        check_cancelled(control)?;
         let Some(variable) = register_index(ssa, register) else {
             conflicts.push(format!(
                 "convention register {register} is not present in this function"
             ));
             continue;
         };
-        let Some((uses, source)) = evidence.use_counts.get(&variable).copied() else {
+        let observed = evidence.use_counts.get(&variable).copied().or_else(|| {
+            hints_constraints
+                .by_variable
+                .get(&variable)
+                .and_then(|hints| hints.first().map(|hint| (hints.len(), hint.source)))
+        });
+        let Some((uses, source)) = observed else {
             continue;
         };
         let ty = parameter_type(
@@ -113,6 +135,9 @@ pub fn recover(
                 .map(Vec::as_slice)
                 .unwrap_or(&[]),
         );
+        if let TypeRef::Unknown { reason, .. } = &ty {
+            conflicts.push(format!("{register}: {reason}"));
+        }
         let mut parameter_evidence = vec![Evidence {
             kind: "incomingRegister".into(),
             address: Some(source),
@@ -130,7 +155,9 @@ pub fn recover(
                 detail: hint.detail.clone(),
             });
         }
-        let confidence = if evidence.pointer_roots.contains(&variable)
+        let confidence = if matches!(ty, TypeRef::Unknown { .. }) {
+            Confidence::Unknown
+        } else if evidence.pointer_roots.contains(&variable)
             || evidence.zero_compare_roots.contains(&variable)
             || uses >= 2
         {
@@ -161,25 +188,12 @@ pub fn recover(
         });
     }
 
-    let incoming = if frame.slots.is_empty() {
-        stack_offsets
-            .iter()
-            .map(|offset| (*offset, None))
-            .collect::<BTreeMap<_, _>>()
-    } else {
-        frame
-            .slots
-            .iter()
-            .filter(|slot| slot.kind == "incomingArgument")
-            .map(|slot| (slot.offset, Some(slot.width)))
-            .chain(
-                stack_offsets
-                    .iter()
-                    .filter(|offset| !frame.slots.iter().any(|slot| slot.offset == **offset))
-                    .map(|offset| (*offset, None)),
-            )
-            .collect()
-    };
+    let incoming = frame
+        .slots
+        .iter()
+        .filter(|slot| slot.kind == "incomingArgument" && slot.reads > 0 && slot.writes == 0)
+        .map(|slot| (slot.offset, Some(slot.width)))
+        .collect::<BTreeMap<_, _>>();
     for (offset, width) in incoming {
         let Some(index) = stack_parameter_index(convention, bits, offset) else {
             continue;
@@ -234,7 +248,7 @@ pub fn recover(
         }
     }
     let parameters: Vec<_> = parameters.into_values().collect();
-    let return_value = recover_return(ssa, &bundle.raw);
+    let return_value = recover_return(ssa, &bundle.raw, control)?;
     if convention == CallingConvention::Unknown {
         notes.push(
             "The calling convention could not be established from observed register use.".into(),
@@ -314,62 +328,14 @@ fn choose_convention(
     }];
     let mut conflicts = Vec::new();
     if bits == 64 {
-        let sysv_exclusive = ["rdi", "rsi"];
-        let win_exclusive = ["rcx", "r8", "r9"];
-        let used = |name: &str| {
-            evidence
-                .use_counts
-                .keys()
-                .any(|id| evidence.register_names.get(id).map(String::as_str) == Some(name))
-        };
-        let win = win_exclusive.iter().filter(|name| used(name)).count();
-        let sysv = sysv_exclusive.iter().filter(|name| used(name)).count();
-        let shared = ["rdx"].iter().filter(|name| used(name)).count();
-        if sysv > 0 && win == 0 {
-            evidence_list.push(Evidence {
-                kind: "registerPattern".into(),
-                address: None,
-                detail: "rdi/rsi are read as entry values and Windows argument registers are not"
-                    .into(),
-            });
-            return (
-                CallingConvention::SysV64,
-                Confidence::High,
-                evidence_list,
-                conflicts,
-            );
-        }
-        if win > 0 && sysv == 0 {
-            evidence_list.push(Evidence {
-                kind: "registerPattern".into(),
-                address: None,
-                detail: "Windows argument registers are read as entry values and rdi/rsi are not"
-                    .into(),
-            });
-            return (
-                CallingConvention::Win64,
-                Confidence::High,
-                evidence_list,
-                conflicts,
-            );
-        }
-        if win > 0 && sysv > 0 {
-            conflicts.push(
-                "both Windows and System V argument registers are read as entry values".into(),
-            );
-            evidence_list.push(Evidence {
-                kind: "registerConflict".into(),
-                address: None,
-                detail: "mixed register use prevents a definitive x64 convention decision".into(),
-            });
-            return (platform, Confidence::Low, evidence_list, conflicts);
-        }
-        let confidence = if used("rdx") || shared > 0 {
-            Confidence::Medium
-        } else {
-            Confidence::Low
-        };
-        return (platform, confidence, evidence_list, conflicts);
+        // RCX/R8/R9 are also System V arguments, and RDI/RSI can be
+        // preserved nonvolatile values in Win64. Entry reads cannot prove an
+        // alternate ABI, so retain the format default with explicit evidence.
+        evidence_list.push(Evidence {
+            kind: "registerAmbiguity".into(), address: None,
+            detail: "x64 entry-register reads alone cannot distinguish an alternate ABI from saved or unused registers".into(),
+        });
+        return (platform, Confidence::Low, evidence_list, conflicts);
     }
     if let Some(bytes) = cleanup {
         if bytes > 0 {
@@ -419,9 +385,13 @@ fn choose_convention(
     )
 }
 
-fn collect_roots(ssa: &SsaFunction) -> RootEvidence {
+fn collect_roots(
+    ssa: &SsaFunction,
+    control: &dyn crate::AnalysisControl,
+) -> Result<RootEvidence, String> {
     let mut defs: BTreeMap<Value, Def> = BTreeMap::new();
     for block in &ssa.blocks {
+        check_cancelled(control)?;
         for phi in &block.phis {
             let mut args = phi
                 .incoming
@@ -435,6 +405,7 @@ fn collect_roots(ssa: &SsaFunction) -> RootEvidence {
             defs.insert(phi.output, Def { op: None, args });
         }
         for statement in &block.statements {
+            check_cancelled(control)?;
             if let Some(output) = statement.output {
                 defs.insert(
                     output,
@@ -446,36 +417,66 @@ fn collect_roots(ssa: &SsaFunction) -> RootEvidence {
             }
         }
     }
-    let register_names = ssa
-        .variables
-        .iter()
-        .enumerate()
-        .filter(|(_, variable)| variable.is_register())
-        .map(|(id, variable)| (id, variable.name.clone()))
-        .collect::<BTreeMap<_, _>>();
     let mut evidence = RootEvidence {
         roots: BTreeSet::new(),
         use_counts: BTreeMap::new(),
         pointer_roots: BTreeSet::new(),
         zero_compare_roots: BTreeSet::new(),
-        register_names,
+        register_names: ssa
+            .variables
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| v.is_register())
+            .map(|(id, v)| (id, v.name.clone()))
+            .collect(),
+        truncated: false,
     };
     let mut resolver = RootResolver {
         defs,
         memo: BTreeMap::new(),
         budget: MAX_TAINT_VALUES,
+        truncated: false,
     };
     for block in &ssa.blocks {
+        check_cancelled(control)?;
         for statement in &block.statements {
+            check_cancelled(control)?;
+            if statement.output.is_some_and(|output| {
+                ssa.variables[output.variable].kind == VariableKind::Temporary
+            }) && !matches!(
+                statement.op,
+                Operation::Load | Operation::Store | Operation::Call
+            ) {
+                // Addressing/alias temporaries are implementation details. Count
+                // their roots only when the completed value is consumed.
+                continue;
+            }
             let args: &[Use] = match &statement.op {
                 Operation::Barrier { .. } => continue,
                 Operation::Call => &statement.args[..statement.args.len().min(1)],
                 _ => &statement.args,
             };
+            if matches!(
+                statement.op,
+                Operation::Xor | Operation::Sub | Operation::Equal | Operation::UnsignedLess
+            ) && args.len() == 2
+                && args[0] == args[1]
+            {
+                continue;
+            }
             let mut roots = BTreeSet::new();
-            for arg in args {
-                if let Use::Value(value) = arg {
-                    roots.extend(resolver.roots(*value, 0));
+            if let Some(output) = statement.output.filter(|_| {
+                !matches!(
+                    statement.op,
+                    Operation::Load | Operation::Store | Operation::Call
+                )
+            }) {
+                roots.extend(resolver.roots(output, 0));
+            } else {
+                for arg in args {
+                    if let Use::Value(value) = arg {
+                        roots.extend(resolver.roots(*value, 0));
+                    }
                 }
             }
             for root in &roots {
@@ -488,7 +489,9 @@ fn collect_roots(ssa: &SsaFunction) -> RootEvidence {
             };
             if let Some(position) = address_position {
                 if let Some(Use::Value(value)) = args.get(position) {
-                    evidence.pointer_roots.extend(resolver.roots(*value, 0));
+                    evidence
+                        .pointer_roots
+                        .extend(resolver.address_roots(*value, 0));
                 }
             }
             let compares_zero = matches!(&statement.op, Operation::Equal | Operation::UnsignedLess)
@@ -511,36 +514,79 @@ fn collect_roots(ssa: &SsaFunction) -> RootEvidence {
             evidence.roots.extend(resolver.roots(value, 0));
         }
     }
-    evidence
+    evidence.truncated = resolver.truncated;
+    Ok(evidence)
 }
 
 struct RootResolver {
     defs: BTreeMap<Value, Def>,
     memo: BTreeMap<Value, BTreeSet<usize>>,
     budget: usize,
+    truncated: bool,
 }
 impl RootResolver {
-    fn roots(&mut self, value: Value, depth: usize) -> BTreeSet<usize> {
+    fn address_roots(&mut self, value: Value, depth: usize) -> BTreeSet<usize> {
         if depth > 64 || self.budget == 0 {
+            self.truncated = true;
             return BTreeSet::new();
         }
         self.budget -= 1;
         if value.version == 0 {
             return BTreeSet::from([value.variable]);
         }
+        let Some(def) = self.defs.get(&value) else {
+            return BTreeSet::new();
+        };
+        let next = match def.op {
+            Some(Operation::Copy | Operation::ToAddress | Operation::ToBits) => {
+                def.args.first().copied()
+            }
+            Some(Operation::Add | Operation::Sub)
+                if matches!(def.args.get(1), Some(Use::Constant(_))) =>
+            {
+                def.args.first().copied()
+            }
+            Some(Operation::Add) if matches!(def.args.first(), Some(Use::Constant(_))) => {
+                def.args.get(1).copied()
+            }
+            _ => None,
+        };
+        match next {
+            Some(Use::Value(value)) => self.address_roots(value, depth + 1),
+            _ => BTreeSet::new(),
+        }
+    }
+
+    fn roots(&mut self, value: Value, depth: usize) -> BTreeSet<usize> {
+        if value.version == 0 {
+            return BTreeSet::from([value.variable]);
+        }
         if let Some(cached) = self.memo.get(&value) {
             return cached.clone();
         }
-        let args = self
-            .defs
-            .get(&value)
-            .map(|def| def.args.clone())
-            .unwrap_or_default();
+        if depth > 64 || self.budget == 0 {
+            self.truncated = true;
+            return BTreeSet::new();
+        }
+        self.budget -= 1;
+        let def = self.defs.get(&value);
+        if def.is_some_and(|def| {
+            matches!(
+                def.op,
+                Some(Operation::Xor | Operation::Sub | Operation::Equal | Operation::UnsignedLess)
+            ) && def.args.len() == 2
+                && def.args[0] == def.args[1]
+        }) {
+            self.memo.insert(value, BTreeSet::new());
+            return BTreeSet::new();
+        }
+        let args = def.map(|def| def.args.clone()).unwrap_or_default();
         let mut roots = BTreeSet::new();
         for arg in args {
             if let Use::Value(next) = arg {
                 roots.extend(self.roots(next, depth + 1));
                 if roots.len() >= MAX_ROOTS_PER_VALUE {
+                    self.truncated = true;
                     break;
                 }
             }
@@ -562,8 +608,15 @@ fn parameter_type(
     evidence: &RootEvidence,
     hints: &[HintConstraint],
 ) -> TypeRef {
-    if let Some(hint) = hints.iter().find(|hint| hint.ty.is_some()) {
-        return hint.ty.clone().expect("checked");
+    let mut supplied = hints.iter().filter_map(|hint| hint.ty.as_ref());
+    if let Some(first) = supplied.next() {
+        if supplied.any(|other| other != first) {
+            return TypeRef::unknown(
+                ssa.variables[variable].ty.width(),
+                "callee parameter type evidence conflicts",
+            );
+        }
+        return first.clone();
     }
     let width = ssa.variables[variable]
         .ty
@@ -575,132 +628,148 @@ fn parameter_type(
             ssa.address_width,
         );
     }
-    if evidence.zero_compare_roots.contains(&variable) && width == ssa.address_width {
-        return TypeRef::pointer_to(
-            TypeRef::unknown(None, "compared with zero; pointee type is not inferred"),
-            ssa.address_width,
-        );
-    }
     TypeRef::Int {
         bits: width,
         signed: None,
     }
 }
 
-fn recover_return(ssa: &SsaFunction, _raw: &crate::ir::Function) -> ReturnValue {
+fn recover_return(
+    ssa: &SsaFunction,
+    _raw: &crate::ir::Function,
+    control: &dyn crate::AnalysisControl,
+) -> Result<ReturnValue, String> {
     let ret = register_index(ssa, "rax")
         .or_else(|| register_index(ssa, "eax"))
         .unwrap_or(0);
+    let width = ssa
+        .variables
+        .get(ret)
+        .and_then(|variable| variable.ty.width());
     let returns = ssa
         .blocks
         .iter()
         .filter(|block| block.terminator.flow.kind == crate::ir::FlowKind::Return)
         .collect::<Vec<_>>();
-    if returns.is_empty() {
-        return ReturnValue {
-            location: None,
-            ty: TypeRef::Void,
-            confidence: Confidence::Low,
-            evidence: vec![Evidence {
-                kind: "noReturnObserved".into(),
-                address: None,
-                detail: "no return instruction was recovered; the function may not return".into(),
-            }],
-        };
-    }
-    let mut observed = 0usize;
-    let mut untracked = 0usize;
-    let mut conflicts = Vec::new();
-    let mut source = None;
-    for block in &returns {
-        let value = block
-            .terminator
-            .state
-            .get(ret)
-            .and_then(|use_| match use_ {
-                Use::Value(value) => Some(*value),
-                Use::Constant(_) => None,
-            })
-            .unwrap_or(Value {
-                variable: ret,
-                version: 0,
-            });
-        source = source.or(Some(block.terminator.flow.source.0));
-        if value.version == 0 {
-            conflicts.push(format!(
-                "return at {} does not define the return register",
-                block.terminator.flow.source
-            ));
-            continue;
+    let mut definitions = BTreeMap::new();
+    for block in &ssa.blocks {
+        check_cancelled(control)?;
+        for statement in &block.statements {
+            if let Some(output) = statement.output {
+                definitions.insert(
+                    output,
+                    Def {
+                        op: Some(statement.op.clone()),
+                        args: statement.args.clone(),
+                    },
+                );
+            }
         }
-        let defined = ssa.blocks.iter().any(|candidate| {
-            candidate
-                .statements
-                .iter()
-                .any(|statement| statement.output == Some(value))
-        }) || ssa
-            .blocks
-            .iter()
-            .any(|candidate| candidate.phis.iter().any(|phi| phi.output == value));
-        let unknown_effect = ssa.blocks.iter().any(|candidate| {
-            candidate.statements.iter().any(|statement| {
-                statement.output == Some(value)
-                    && matches!(&statement.op, Operation::Unknown { .. })
+        for phi in &block.phis {
+            let mut args = phi
+                .incoming
+                .values()
+                .copied()
+                .map(Use::Value)
+                .collect::<Vec<_>>();
+            args.extend(phi.initial.map(Use::Value));
+            definitions.insert(phi.output, Def { op: None, args });
+        }
+    }
+    // Unknown and entry-RAX provenance must survive copies and phi joins.
+    // Cycles/depth bounds are conservative; they cannot manufacture a type.
+    fn tracked(
+        value: Value,
+        ret: usize,
+        defs: &BTreeMap<Value, Def>,
+        active: &mut BTreeSet<Value>,
+        budget: &mut usize,
+    ) -> bool {
+        if *budget == 0 || active.len() >= 64 {
+            return false;
+        }
+        *budget -= 1;
+        if value.version == 0 {
+            return value.variable != ret;
+        }
+        if !active.insert(value) {
+            return false;
+        }
+        let result = defs.get(&value).is_some_and(|def| {
+            if matches!(
+                def.op,
+                Some(Operation::Unknown { .. } | Operation::Barrier { .. } | Operation::Call)
+            ) {
+                return false;
+            }
+            if matches!(
+                def.op,
+                Some(Operation::Xor | Operation::Sub | Operation::Equal | Operation::UnsignedLess)
+            ) && def.args.len() == 2
+                && def.args[0] == def.args[1]
+            {
+                return true;
+            }
+            def.args.iter().all(|arg| match arg {
+                Use::Constant(_) => true,
+                Use::Value(value) => tracked(*value, ret, defs, active, budget),
             })
         });
-        if !defined || unknown_effect {
-            untracked += 1;
-        } else {
-            observed += 1;
-        }
+        active.remove(&value);
+        result
     }
-    let width = ssa
-        .variables
-        .get(ret)
-        .and_then(|variable| variable.ty.width());
-    let ty = TypeRef::Int {
-        bits: width.unwrap_or(ssa.address_width),
-        signed: None,
-    };
-    let location = Some(Location::Register {
-        name: if ssa.address_width == 64 {
-            "rax".into()
+    let mut evidence = Vec::new();
+    let mut all_tracked = !returns.is_empty();
+    for block in &returns {
+        check_cancelled(control)?;
+        let value = block.terminator.state.get(ret);
+        let mut budget = MAX_TAINT_VALUES;
+        let is_tracked = match value {
+            Some(Use::Value(value)) => {
+                tracked(*value, ret, &definitions, &mut BTreeSet::new(), &mut budget)
+            }
+            Some(Use::Constant(_)) => true,
+            None => false,
+        };
+        all_tracked &= is_tracked;
+        evidence.push(Evidence {
+            kind: if is_tracked { "returnRegister" } else { "unknownReturn" }.into(),
+            address: Some(block.terminator.flow.source.0),
+            detail: if is_tracked { "a return-register value is defined on this path" }
+                else { "return register is unchanged, untracked, or depends on a call/unsupported effect; return type is unknown" }.into(),
+        });
+    }
+    if returns.is_empty() {
+        evidence.push(Evidence { kind: "noReturnObserved".into(), address: None,
+            detail: "no return instruction was recovered; neither a void return type nor nonreturning behavior is established".into() });
+    }
+    Ok(ReturnValue {
+        location: (!returns.is_empty()).then(|| Location::Register {
+            name: if ssa.address_width == 64 {
+                "rax"
+            } else {
+                "eax"
+            }
+            .into(),
+        }),
+        ty: if all_tracked {
+            TypeRef::Int {
+                bits: width.unwrap_or(ssa.address_width),
+                signed: None,
+            }
         } else {
-            "eax".into()
-        },
-    });
-    let (ty, confidence, detail) = if observed > 0 {
-        (
-            ty,
-            Confidence::Medium,
-            "the return register is defined on at least one return path".to_string(),
-        )
-    } else if untracked > 0 {
-        (
             TypeRef::unknown(
                 width,
-                "return value depends on a call or unsupported effect",
-            ),
-            Confidence::Low,
-            "the return register is only written by an untracked effect".to_string(),
-        )
-    } else {
-        (
-            TypeRef::Void,
-            Confidence::Medium,
-            "the return register is never defined on any return path".to_string(),
-        )
-    };
-    ReturnValue {
-        location,
-        ty,
-        confidence,
-        evidence: vec![Evidence {
-            kind: "returnRegister".into(),
-            address: source,
-            detail,
-        }],
-    }
+                "return type is not established on every observed return path",
+            )
+        },
+        confidence: if all_tracked {
+            Confidence::Medium
+        } else {
+            Confidence::Low
+        },
+        evidence,
+    })
 }
 
 #[derive(Clone, Debug)]
@@ -716,10 +785,16 @@ struct HintConstraints {
     value_constraints: BTreeMap<usize, Vec<TypeConstraint>>,
 }
 
-fn call_site_constraints(ssa: &SsaFunction, hints: &SignatureHints) -> HintConstraints {
+fn call_site_constraints(
+    ssa: &SsaFunction,
+    hints: &SignatureHints,
+    control: &dyn crate::AnalysisControl,
+) -> Result<HintConstraints, String> {
     let mut result = HintConstraints::default();
     for block in &ssa.blocks {
+        check_cancelled(control)?;
         for statement in &block.statements {
+            check_cancelled(control)?;
             if statement.op != Operation::Call {
                 continue;
             }
@@ -784,112 +859,7 @@ fn call_site_constraints(ssa: &SsaFunction, hints: &SignatureHints) -> HintConst
             }
         }
     }
-    result
-}
-
-/// Entry-relative stack offsets read or written by the function.
-fn incoming_stack_offsets(ssa: &SsaFunction) -> BTreeSet<i64> {
-    let mut defs: BTreeMap<Value, Def> = BTreeMap::new();
-    for block in &ssa.blocks {
-        for statement in &block.statements {
-            if let Some(output) = statement.output {
-                defs.insert(
-                    output,
-                    Def {
-                        op: Some(statement.op.clone()),
-                        args: statement.args.clone(),
-                    },
-                );
-            }
-        }
-        for phi in &block.phis {
-            let mut args = phi
-                .incoming
-                .values()
-                .copied()
-                .map(Use::Value)
-                .collect::<Vec<_>>();
-            if let Some(initial) = phi.initial {
-                args.push(Use::Value(initial));
-            }
-            defs.insert(phi.output, Def { op: None, args });
-        }
-    }
-    let stack_pointer = if ssa.address_width == 64 {
-        "rsp"
-    } else {
-        "esp"
-    };
-    let Some(sp) = register_index(ssa, stack_pointer) else {
-        return BTreeSet::new();
-    };
-    fn constant(use_: Use) -> Option<i64> {
-        match use_ {
-            Use::Constant(c) if c.ty.width().is_some_and(|width| width <= 64) => {
-                Some(c.value.0 as i64)
-            }
-            _ => None,
-        }
-    }
-    fn offset(value: Value, sp: usize, defs: &BTreeMap<Value, Def>, depth: usize) -> Option<i64> {
-        if depth > 64 {
-            return None;
-        }
-        if value.version == 0 {
-            return (value.variable == sp).then_some(0);
-        }
-        let def = defs.get(&value)?;
-        match def.op.as_ref()? {
-            Operation::Copy
-            | Operation::ToAddress
-            | Operation::ToBits
-            | Operation::ZeroExtend
-            | Operation::SignExtend
-            | Operation::Truncate => match def.args.first() {
-                Some(Use::Value(value)) => offset(*value, sp, defs, depth + 1),
-                _ => None,
-            },
-            Operation::Extract { offset: 0 } => match def.args.first() {
-                Some(Use::Value(value)) => offset(*value, sp, defs, depth + 1),
-                _ => None,
-            },
-            Operation::Add => match (def.args.first(), def.args.get(1)) {
-                (Some(Use::Value(a)), Some(Use::Value(b))) => offset(*a, sp, defs, depth + 1)
-                    .and_then(|a| offset(*b, sp, defs, depth + 1).map(|b| a.wrapping_add(b))),
-                (Some(Use::Value(a)), Some(b)) => offset(*a, sp, defs, depth + 1)
-                    .map(|a| a.wrapping_add(constant(*b).unwrap_or(0))),
-                (Some(a), Some(Use::Value(b))) => offset(*b, sp, defs, depth + 1)
-                    .map(|b| b.wrapping_add(constant(*a).unwrap_or(0))),
-                _ => None,
-            },
-            Operation::Sub => match (def.args.first(), def.args.get(1)) {
-                (Some(Use::Value(a)), Some(b)) => offset(*a, sp, defs, depth + 1)
-                    .map(|a| a.wrapping_sub(constant(*b).unwrap_or(0))),
-                (Some(a), Some(Use::Value(b))) => {
-                    constant(*a).and_then(|a| offset(*b, sp, defs, depth + 1).map(|b| a - b))
-                }
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-    let mut offsets = BTreeSet::new();
-    for block in &ssa.blocks {
-        for statement in &block.statements {
-            if !matches!(statement.op, Operation::Load | Operation::Store) {
-                continue;
-            }
-            let Some(Use::Value(value)) = statement.args.get(1) else {
-                continue;
-            };
-            if let Some(offset) = offset(*value, sp, &defs, 0) {
-                if (1..=0x10_000).contains(&offset) {
-                    offsets.insert(offset);
-                }
-            }
-        }
-    }
-    offsets
+    Ok(result)
 }
 
 fn stack_parameter_index(convention: CallingConvention, bits: u16, offset: i64) -> Option<usize> {
@@ -927,7 +897,7 @@ fn return_cleanup(
     analysis: &ProgramAnalysis,
     ssa: &SsaFunction,
 ) -> Option<u16> {
-    let mut cleanup = None;
+    let mut cleanups = BTreeSet::new();
     for block in &ssa.blocks {
         if block.terminator.flow.kind != crate::ir::FlowKind::Return {
             continue;
@@ -953,13 +923,13 @@ fn return_cleanup(
         if instruction.mnemonic() == Mnemonic::Ret {
             if instruction.op_count() == 1 {
                 let value = instruction.immediate16();
-                cleanup = Some(cleanup.map_or(value, |current: u16| current.max(value)));
+                cleanups.insert(value);
             } else {
-                cleanup = Some(cleanup.unwrap_or(0));
+                cleanups.insert(0);
             }
         }
     }
-    cleanup
+    (cleanups.len() == 1).then(|| *cleanups.first().expect("one cleanup"))
 }
 
 /// Merge call-site constraints into the report produced by scalar type
@@ -992,6 +962,14 @@ pub fn merge_value_constraints(
             .cmp(&b.variable)
             .then(a.variable_id.cmp(&b.variable_id))
     });
+}
+
+fn check_cancelled(control: &dyn crate::AnalysisControl) -> Result<(), String> {
+    if control.is_cancelled() {
+        Err("ABI recovery cancelled".into())
+    } else {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -1085,6 +1063,7 @@ mod tests {
             defs,
             memo: BTreeMap::new(),
             budget: 8,
+            truncated: false,
         };
         assert!(resolver.roots(first, 0).is_empty());
         assert!(resolver.budget < 8);

@@ -98,41 +98,56 @@ impl TypeRef {
         }
     }
     pub fn valid(&self) -> bool {
+        self.valid_at(0)
+    }
+    fn valid_at(&self, depth: usize) -> bool {
+        if depth > 32 {
+            return false;
+        }
         match self {
-            Self::Unknown { bits, .. } => bits.map_or(true, |b| (1..=64).contains(&b)),
+            Self::Unknown { bits, reason } => {
+                reason.len() <= 4096 && bits.map_or(true, |b| (1..=64).contains(&b))
+            }
             Self::Void | Self::Bool => true,
             Self::Int { bits, .. } => (1..=64).contains(bits),
             Self::Float { bits } => matches!(bits, 32 | 64 | 80),
             Self::Pointer { to, address_bits } => {
-                matches!(address_bits, 16 | 32 | 64) && to.valid()
+                matches!(address_bits, 16 | 32 | 64) && to.valid_at(depth + 1)
             }
             Self::Array { element, count } => {
-                element.valid() && count.map_or(true, |count| count > 0)
+                element.valid_at(depth + 1) && count.map_or(true, |count| count > 0)
             }
             Self::Struct { name } | Self::Union { name } | Self::Named { name } => {
-                !name.trim().is_empty() && name.chars().count() <= 256
+                type_identifier(name)
             }
             Self::Enum { name, underlying } => {
-                !name.trim().is_empty() && name.chars().count() <= 256 && underlying.valid()
+                type_identifier(name)
+                    && matches!(underlying.as_ref(), Self::Int { .. })
+                    && underlying.valid_at(depth + 1)
             }
             Self::Function {
                 return_type,
                 parameters,
                 ..
             } => {
-                return_type.valid()
+                return_type.valid_at(depth + 1)
                     && parameters.len() <= 64
-                    && parameters.iter().all(TypeRef::valid)
+                    && parameters.iter().all(|p| p.valid_at(depth + 1))
             }
-            Self::Typedef { name, target } => {
-                !name.trim().is_empty() && name.chars().count() <= 256 && target.valid()
-            }
+            Self::Typedef { name, target } => type_identifier(name) && target.valid_at(depth + 1),
             Self::Qualified { qualifier, target } => {
-                matches!(qualifier.as_str(), "const" | "volatile" | "restrict") && target.valid()
+                matches!(qualifier.as_str(), "const" | "volatile" | "restrict")
+                    && target.valid_at(depth + 1)
             }
         }
     }
     pub fn bits(&self, database: &TypeDatabase) -> Option<u64> {
+        self.bits_at(database, 0)
+    }
+    fn bits_at(&self, database: &TypeDatabase, depth: usize) -> Option<u64> {
+        if depth > 32 {
+            return None;
+        }
         match self {
             Self::Unknown { bits, .. } => bits.map(u64::from),
             Self::Void => None,
@@ -140,18 +155,20 @@ impl TypeRef {
             Self::Int { bits, .. } => Some(u64::from(*bits)),
             Self::Float { bits } => Some(u64::from(*bits)),
             Self::Pointer { address_bits, .. } => Some(u64::from(*address_bits)),
-            Self::Array { element, count } => Some(element.bits(database)? * (*count)?),
+            Self::Array { element, count } => {
+                element.bits_at(database, depth + 1)?.checked_mul((*count)?)
+            }
             Self::Struct { name } | Self::Union { name } => {
                 database.structures.get(name).and_then(|s| s.size_bits())
             }
-            Self::Enum { underlying, .. } => underlying.bits(database),
-            Self::Typedef { target, .. } => target.bits(database),
+            Self::Enum { underlying, .. } => underlying.bits_at(database, depth + 1),
+            Self::Typedef { target, .. } => target.bits_at(database, depth + 1),
             Self::Named { name } => database
                 .typedefs
                 .get(name)
-                .and_then(|target| target.bits(database)),
+                .and_then(|target| target.bits_at(database, depth + 1)),
             Self::Function { .. } => None,
-            Self::Qualified { target, .. } => target.bits(database),
+            Self::Qualified { target, .. } => target.bits_at(database, depth + 1),
         }
     }
     pub fn size(&self, database: &TypeDatabase) -> Option<u64> {
@@ -206,6 +223,18 @@ impl TypeRef {
         }
     }
     pub fn parse(text: &str, address_bits: u16) -> Result<Self, String> {
+        if !matches!(address_bits, 16 | 32 | 64) {
+            return Err("type target must be 16, 32 or 64 bits".into());
+        }
+        if text.len() > 2048 {
+            return Err("type spelling exceeds 2048 bytes".into());
+        }
+        Self::parse_at(text, address_bits, 0)
+    }
+    fn parse_at(text: &str, address_bits: u16, depth: usize) -> Result<Self, String> {
+        if depth > 32 {
+            return Err("type nesting exceeds 32 levels".into());
+        }
         let mut text = text.trim();
         if text.is_empty() {
             return Err("type is empty".into());
@@ -213,18 +242,18 @@ impl TypeRef {
         if let Some(rest) = text.strip_prefix("const ") {
             return Ok(Self::Qualified {
                 qualifier: "const".into(),
-                target: Box::new(Self::parse(rest, address_bits)?),
+                target: Box::new(Self::parse_at(rest, address_bits, depth + 1)?),
             });
         }
         if let Some(rest) = text.strip_prefix("volatile ") {
             return Ok(Self::Qualified {
                 qualifier: "volatile".into(),
-                target: Box::new(Self::parse(rest, address_bits)?),
+                target: Box::new(Self::parse_at(rest, address_bits, depth + 1)?),
             });
         }
         if let Some(open) = text.rfind('[') {
             if text.ends_with(']') {
-                let base = Self::parse(&text[..open], address_bits)?;
+                let base = Self::parse_at(&text[..open], address_bits, depth + 1)?;
                 let count = &text[open + 1..text.len() - 1];
                 let count = if count.trim().is_empty() {
                     None
@@ -251,7 +280,7 @@ impl TypeRef {
         }
         if let Some(base) = text.strip_suffix('*') {
             return Ok(Self::Pointer {
-                to: Box::new(Self::parse(base, address_bits)?),
+                to: Box::new(Self::parse_at(base, address_bits, depth + 1)?),
                 address_bits,
             });
         }
@@ -270,19 +299,36 @@ impl TypeRef {
                 signed: Some(true),
             },
             "u32" | "uint32_t" | "dword" | "uint" | "unsigned int" | "unsigned" => Self::uint(32),
-            "i32" | "int32_t" | "int" | "long" if text != "long" => Self::Int {
+            "i32" | "int32_t" | "int" => Self::Int {
                 bits: 32,
                 signed: Some(true),
             },
-            "u64" | "uint64_t" | "qword" | "unsigned long long" | "usize" => Self::uint(64),
-            "i64" | "int64_t" | "long long" | "ssize_t" | "long" => Self::Int {
+            "usize" | "size_t" => Self::uint(address_bits),
+            "ssize_t" => Self::Int {
+                bits: address_bits,
+                signed: Some(true),
+            },
+            "long" | "unsigned long" => {
+                return Err("long depends on the target ABI; use i32, u32, i64 or u64".into())
+            }
+            "u64" | "uint64_t" | "qword" | "unsigned long long" => Self::uint(64),
+            "i64" | "int64_t" | "long long" => Self::Int {
                 bits: 64,
                 signed: Some(true),
             },
             "f32" | "float" => Self::Float { bits: 32 },
             "f64" | "double" => Self::Float { bits: 64 },
+            "f80" => Self::Float { bits: 80 },
+            "unknown" => Self::unknown(None, "user supplied unknown type"),
             _ => {
-                if let Some(name) = text.strip_prefix("struct ") {
+                if let Some(width) = text.strip_prefix("int").and_then(|s| s.parse::<u16>().ok()) {
+                    Self::int(width)
+                } else if let Some(width) = text
+                    .strip_prefix("unknown")
+                    .and_then(|s| s.parse::<u16>().ok())
+                {
+                    Self::unknown(Some(width), "user supplied unknown type")
+                } else if let Some(name) = text.strip_prefix("struct ") {
                     Self::Struct {
                         name: name.trim().to_string(),
                     }
@@ -337,19 +383,29 @@ pub struct Structure {
 }
 impl Structure {
     pub fn size_bits(&self) -> Option<u64> {
-        self.size.map(|size| size * 8)
+        self.size?.checked_mul(8)
     }
     pub fn valid(&self) -> Vec<String> {
         let mut errors = Vec::new();
-        if self.name.trim().is_empty() || self.name.chars().count() > 256 {
+        if self
+            .alignment
+            .is_some_and(|a| !a.is_power_of_two() || a > 4096)
+        {
+            errors.push("structure alignment must be a power of two from 1 to 4096".into());
+        }
+        if self.size.is_some_and(|s| s > u64::MAX / 8) {
+            errors.push("structure size exceeds the representable bit size".into());
+        }
+        if !type_identifier(&self.name) {
             errors.push("structure name must be 1..256 characters".into());
         }
         if self.fields.len() > 512 {
             errors.push("structure fields are limited to 512".into());
+            return errors;
         }
         let mut names = BTreeSet::new();
         for field in &self.fields {
-            if field.name.trim().is_empty() || field.name.chars().count() > 256 {
+            if !type_identifier(&field.name) {
                 errors.push("field names must be 1..256 characters".into());
             }
             if !names.insert(field.name.clone()) {
@@ -395,21 +451,135 @@ impl TypeDatabase {
     }
     pub fn validation_errors(&self) -> Vec<String> {
         let mut errors = Vec::new();
+        if !matches!(self.address_bits, 16 | 32 | 64) {
+            errors.push("type database requires a valid target width".into());
+        }
+        if self.structures.len() > 256 || self.typedefs.len() > 256 {
+            errors.push("type library is limited to 256 structures and 256 aliases".into());
+            return errors;
+        }
         for (name, structure) in &self.structures {
             if name != &structure.name {
                 errors.push(format!("structure key '{name}' disagrees with its name"));
             }
             errors.extend(structure.valid());
+            if structure.fields.len() > 512 {
+                continue;
+            }
+            let mut seen = BTreeSet::new();
+            if alias_cycle(
+                &TypeRef::Struct { name: name.clone() },
+                self,
+                &mut seen,
+                0,
+                &mut 4096,
+            ) {
+                errors.push(format!(
+                    "structure '{name}' has a cyclic by-value or excessively complex layout"
+                ));
+            }
+            let mut ranges = Vec::new();
+            for field in &structure.fields {
+                let actual = field.ty.size(self);
+                if let (Some(actual), Some(explicit)) = (actual, field.size) {
+                    if actual > explicit {
+                        errors.push(format!(
+                            "field '{}' type exceeds its declared storage",
+                            field.name
+                        ));
+                    }
+                }
+                let width = field.size.or(actual);
+                if let Some(width) = width {
+                    if let Some(end) = field.offset.checked_add(width) {
+                        if structure.size.is_some_and(|size| end > size) {
+                            errors.push(format!("field '{}' exceeds structure size", field.name));
+                        }
+                        ranges.push((field.offset, end, &field.name));
+                    } else {
+                        errors.push(format!("field '{}' storage overflows", field.name));
+                    }
+                }
+            }
+            if !structure.union {
+                ranges.sort_by_key(|r| r.0);
+                let mut end = 0;
+                for (start, next, name) in ranges {
+                    if start < end {
+                        errors.push(format!("field '{name}' overlaps another field"));
+                    }
+                    end = end.max(next);
+                }
+            }
         }
         for (name, target) in &self.typedefs {
-            if name.trim().is_empty() || !target.valid() {
+            if !type_identifier(name) || !target.valid() {
                 errors.push(format!("invalid typedef '{name}'"));
+            }
+            let mut seen = BTreeSet::new();
+            if alias_cycle(target, self, &mut seen, 0, &mut 4096) {
+                errors.push(format!(
+                    "typedef '{name}' has a cyclic or excessively nested definition"
+                ));
             }
         }
         errors
     }
     pub fn struct_size(&self, name: &str) -> Option<u64> {
         self.structures.get(name)?.size
+    }
+}
+
+fn type_identifier(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 256
+        && name.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+fn alias_cycle(
+    ty: &TypeRef,
+    db: &TypeDatabase,
+    seen: &mut BTreeSet<String>,
+    depth: usize,
+    budget: &mut usize,
+) -> bool {
+    if depth > 32 || *budget == 0 {
+        return true;
+    }
+    *budget -= 1;
+    match ty {
+        TypeRef::Named { name } => {
+            let Some(target) = db.typedefs.get(name) else {
+                return false;
+            };
+            if !seen.insert(name.clone()) {
+                return true;
+            }
+            let cyclic = alias_cycle(target, db, seen, depth + 1, budget);
+            seen.remove(name);
+            cyclic
+        }
+        TypeRef::Struct { name } | TypeRef::Union { name } => {
+            let Some(structure) = db.structures.get(name) else {
+                return false;
+            };
+            let tag = format!("tag:{name}");
+            if !seen.insert(tag.clone()) {
+                return true;
+            }
+            let cyclic = structure
+                .fields
+                .iter()
+                .any(|field| alias_cycle(&field.ty, db, seen, depth + 1, budget));
+            seen.remove(&tag);
+            cyclic
+        }
+        TypeRef::Array { element, .. } => alias_cycle(element, db, seen, depth + 1, budget),
+        TypeRef::Typedef { target, .. } | TypeRef::Qualified { target, .. } => {
+            alias_cycle(target, db, seen, depth + 1, budget)
+        }
+        _ => false,
     }
 }
 

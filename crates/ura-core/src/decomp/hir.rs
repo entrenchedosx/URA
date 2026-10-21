@@ -531,7 +531,17 @@ impl<'a> Structurer<'a> {
                     .output_type(statement.output?)
                     .and_then(Type::width)
                     .unwrap_or(64);
-                format!("{} = (i{width}){};", output?, self.arg(statement, 0))
+                let from = statement
+                    .args
+                    .first()
+                    .and_then(|arg| self.use_type(*arg))
+                    .and_then(Type::width)
+                    .unwrap_or(0);
+                format!(
+                    "{} = sign_extend<{from}, {width}>({});",
+                    output?,
+                    self.arg(statement, 0)
+                )
             }
             Operation::ToAddress => {
                 let width = self
@@ -643,6 +653,7 @@ impl<'a> Structurer<'a> {
             (Some(_address), Some(signature)) => {
                 let mut arguments = Vec::new();
                 let mut stack_arguments = false;
+                let mut unresolved = signature.variadic != Some(false);
                 for parameter in &signature.parameters {
                     match &parameter.location {
                         Location::Register { name } => {
@@ -657,15 +668,18 @@ impl<'a> Structurer<'a> {
                                 }
                             }
                             arguments.push(format!("/* {} */", parameter.name));
+                            unresolved = true;
                         }
                         Location::Stack { .. } => stack_arguments = true,
                         Location::Unknown { .. } => {
-                            arguments.push(format!("/* {} */", parameter.name))
+                            arguments.push(format!("/* {} */", parameter.name));
+                            unresolved = true;
                         }
                     }
                 }
                 if stack_arguments {
                     arguments.push("/* stack arguments not shown */".into());
+                    unresolved = true;
                 }
                 if signature.variadic == Some(true) {
                     arguments.push("/* ... */".into());
@@ -676,7 +690,7 @@ impl<'a> Structurer<'a> {
                         sanitize_identifier(&signature.name),
                         arguments.join(", ")
                     ),
-                    false,
+                    unresolved,
                 )
             }
             (Some(address), None) => (
@@ -911,21 +925,26 @@ impl<'a> Structurer<'a> {
         let register = match &self.signature.return_value.location {
             Some(Location::Register { name }) => name.clone(),
             _ => {
-                if self.ssa.address_width == 64 {
-                    "rax".into()
-                } else {
-                    "eax".into()
-                }
+                self.unresolved += 1;
+                self.line(
+                    "unsupported",
+                    "return <unresolved return location>;",
+                    Some(block.terminator.flow.source.0),
+                );
+                return;
             }
         };
-        let index = self
-            .ssa
-            .variables
-            .iter()
-            .position(|variable| {
-                variable.kind == VariableKind::Register && variable.name == register
-            })
-            .unwrap_or(0);
+        let Some(index) = self.ssa.variables.iter().position(|variable| {
+            variable.kind == VariableKind::Register && variable.name == register
+        }) else {
+            self.unresolved += 1;
+            self.line(
+                "unsupported",
+                "return <untracked return register>;",
+                Some(block.terminator.flow.source.0),
+            );
+            return;
+        };
         let value = block
             .terminator
             .state

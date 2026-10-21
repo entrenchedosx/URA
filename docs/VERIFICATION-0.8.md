@@ -1,132 +1,169 @@
-# v0.8 development verification
+# v0.8 audit verification
 
-## Decision
+Verified 2026-10-21 on Windows 11 x64 with Rust 1.99.1/MSVC. Starting source:
+`1194403`; baseline: `1d0f484` / `v0.7.0-dev`. Initial working tree was clean
+and all initial 122 tests passed. The complete requested v0.8 checklist remains
+unfinished; see [AUDIT-0.8.md](AUDIT-0.8.md).
 
-Ship the decompiler-foundations checkpoint on `v0.8-decompiler-foundations`,
-version `0.8.0-dev`, as the GitHub prerelease `v0.8.0-dev`. This is a development
-prerelease: recovered high-level output is explicitly labelled
-`experimental-foundations`, and no final `v0.8.0` is claimed.
+## Code gates
 
-The baseline is v0.7 commit `1d0f484`, tag `v0.7.0-dev`. All original 97 tests
-remain in place. The `main` branch is unchanged by this work.
+**161 tests pass**, preserving all original tests. The original assertions
+expecting an invented integer return and a cdecl Win32 API default were corrected
+to assert unknown return provenance and stdcall respectively. No tests were removed.
 
-## Host and reproduction
+| Area | Passing tests |
+|---|---:|
+| Core unit helpers | 14 |
+| Binary parsing | 8 |
+| Original decompiler integration | 4 |
+| Independent decompiler regressions | 26 |
+| Type-library/width/layout regressions | 4 |
+| Functions/CFG | 17 |
+| IR/SSA/dataflow | 25 |
+| Jump tables/tail/thunk | 7 |
+| CLI process integration | 8 |
+| MCP stdio integration | 2 |
+| Native worker/navigation/render/editor | 16 |
+| Project persistence/migration | 12 |
+| Service unit/integration | 18 |
+| **Total** | **161** |
 
-Verification ran 2026-10-21 on the same Windows 11 x64 host used for
-[VERIFICATION-0.7.md](VERIFICATION-0.7.md), with the MSVC toolchain and Rust
-1.99. Code gates:
+Formatting, strict workspace linting, tests and Release builds were run:
 
 ```powershell
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo build --workspace --release
+cargo build -p ura-core --release --examples
 ```
 
-## Test evidence
+After the live check found small stack-edit fields and missing table scrolling,
+explicit field widths and horizontal scrolling were added; native tests and the
+Release build were repeated. Independent findings and exact semantic cases are in
+[REVIEW-0.8.md](REVIEW-0.8.md).
 
-**122 tests pass**, including all original 97:
+Tests check loop convergence, SP/FP joins, real x86 frames, dynamic/unsupported
+addressing, saved-register provenance, shared ABI registers, self-canceling
+instructions, conflicting hints/cleanup, opaque-call returns, repeated call sites,
+indirect calls, sign extension and unresolved floating returns. Type tests check
+widths, cyclic layouts/aliases, size overflow, alignment and real field extents.
+Editor regressions preserve structured types, pointer/enum widths, explicit field
+storage/provenance, stack-location widths and unknown variadic state.
 
-| Area | Tests |
+## Persistence and adapter checks
+
+Schema v5 adds a validated user type library to the v4 signature/stack overrides.
+Tests migrate v1-v4 projects, preserve user data, reject invalid writes without
+replacing saved definitions and verify read-only attachment leaves the file intact.
+Old executables cannot read a project after it has migrated to v5.
+
+Native workers, service, CLI and MCP still use one core engine. Tests compare
+results and exercise explicit write denial, binary/project identity, allowed
+roots, cache invalidation, save/reopen and MCP restart. The Release MCP process was
+initialized and queried over actual stdio: 30 tools, schema 1, IR/SSA/diagnostics,
+decompiler queries, call graph and a real structure save/read round trip.
+`ura_get_structure(handle,name)` now returns fields, not a high-level text alias.
+The disposable project is `target/v08-audit/fixture.ura`; no user project is used.
+
+A further regression uses two projects for the same binary and verifies that
+override writes cannot silently switch projects or mix their inferred contexts.
+The target project must already be attached; rejected writes preserve its bytes.
+
+## Live desktop check
+
+The actual rebuilt app opened the disposable project, recovered its functions and
+displayed the new panels. The signature editor changed the entry function return
+type to `u32`; Save updated the visible declaration and showed a user-authored
+signature. A fresh CLI process using the same project and a restarted desktop
+loaded the override. The stack editor and instruction references were inspected.
+A narrow-window check exposed and prompted the field/scroll fixes above.
+
+Native rendering tests cover all panels in two themes at four size/scale
+configurations. This audit did not repeat v0.7's actual OS 150% DPI exercise or
+complete a live matrix of every form, keyboard path and complex project. No full
+GUI acceptance is claimed. Desktop verification uses isolated preferences.
+
+## Release measurements
+
+Full observations: [benchmarks/0.8-audit.json](benchmarks/0.8-audit.json).
+Reproduce with `benchmark-decomp.py`, `profile-idle.py`,
+`verify-mcp-release.py` and the Release core examples. Samples are never executed.
+
+NTDLL SHA-256 matches the v0.7 sample:
+`651ac9041af8e6b5ebd331d53163244c0a27d36d1433f0f15cac1f28c5f2e82c`.
+Discovery reaches the 200,000-instruction budget (2,742 functions), so it is partial.
+Five repetitions per isolated pass:
+
+| Measurement | Observed |
 |---|---:|
-| Binary inspection/analysis | 8 |
-| Function/CFG discovery | 17 |
-| Verified IR/SSA/dataflow | 25 |
-| Switch/tail/thunk recovery | 7 |
-| Decompiler core unit tests | 14 |
-| Decompiler core integration | 4 |
-| CLI (JSON/text parity) | 7 |
-| MCP stdio (read/write, restart) | 2 |
-| Native workspace | 11 |
-| Project persistence/migration | 11 |
-| Service unit + integration | 16 |
-| **Total** | **122** |
+| Discovery in IR harness | 233.409 ms |
+| Call graph, 8,728 retained sites | 30.045 ms |
+| Largest tested function | 1,768 instructions / 440 blocks |
+| Lift / SSA / dataflow | 2.659 / 9.668 / 12.523 ms |
+| Stack / ABI / types / structural display | 1.118 / 7.974 / 1.250 / 10.761 ms |
+| Display output for that function | 8,198 lines / 2,092 unresolved markers |
+| Successful NTDLL IR / decompiler timing cases | 64 / 16 |
+| Observed peak working set, IR / decompiler | 96.207 / 97.848 MiB |
 
-Decompiler-specific coverage:
+Decompiler timings begin with a verified bundle and omit the second stack pass
+and constraint merge. Peak working set is observed every 5 ms; a short process
+can finish before a sample. PE O0/O2 and optimized ELF switch fixtures were also
+measured. A whole-program propagation benchmark is unavailable because that
+solver does not exist yet.
 
-- ABI table tests for register/stack parameter indices across Win64, SysV64 and
-  32-bit conventions, including Win64 shadow space and SysV register order.
-- Taint-root resolution terminates on cycles and respects its budget.
-- Stack frames recover real slots and reject nonexistent overrides.
-- Type parsing round-trips bounded C spellings, every curated prototype
-  instantiates at 32/64 bits, and unknown API names are rejected.
-- HIR identifier sanitization and text rendering preserve indentation and mark
-  the experimental status.
-- Signature overrides validate names/parameter counts and replace inferred
-  parameters while retaining evidence.
-- Core integration tests compare entry signature/frame/types/HIR, call-graph
-  paths, override application and curated API lookup against the fixtures.
-- Native worker results are serialized and compared field-for-field with direct
-  core decompilation and call-graph construction.
-- Service tests cover signature, stack, types, high-level and call-graph pages,
-  limit errors, write gating, project requirement and reopen persistence.
-- CLI tests compare new JSON responses with the shared service and exercise text
-  rendering.
-- MCP stdio tests assert the 29-tool listing, read-only hints, new outputs,
-  write-tool refusal without `--enable-writes`, and signature/stack-variable
-  survival across a fresh server.
+Five CLI process invocations per condition, warm OS cache, startup plus query:
 
-`cargo test --workspace` also runs the native tessellation test, which renders
-all 17 panels in two themes at four size/scale configurations with real
-analysis and IR rows loaded.
+| Fixture query | Public v0.7 median | Audit median |
+|---|---:|---:|
+| Analysis | 8.633 ms | 8.637 ms |
+| Raw IR | 9.240 ms | 9.516 ms |
 
-## Schema and compatibility
+The first new analysis invocation was an outlier at 201.749 ms versus 14.472 ms
+for the first already-extracted baseline invocation. These are not controlled
+cold-start measurements. No speedup is claimed; the JSON retains all observations.
 
-Project schema is now v4. The migration adds `function_signatures` and
-`stack_variables`; schema v1/v2/v3 projects migrate sequentially. A migration
-test opens a v3 project, verifies the original annotations/names remain, and
-reads the new empty tables. Future schemas are still rejected. v0.7 projects
-open without user action.
+Single Release MCP fixture queries measured 0.533 ms for initial signature
+recovery, 0.160 ms for cached stack and 0.186 ms for cached high-level rows.
+These small-fixture examples are not latency distributions.
 
-Service response schema remains 1. New decompiler DTOs preserve camelCase JSON,
-hex-string addresses and explicit `truncated`/totals fields.
+## Idle CPU risk
 
-## Shared-engine parity
+The unchanged public v0.7 ZIP matches GitHub's SHA-256
+`5006470762f209499da5514d5be722961e51c02119917743cf663d8f78678ed6` and its
+annotated tag resolves to `1d0f484`. Both native builds opened the same NTDLL
+with isolated default preferences. After eight seconds settling, each was sampled
+for 12 seconds, with no GUI polling or compilation during sampling:
 
-There is one decompiler implementation in `ura-core`. The native app calls it on
-its background worker with revision-tagged replies; the service caches up to four
-functions per handle (LRU) and invalidates on reanalysis/override changes; the
-CLI and MCP route to the service. Tests compare:
+| Version | CPU, one logical core | Working set |
+|---|---:|---:|
+| v0.7 | 0.0% | 172.609 MiB |
+| Audit | 0.0% | 170.242 MiB |
 
-- native worker output vs. direct core calls;
-- CLI JSON vs. service responses;
-- MCP decompiler responses vs. the shared service;
-- saved overrides vs. a fresh server/service reopen.
+Percent is process CPU seconds / wall seconds * 100, not a whole-machine Task
+Manager percentage. Zero means no measured delta at Windows counter resolution.
+One matched condition does not explain or fix the earlier intermittent CPU issue.
 
-No adapter contains a second decompiler or fabricated placeholder output.
+WPR was initially idle. CPU profiling failed again with `0xc5585011`:
+"Failed to enable the policy to profile system performance." No session started,
+and no policy, security or accessibility setting changed. Start-module attribution
+is not a stack trace. OS wakeups, context switches, GPU/presentation and
+input-to-paint latency remain unmeasured.
 
-## Commands
+## Artifacts
 
-```powershell
-ura-cli --allow . signature  tests\fixtures\ura64.exe --function 140001020
-ura-cli --allow . stack      tests\fixtures\ura64.exe --function 140001020 --json
-ura-cli --allow . types      tests\fixtures\ura64.exe --function 140001020
-ura-cli --allow . callgraph  tests\fixtures\ura64.exe --function 140001000 --depth 1
-ura-cli --allow . highlevel  tests\fixtures\ura64.exe --function 140001020 --limit 20
-```
+The existing public `v0.8.0-dev` ZIP was downloaded again; GitHub and sidecar
+match SHA-256 `8d484cbf08225816e11f7a9b7f20970da866115aeb708c01a28f841bc9f03af0`.
+Its tag still points to `1194403` and the archive predates these repairs.
 
-The fixture's recovered entry signature is `int64 sub_140001020()` under Win64
-with low convention confidence from platform defaults; tests assert this exact
-evidence rather than a prettier but unsupported result.
+The corrected package is a local audit artifact under `target/v08-audit`, with
+three Release executables and a SHA-256 sidecar. Packaging uses a separate clean
+extraction and checks nested file digests, executable resources, CLI JSON and
+actual MCP stdio. Generated `package-verification.json` records the final hash
+and outcomes. No existing release tag/archive is replaced. A new accepted public
+release is withheld while the semantic gaps in AUDIT-0.8.md remain.
 
-## Known limitations
-
-- The variable process CPU outside UI painting observed in v0.7 remains
-  unexplained. Windows stack profiling was unavailable on this host, so no
-  performance improvement is claimed.
-- Decompiler output is structural, not compilable source; see the hard bounds
-  in [DECOMPILER.md](DECOMPILER.md).
-- No PDB/C++/exception/structure-from-data recovery, and no cross-compiler
-  semantic validation beyond the checked fixtures.
-- The native decompiler panels are read-only. Edits are available through CLI/
-  MCP/service APIs that require a project; the native app applies saved
-  overrides to its decompilation context after project refresh.
-- Samples are never executed anywhere in the verification flow.
-
-## Release artifacts
-
-Push the branch and tag, build the optimized Windows x64 binaries, package the
-ZIP with licenses and checksums, extract it into a clean directory, compare the
-extracted binaries' `--version`/help output, and publish the verified GitHub
-prerelease. The final report records the commit, tag, artifact SHA-256, test
-count and these limitations. Hashes are not written before the artifacts exist.
+At the user's request, final artifact checks do not launch the native application
+or use desktop automation. Its packaged image is compared byte-for-byte with the
+previously built/tested Release image; clean-extraction desktop startup is not
+repeated under that restriction.

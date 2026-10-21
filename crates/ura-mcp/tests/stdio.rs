@@ -110,7 +110,7 @@ fn stdio_queries_errors_and_read_only_permissions() {
     let mut client = Client::start(directory.path(), false);
     let tools = client.request("tools/list", json!({}));
     let listed = tools["result"]["tools"].as_array().unwrap();
-    assert_eq!(listed.len(), 29);
+    assert_eq!(listed.len(), 30);
     for tool in listed {
         let expected = !matches!(
             tool["name"].as_str().unwrap(),
@@ -121,6 +121,7 @@ fn stdio_queries_errors_and_read_only_permissions() {
                 | "ura_close_binary"
                 | "ura_set_function_signature"
                 | "ura_set_variable_type"
+                | "ura_set_type_library"
         );
         assert_eq!(tool["annotations"]["readOnlyHint"], expected, "{tool}");
     }
@@ -164,7 +165,6 @@ fn stdio_queries_errors_and_read_only_permissions() {
         "ura_get_calling_convention",
         "ura_get_stack_variables",
         "ura_get_types",
-        "ura_get_structure",
         "ura_get_high_level_ir",
         "ura_get_type_constraints",
     ] {
@@ -308,6 +308,12 @@ fn stdio_writes_survive_a_fresh_server() {
             "ura_export_analysis",
             json!({"project":project,"export":export}),
         );
+        client.tool("ura_set_type_library", json!({"handle":handle,"project":project,"database":{"addressBits":64,"structures":{"Header":{"name":"Header","size":4,"alignment":4,"fields":[{"name":"length","offset":0,"ty":{"kind":"int","bits":32,"signed":false},"size":null,"source":"user"}],"union":false,"source":"user"}},"typedefs":{}}}));
+        let definition = client.tool(
+            "ura_get_structure",
+            json!({"handle":handle,"name":"Header"}),
+        );
+        assert_eq!(definition["structure"]["fields"][0]["name"], "length");
     }
     let snapshot = ura_project::read_project(&project).unwrap();
     assert_eq!(snapshot.annotations[0].note, "persistent comment");
@@ -330,6 +336,8 @@ fn stdio_writes_survive_a_fresh_server() {
     );
     let handle = opened["handle"].as_str().unwrap();
     client.tool("ura_analyze", json!({"handle":handle}));
+    let library = client.tool("ura_get_types", json!({"handle":handle}));
+    assert_eq!(library["database"]["structures"]["Header"]["size"], 4);
     let functions = client.tool(
         "ura_get_functions",
         json!({"handle":handle,"query":"entry_renamed"}),

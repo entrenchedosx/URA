@@ -3,10 +3,10 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 use ura_core::decomp::signature::SignatureOverride;
-use ura_core::decomp::types::TypeRef;
+use ura_core::decomp::types::{TypeDatabase, TypeRef};
 use ura_core::{format_address, parse_address, sha256_hex};
 
-pub const SCHEMA_VERSION: i64 = 4;
+pub const SCHEMA_VERSION: i64 = 5;
 pub const MAX_VIEW_STATE_BYTES: usize = 512 * 1024;
 
 #[derive(Debug, Error)]
@@ -125,6 +125,7 @@ pub struct ProjectSnapshot {
     pub manual_functions: Vec<ManualFunction>,
     pub function_signatures: Vec<FunctionSignatureEntry>,
     pub stack_variables: Vec<StackVariableOverride>,
+    pub type_library: Option<TypeDatabase>,
     pub view_state: Option<String>,
     pub binary_status: String,
 }
@@ -151,6 +152,7 @@ struct AnnotationExport {
     manual_functions: Vec<ManualFunction>,
     function_signatures: Vec<FunctionSignatureEntry>,
     stack_variables: Vec<StackVariableOverride>,
+    type_library: Option<TypeDatabase>,
 }
 
 #[derive(Debug, Serialize)]
@@ -230,12 +232,13 @@ pub fn open_project(project_path: &Path) -> ProjectResult<ProjectSnapshot> {
         manual_functions,
         function_signatures,
         stack_variables,
+        type_library: load_type_library(&connection)?,
         view_state,
         binary_status,
     })
 }
 
-/// Read a v1-v3 project without migrating it or touching its recorded binary path.
+/// Read a supported project without migrating it or touching its recorded binary path.
 /// Callers that already opened a binary must compare its hash themselves.
 pub fn read_project(project_path: &Path) -> ProjectResult<ProjectSnapshot> {
     if !project_path.exists() {
@@ -282,6 +285,11 @@ pub fn read_project(project_path: &Path) -> ProjectResult<ProjectSnapshot> {
             load_stack_variables(&connection)?
         } else {
             vec![]
+        },
+        type_library: if version >= 5 {
+            load_type_library(&connection)?
+        } else {
+            None
         },
         view_state: if version >= 3 {
             load_view_state(&connection)?
@@ -577,6 +585,58 @@ pub fn load_stack_variables_for_path(
     load_stack_variables(&connection)
 }
 
+pub fn save_type_library(project_path: &Path, library: &TypeDatabase) -> ProjectResult<()> {
+    let errors = library.validation_errors();
+    if !errors.is_empty() {
+        return Err(ProjectError::InvalidProject(errors.join("; ")));
+    }
+    let json =
+        serde_json::to_string(library).map_err(|e| ProjectError::InvalidProject(e.to_string()))?;
+    if json.len() > 1024 * 1024 {
+        return Err(ProjectError::InvalidProject(
+            "type library exceeds 1 MiB".into(),
+        ));
+    }
+    let connection = open_existing(project_path)?;
+    let transaction = connection.unchecked_transaction()?;
+    transaction.execute("INSERT INTO type_library (id, library_json) VALUES (1, ?1) ON CONFLICT(id) DO UPDATE SET library_json = excluded.library_json", params![json])?;
+    transaction.execute(
+        "UPDATE project SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = 1",
+        [],
+    )?;
+    transaction.commit()?;
+    Ok(())
+}
+
+pub fn load_type_library_for_path(project_path: &Path) -> ProjectResult<Option<TypeDatabase>> {
+    load_type_library(&open_existing(project_path)?)
+}
+
+fn load_type_library(connection: &Connection) -> ProjectResult<Option<TypeDatabase>> {
+    let json: Option<String> = connection
+        .query_row(
+            "SELECT library_json FROM type_library WHERE id = 1",
+            [],
+            |r| r.get(0),
+        )
+        .optional()?;
+    json.map(|json| {
+        if json.len() > 1024 * 1024 {
+            return Err(ProjectError::InvalidProject(
+                "type library exceeds 1 MiB".into(),
+            ));
+        }
+        let library: TypeDatabase =
+            serde_json::from_str(&json).map_err(|e| ProjectError::InvalidProject(e.to_string()))?;
+        let errors = library.validation_errors();
+        if !errors.is_empty() {
+            return Err(ProjectError::InvalidProject(errors.join("; ")));
+        }
+        Ok(library)
+    })
+    .transpose()
+}
+
 pub fn save_view_state(project_path: &Path, state: &str) -> ProjectResult<()> {
     if state.len() > MAX_VIEW_STATE_BYTES {
         return Err(ProjectError::InvalidViewState(
@@ -652,6 +712,7 @@ pub fn export_annotations(project_path: &Path, destination: &Path) -> ProjectRes
         manual_functions: manual_functions.clone(),
         function_signatures: function_signatures.clone(),
         stack_variables: stack_variables.clone(),
+        type_library: load_type_library(&connection)?,
     };
     let json = serde_json::to_string_pretty(&document)
         .map_err(|error| ProjectError::InvalidExport(error.to_string()))?;
@@ -773,6 +834,10 @@ fn migrate_schema(connection: &Connection) -> ProjectResult<()> {
         )?;
     }
     let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    if version == 4 {
+        connection.execute_batch("BEGIN; CREATE TABLE IF NOT EXISTS type_library (id INTEGER PRIMARY KEY CHECK (id = 1), library_json TEXT NOT NULL); PRAGMA user_version = 5; COMMIT;")?;
+    }
+    let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     if version != SCHEMA_VERSION {
         return Err(ProjectError::InvalidProject(format!(
             "expected schema version {}, found {}",
@@ -832,7 +897,8 @@ fn initialize_schema(connection: &Connection) -> ProjectResult<()> {
              updated_at TEXT NOT NULL,
              PRIMARY KEY (function_address, slot_offset)
          );
-         PRAGMA user_version = 4;
+         CREATE TABLE type_library (id INTEGER PRIMARY KEY CHECK (id = 1), library_json TEXT NOT NULL);
+         PRAGMA user_version = 5;
          COMMIT;",
     )?;
     Ok(())

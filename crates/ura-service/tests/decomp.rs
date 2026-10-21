@@ -20,6 +20,162 @@ fn analyzed(service: &mut Service) -> String {
 }
 
 #[test]
+fn override_writes_cannot_mix_two_projects_for_the_same_binary() {
+    use ura_core::decomp::TypeDatabase;
+    let dir = tempfile::tempdir().unwrap();
+    let first = dir.path().join("first.ura");
+    let second = dir.path().join("second.ura");
+    let mut service = Service::new(PathPolicy::allow_all(), true);
+    let handle = analyzed(&mut service);
+    service.save_project(&handle, &first, None).unwrap();
+    service.save_project(&handle, &second, None).unwrap();
+    let before = std::fs::read(&first).unwrap();
+    let mut library = TypeDatabase::new(64);
+    library.typedefs.insert("Count".into(), TypeRef::uint(32));
+    assert_eq!(
+        service
+            .set_type_library(&handle, &first, &library)
+            .unwrap_err()
+            .code(),
+        "invalid_argument"
+    );
+    let signature = SignatureOverride {
+        convention: CallingConvention::Win64,
+        return_type: TypeRef::uint(32),
+        parameters: vec![],
+        variadic: Some(false),
+    };
+    assert_eq!(
+        service
+            .set_function_signature(&handle, &first, "140001020", &signature)
+            .unwrap_err()
+            .code(),
+        "invalid_argument"
+    );
+    let offset = service
+        .stack_frame(&handle, "140001020")
+        .unwrap()
+        .frame
+        .slots[0]
+        .offset;
+    assert_eq!(
+        service
+            .set_stack_variable(&handle, &first, "140001020", offset, Some("counter"), None)
+            .unwrap_err()
+            .code(),
+        "invalid_argument"
+    );
+    assert_eq!(std::fs::read(&first).unwrap(), before);
+    assert!(service
+        .type_library(&handle)
+        .unwrap()
+        .database
+        .typedefs
+        .is_empty());
+    assert!(
+        !service
+            .function_signature(&handle, "140001020")
+            .unwrap()
+            .signature
+            .user_override
+    );
+}
+
+#[test]
+fn type_libraries_validate_write_permissions_layouts_and_survive_reopen() {
+    use ura_core::decomp::{StructField, Structure, TypeDatabase};
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("types.ura");
+    let mut denied = Service::new(PathPolicy::allow_all(), false);
+    let denied_handle = analyzed(&mut denied);
+    assert_eq!(
+        denied
+            .set_type_library(&denied_handle, &project, &TypeDatabase::new(64))
+            .unwrap_err()
+            .code(),
+        "write_disabled"
+    );
+    let mut service = Service::new(PathPolicy::allow_all(), true);
+    let handle = analyzed(&mut service);
+    service.save_project(&handle, &project, None).unwrap();
+    assert_eq!(
+        service
+            .set_stack_variable(&handle, &project, "140001020", i64::MIN, Some("bad"), None)
+            .unwrap_err()
+            .code(),
+        "invalid_argument"
+    );
+    let mut database = TypeDatabase::new(64);
+    database.structures.insert(
+        "Pair".into(),
+        Structure {
+            name: "Pair".into(),
+            size: Some(8),
+            alignment: Some(4),
+            union: false,
+            source: "user".into(),
+            fields: vec![
+                StructField {
+                    name: "left".into(),
+                    offset: 0,
+                    ty: TypeRef::uint(32),
+                    size: None,
+                    source: "user".into(),
+                },
+                StructField {
+                    name: "right".into(),
+                    offset: 4,
+                    ty: TypeRef::uint(32),
+                    size: None,
+                    source: "user".into(),
+                },
+            ],
+        },
+    );
+    service
+        .set_type_library(&handle, &project, &database)
+        .unwrap();
+    assert_eq!(
+        service
+            .structure_definition(&handle, "Pair")
+            .unwrap()
+            .structure
+            .fields
+            .len(),
+        2
+    );
+    assert!(service.structure_definition(&handle, "Missing").is_err());
+    assert!(service
+        .set_type_library(&handle, &project, &TypeDatabase::new(32))
+        .is_err());
+    let mut invalid = database.clone();
+    invalid.structures.get_mut("Pair").unwrap().fields[1].offset = 2;
+    assert!(service
+        .set_type_library(&handle, &project, &invalid)
+        .is_err());
+    let mut reopened = Service::new(PathPolicy::allow_all(), false);
+    let h = reopened
+        .open_binary(&fixture(), Some(&project))
+        .unwrap()
+        .handle;
+    reopened.analyze(&h, &AnalysisOptions::default()).unwrap();
+    assert_eq!(
+        serde_json::to_value(&reopened.type_library(&h).unwrap().database).unwrap(),
+        serde_json::to_value(&database).unwrap()
+    );
+    assert_eq!(
+        reopened
+            .inferred_types(&h, "140001020")
+            .unwrap()
+            .database
+            .structures["Pair"]
+            .fields[1]
+            .offset,
+        4
+    );
+}
+
+#[test]
 fn exposes_signature_stack_types_high_level_and_call_graph_views() {
     let mut service = Service::new(PathPolicy::allow_all(), false);
     let handle = analyzed(&mut service);

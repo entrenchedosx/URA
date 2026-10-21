@@ -79,9 +79,40 @@ impl StackFrame {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Flow {
-    Unvisited,
     Known(i64),
     Unknown,
+}
+impl Flow {
+    fn value(self) -> Option<i64> {
+        match self {
+            Self::Known(value) => Some(value),
+            Self::Unknown => None,
+        }
+    }
+    fn from_option(value: Option<i64>) -> Self {
+        value.map_or(Self::Unknown, Self::Known)
+    }
+    fn join(self, other: Self) -> Self {
+        if self == other {
+            self
+        } else {
+            Self::Unknown
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct StackState {
+    sp: Flow,
+    fp: Flow,
+}
+impl StackState {
+    fn join(self, other: Self) -> Self {
+        Self {
+            sp: self.sp.join(other.sp),
+            fp: self.fp.join(other.fp),
+        }
+    }
 }
 
 struct Decoded {
@@ -95,13 +126,32 @@ pub fn recover(
     function: u64,
     signature: Option<&FunctionSignature>,
 ) -> Result<StackFrame, String> {
+    recover_with_control(binary, analysis, function, signature, &())
+}
+
+/// Controlled counterpart of `recover`. The dataflow lattice only loses
+/// information at joins, including the implicit entry edge, so loops converge.
+pub fn recover_with_control(
+    binary: &LoadedBinary,
+    analysis: &ProgramAnalysis,
+    function: u64,
+    signature: Option<&FunctionSignature>,
+    control: &dyn crate::AnalysisControl,
+) -> Result<StackFrame, String> {
+    let check = || {
+        if control.is_cancelled() {
+            Err("stack recovery cancelled".to_string())
+        } else {
+            Ok(())
+        }
+    };
+    check()?;
     let function = analysis
         .function_by_start(function)
         .ok_or_else(|| format!("function {function:#x} was not discovered"))?;
     let bits = binary.analysis().bitness;
     if !matches!(bits, 32 | 64)
-        || binary.analysis().architecture.name() != "x86"
-            && binary.analysis().architecture.name() != "x86-64"
+        || !matches!(binary.analysis().architecture.name(), "x86" | "x86-64")
     {
         return Ok(StackFrame {
             function: function.address,
@@ -125,13 +175,15 @@ pub fn recover(
     if function.blocks.len() > 2_048 || function.instruction_count > 50_000 {
         return Err("function is too large for bounded stack reconstruction".into());
     }
-    let mut decoded: BTreeMap<u64, Decoded> = BTreeMap::new();
+    let mut decoded = BTreeMap::new();
     let mut factory = InstructionInfoFactory::new();
     for block in &function.blocks {
+        check()?;
         let Some(block) = analysis.blocks.get(block) else {
             continue;
         };
         for address in &block.instructions {
+            check()?;
             let Some(entry) = analysis.instructions.get(address) else {
                 continue;
             };
@@ -143,318 +195,287 @@ pub fn recover(
                 continue;
             }
             let instruction = decoder.decode();
-            if instruction.len() != bytes.len() {
+            if instruction.is_invalid() || instruction.len() != bytes.len() {
                 continue;
             }
             let info = factory.info(&instruction).clone();
             decoded.insert(*address, Decoded { instruction, info });
         }
     }
-
     let entry = function.address;
-    let mut delta: BTreeMap<u64, Flow> = function
-        .blocks
-        .iter()
-        .map(|block| (*block, Flow::Unvisited))
-        .collect();
-    delta.insert(entry, Flow::Known(0));
+    let mut states: BTreeMap<u64, Option<StackState>> =
+        function.blocks.iter().map(|b| (*b, None)).collect();
+    states.insert(
+        entry,
+        Some(StackState {
+            sp: Flow::Known(0),
+            fp: Flow::Unknown,
+        }),
+    );
     let mut queue = VecDeque::from([entry]);
-    let mut rbp_delta: Option<i64> = None;
-    let mut rbp_conflict = false;
-    while let Some(block_address) = queue.pop_front() {
-        let Some(block) = analysis.blocks.get(&block_address) else {
+    let mut frame_size = 0;
+    let mut saw_frame_pointer = false;
+    while let Some(address) = queue.pop_front() {
+        check()?;
+        let Some(block) = analysis.blocks.get(&address) else {
             continue;
         };
-        let start = delta[&block_address];
-        let Flow::Known(start) = start else {
+        let Some(mut state) = states.get(&address).copied().flatten() else {
             continue;
         };
-        let mut current = Some(start);
-        for address in &block.instructions {
-            let Some(decoded) = decoded.get(address) else {
-                current = None;
-                continue;
-            };
-            let instruction = &decoded.instruction;
-            let mnemonic = instruction.mnemonic();
-            if mnemonic == Mnemonic::Call {
-                continue;
-            }
-            if matches!(mnemonic, Mnemonic::Push | Mnemonic::Pop) {
-                current =
-                    current.map(|value| value + i64::from(instruction.stack_pointer_increment()));
-            } else if mnemonic == Mnemonic::Leave {
-                current = rbp_delta.map(|value| value + i64::from(bits / 8));
-            } else if matches!(mnemonic, Mnemonic::Mov | Mnemonic::Lea) {
-                let destination = instruction.op0_kind();
-                if destination == OpKind::Register {
-                    let register = full_register(instruction.op0_register());
-                    if register == stack_pointer(bits) {
-                        if let Some(value) =
-                            instruction_pointer_value(instruction, current, rbp_delta)
-                        {
-                            current = Some(value);
-                        } else {
-                            current = None;
-                        }
-                    } else if register == frame_pointer(bits) {
-                        if let Some(value) =
-                            instruction_pointer_value(instruction, current, rbp_delta)
-                        {
-                            match rbp_delta {
-                                None => rbp_delta = Some(value),
-                                Some(existing) if existing != value => rbp_conflict = true,
-                                Some(_) => {}
-                            }
-                        }
+        for instruction in &block.instructions {
+            check()?;
+            if let Some(decoded) = decoded.get(instruction) {
+                transfer(decoded, bits, &mut state);
+                saw_frame_pointer |= state.fp.value().is_some();
+                if let Some(value) = state.sp.value() {
+                    if value < 0 {
+                        frame_size = frame_size.max(value.unsigned_abs());
                     }
                 }
-            } else if matches!(mnemonic, Mnemonic::Sub | Mnemonic::Add) {
-                if instruction.op0_kind() == OpKind::Register
-                    && full_register(instruction.op0_register()) == stack_pointer(bits)
-                    && immediate_kind(instruction.op1_kind())
-                {
-                    let immediate = instruction.immediate(1) as i64;
-                    current = current.map(|value| {
-                        if mnemonic == Mnemonic::Sub {
-                            value - immediate
-                        } else {
-                            value + immediate
-                        }
-                    });
-                }
-            } else if matches!(mnemonic, Mnemonic::And | Mnemonic::Xor | Mnemonic::Or)
-                && instruction.op0_kind() == OpKind::Register
-                && full_register(instruction.op0_register()) == stack_pointer(bits)
-            {
-                // Explicit stack realignment destroys the linear delta until a
-                // future frame setup; do not invent an offset.
-                current = None;
-            } else if mnemonic == Mnemonic::Enter {
-                current = current
-                    .map(|value| value - instruction.immediate(0) as i64 - i64::from(bits / 8));
+            } else {
+                state = StackState {
+                    sp: Flow::Unknown,
+                    fp: Flow::Unknown,
+                };
             }
         }
-        let outgoing = current;
         for edge in &block.successors {
-            let next = match outgoing {
-                Some(value) => Flow::Known(value),
-                None => Flow::Unknown,
+            let Some(previous) = states.get(&edge.target).copied() else {
+                continue;
             };
-            let changed = match (delta.get(&edge.target), next) {
-                (Some(Flow::Unvisited), _) => true,
-                (Some(Flow::Known(existing)), Flow::Known(value)) => *existing != value,
-                (Some(Flow::Known(_)), Flow::Unknown) => true,
-                (Some(Flow::Unknown), _) | (None, _) => false,
-                (Some(Flow::Known(_)), Flow::Unvisited) => true,
-            };
-            if changed {
-                delta.insert(edge.target, next);
+            let next = previous.map_or(state, |previous| previous.join(state));
+            if previous != Some(next) {
+                states.insert(edge.target, Some(next));
                 queue.push_back(edge.target);
             }
         }
     }
 
-    let mut accesses: BTreeMap<i64, Vec<StackAccess>> = BTreeMap::new();
+    let mut accesses = BTreeMap::new();
     let mut access_count = 0usize;
     let mut unknown_access_candidates = 0usize;
-    for block in &function.blocks {
-        let Some(block) = analysis.blocks.get(block) else {
+    let mut truncated = false;
+    for block_address in &function.blocks {
+        check()?;
+        let Some(block) = analysis.blocks.get(block_address) else {
             continue;
         };
-        let mut current = match delta[&block.address] {
-            Flow::Known(value) => Some(value),
-            Flow::Unvisited => continue,
-            Flow::Unknown => None,
+        let Some(mut state) = states.get(block_address).copied().flatten() else {
+            continue;
         };
         for address in &block.instructions {
+            check()?;
             let Some(decoded) = decoded.get(address) else {
-                current = None;
+                state = StackState {
+                    sp: Flow::Unknown,
+                    fp: Flow::Unknown,
+                };
                 continue;
             };
             let instruction = &decoded.instruction;
             let mnemonic = instruction.mnemonic();
             if mnemonic == Mnemonic::Call {
+                transfer(decoded, bits, &mut state);
                 continue;
             }
-            if mnemonic == Mnemonic::Push {
-                if let (Some(delta), Ok(width)) = (current, memory_bits(instruction)) {
-                    let offset = delta + i64::from(instruction.stack_pointer_increment());
-                    let source = (instruction.op0_kind() == OpKind::Register)
-                        .then(|| register_name(instruction.op0_register()));
-                    push_access(
-                        &mut accesses,
-                        StackAccess {
-                            instruction: *address,
-                            mnemonic: "push".into(),
-                            offset,
-                            width,
-                            read: false,
-                            write: true,
-                            base_register: stack_pointer(bits).into(),
-                            displacement: 0,
-                            source_register: source,
-                            confidence: Confidence::High,
-                        },
-                        false,
-                    );
-                    access_count += 1;
+            // Record the implicit stack access of PUSH/POP before the transfer.
+            // Explicit memory operands are handled below as well.
+            if matches!(mnemonic, Mnemonic::Push | Mnemonic::Pop) {
+                let increment = i64::from(instruction.stack_pointer_increment());
+                let width = increment.unsigned_abs().saturating_mul(8) as u16;
+                let offset = state.sp.value().and_then(|value| {
+                    if mnemonic == Mnemonic::Push {
+                        value.checked_add(increment)
+                    } else {
+                        Some(value)
+                    }
+                });
+                if let Some(offset) = offset {
+                    if matches!(width, 16 | 32 | 64) {
+                        if access_count < MAX_STACK_ACCESSES {
+                            push_access(
+                                &mut accesses,
+                                StackAccess {
+                                    instruction: *address,
+                                    mnemonic: format!("{mnemonic:?}").to_lowercase(),
+                                    offset,
+                                    width,
+                                    read: mnemonic == Mnemonic::Pop,
+                                    write: mnemonic == Mnemonic::Push,
+                                    base_register: stack_pointer(bits).into(),
+                                    displacement: 0,
+                                    source_register: (mnemonic == Mnemonic::Push
+                                        && instruction.op0_kind() == OpKind::Register)
+                                        .then(|| register_name(instruction.op0_register())),
+                                    confidence: Confidence::High,
+                                },
+                                false,
+                            );
+                            access_count += 1;
+                        } else {
+                            truncated = true;
+                        }
+                    }
+                } else {
+                    unknown_access_candidates += 1;
                 }
-                current =
-                    current.map(|value| value + i64::from(instruction.stack_pointer_increment()));
-                continue;
-            }
-            if mnemonic == Mnemonic::Pop {
-                if let (Some(delta), Ok(width)) = (current, memory_bits(instruction)) {
-                    push_access(
-                        &mut accesses,
-                        StackAccess {
-                            instruction: *address,
-                            mnemonic: "pop".into(),
-                            offset: delta,
-                            width,
-                            read: true,
-                            write: false,
-                            base_register: stack_pointer(bits).into(),
-                            displacement: 0,
-                            source_register: None,
-                            confidence: Confidence::High,
-                        },
-                        false,
-                    );
-                    access_count += 1;
-                }
-                current =
-                    current.map(|value| value + i64::from(instruction.stack_pointer_increment()));
-                continue;
             }
             for memory in decoded.info.used_memory() {
                 if memory.access() == OpAccess::NoMemAccess {
                     continue;
                 }
-                let base = full_register(memory.base());
-                let base_name = register_name(memory.base());
+                // PUSH/POP implicit accesses were recorded above. Their explicit
+                // memory operands need separate handling (POP uses post-increment SP).
+                if matches!(mnemonic, Mnemonic::Push | Mnemonic::Pop)
+                    && instruction.op0_kind() != OpKind::Memory
+                {
+                    continue;
+                }
+                if (mnemonic == Mnemonic::Push && memory.access() != OpAccess::Read)
+                    || (mnemonic == Mnemonic::Pop && memory.access() != OpAccess::Write)
+                {
+                    continue;
+                }
+                let base = full_register(memory.base(), bits);
+                if base != stack_pointer(bits) && base != frame_pointer(bits) {
+                    continue;
+                }
                 let width = memory.memory_size().size() as u16 * 8;
                 if !matches!(width, 8 | 16 | 32 | 64) {
                     continue;
                 }
-                let displacement = memory.displacement() as i64;
-                let canonical = if base == stack_pointer(bits) {
-                    current.map(|delta| delta + displacement)
-                } else if base == frame_pointer(bits) {
-                    rbp_delta.map(|delta| delta + displacement)
-                } else {
-                    None
-                };
-                let Some(offset) = canonical else {
-                    unknown_access_candidates += 1;
-                    continue;
-                };
-                if !(-0x100_000..=0x100_000).contains(&offset) {
+                if memory.index() != Register::None
+                    || memory.base().size() != usize::from(bits / 8)
+                    || (bits == 32 && memory.segment() != Register::SS)
+                    || (bits == 64 && matches!(memory.segment(), Register::FS | Register::GS))
+                {
                     unknown_access_candidates += 1;
                     continue;
                 }
-                let access = memory.access();
-                let read = matches!(
-                    access,
-                    OpAccess::Read
-                        | OpAccess::CondRead
-                        | OpAccess::ReadWrite
-                        | OpAccess::ReadCondWrite
-                );
-                let write = matches!(
-                    access,
-                    OpAccess::Write
-                        | OpAccess::CondWrite
-                        | OpAccess::ReadWrite
-                        | OpAccess::ReadCondWrite
-                );
-                let source_register = if write {
-                    inferred_written_register(instruction)
+                let displacement = signed_displacement(memory.displacement(), bits);
+                let delta = if base == stack_pointer(bits) {
+                    let value = state.sp.value();
+                    if mnemonic == Mnemonic::Pop {
+                        value.and_then(|v| {
+                            v.checked_add(i64::from(instruction.stack_pointer_increment()))
+                        })
+                    } else {
+                        value
+                    }
                 } else {
-                    None
+                    state.fp.value()
                 };
+                let offset = delta.and_then(|v| v.checked_add(displacement));
+                let Some(offset) =
+                    offset.filter(|offset| (-0x100_000..=0x100_000).contains(offset))
+                else {
+                    unknown_access_candidates += 1;
+                    continue;
+                };
+                if access_count >= MAX_STACK_ACCESSES {
+                    truncated = true;
+                    continue;
+                }
+                let access = memory.access();
                 push_access(
                     &mut accesses,
                     StackAccess {
                         instruction: *address,
-                        mnemonic: format!("{:?}", instruction.mnemonic()).to_lowercase(),
+                        mnemonic: format!("{mnemonic:?}").to_lowercase(),
                         offset,
                         width,
-                        read,
-                        write,
-                        base_register: base_name,
+                        read: matches!(
+                            access,
+                            OpAccess::Read
+                                | OpAccess::CondRead
+                                | OpAccess::ReadWrite
+                                | OpAccess::ReadCondWrite
+                        ),
+                        write: matches!(
+                            access,
+                            OpAccess::Write
+                                | OpAccess::CondWrite
+                                | OpAccess::ReadWrite
+                                | OpAccess::ReadCondWrite
+                        ),
+                        base_register: register_name(memory.base()),
                         displacement,
-                        source_register,
-                        confidence: if base == frame_pointer(bits) && rbp_delta.is_some() {
-                            Confidence::High
-                        } else if current.is_some() {
-                            Confidence::Medium
+                        source_register: if matches!(
+                            access,
+                            OpAccess::Write
+                                | OpAccess::ReadWrite
+                                | OpAccess::CondWrite
+                                | OpAccess::ReadCondWrite
+                        ) {
+                            inferred_written_register(instruction)
                         } else {
-                            Confidence::Low
+                            None
                         },
+                        confidence: Confidence::Medium,
                     },
-                    access_count >= MAX_STACK_ACCESSES,
+                    false,
                 );
                 access_count += 1;
             }
-            if mnemonic == Mnemonic::Leave {
-                current = rbp_delta.map(|value| value + i64::from(bits / 8));
-            } else if matches!(mnemonic, Mnemonic::Mov | Mnemonic::Lea)
-                && instruction.op0_kind() == OpKind::Register
-            {
-                let register = full_register(instruction.op0_register());
-                if register == stack_pointer(bits) {
-                    current =
-                        instruction_pointer_value(instruction, current, rbp_delta).or(current);
-                } else if register == frame_pointer(bits) {
-                    if let Some(value) = instruction_pointer_value(instruction, current, rbp_delta)
-                    {
-                        rbp_delta = Some(value);
-                    }
+            transfer(decoded, bits, &mut state);
+        }
+    }
+    let callee_saved: BTreeSet<String> = signature
+        .map(|s| s.convention)
+        .unwrap_or(CallingConvention::Unknown)
+        .callee_saved(bits as u16)
+        .iter()
+        .map(|name| name.to_string())
+        .collect();
+    let mut entry_saves = BTreeSet::new();
+    let mut written = BTreeSet::new();
+    if let Some(entry_block) = analysis.blocks.get(&entry) {
+        for address in &entry_block.instructions {
+            check()?;
+            let Some(decoded) = decoded.get(address) else {
+                break;
+            };
+            let instruction = &decoded.instruction;
+            let source = match instruction.mnemonic() {
+                Mnemonic::Push if instruction.op0_kind() == OpKind::Register => {
+                    Some(instruction.op0_register())
                 }
-            } else if matches!(mnemonic, Mnemonic::Sub | Mnemonic::Add)
-                && instruction.op0_kind() == OpKind::Register
-                && full_register(instruction.op0_register()) == stack_pointer(bits)
-                && immediate_kind(instruction.op1_kind())
-            {
-                let immediate = instruction.immediate(1) as i64;
-                current = current.map(|value| {
-                    if mnemonic == Mnemonic::Sub {
-                        value - immediate
-                    } else {
-                        value + immediate
-                    }
-                });
-            } else if matches!(mnemonic, Mnemonic::And | Mnemonic::Xor | Mnemonic::Or)
-                && instruction.op0_kind() == OpKind::Register
-                && full_register(instruction.op0_register()) == stack_pointer(bits)
-            {
-                current = None;
+                Mnemonic::Mov
+                    if instruction.op0_kind() == OpKind::Memory
+                        && instruction.op1_kind() == OpKind::Register =>
+                {
+                    Some(instruction.op1_register())
+                }
+                _ => None,
+            };
+            if let Some(source) = source {
+                let name = register_name(source);
+                if source.size() == usize::from(bits / 8)
+                    && callee_saved.contains(&name)
+                    && !written.contains(&name)
+                {
+                    entry_saves.insert((*address, name));
+                }
+            }
+            for register in decoded.info.used_registers() {
+                if matches!(
+                    register.access(),
+                    OpAccess::Write
+                        | OpAccess::CondWrite
+                        | OpAccess::ReadWrite
+                        | OpAccess::ReadCondWrite
+                ) {
+                    written.insert(full_register(register.register(), bits));
+                }
             }
         }
     }
-
-    let return_address_offset = 0i64;
-    let callee_saved: BTreeSet<String> = signature
-        .map(|signature| {
-            signature
-                .convention
-                .callee_saved(bits as u16)
-                .iter()
-                .map(|name| name.to_string())
-                .collect()
-        })
-        .unwrap_or_else(|| {
-            CallingConvention::Unknown
-                .callee_saved(bits as u16)
-                .iter()
-                .map(|name| name.to_string())
-                .collect()
-        });
     let mut slots = Vec::new();
     for (offset, mut access_list) in accesses {
+        check()?;
         if slots.len() >= MAX_STACK_SLOTS {
+            truncated = true;
             break;
         }
         access_list.sort_by_key(|access| access.instruction);
@@ -465,11 +486,17 @@ pub fn recover(
             .unwrap_or(8);
         let saved = access_list.iter().find_map(|access| {
             let register = access.source_register.as_ref()?;
-            (offset < 0 && callee_saved.contains(register)).then(|| register.clone())
+            (offset < 0 && entry_saves.contains(&(access.instruction, register.clone())))
+                .then(|| register.clone())
         });
-        let kind = if offset >= return_address_offset + i64::from(bits / 8) {
-            "incomingArgument"
-        } else if offset == return_address_offset {
+        let kind = if offset >= i64::from(bits / 8) {
+            if signature.is_some_and(|s| s.convention == CallingConvention::Win64) && offset < 0x28
+            {
+                "shadowSpace"
+            } else {
+                "incomingArgument"
+            }
+        } else if offset == 0 {
             "returnAddress"
         } else if saved.is_some() {
             "savedRegister"
@@ -484,25 +511,17 @@ pub fn recover(
         let reads = access_list.iter().filter(|access| access.read).count();
         let writes = access_list.iter().filter(|access| access.write).count();
         let name = saved
-            .clone()
-            .map(|register| format!("saved_{register}"))
+            .as_ref()
+            .map(|r| format!("saved_{r}"))
             .unwrap_or_else(|| {
                 if offset < 0 {
-                    format!("local_{:x}", -offset)
+                    format!("local_{:x}", offset.unsigned_abs())
                 } else {
                     format!("arg_{offset:x}")
                 }
             });
-        let confidence = if access_list
-            .iter()
-            .all(|access| access.confidence == Confidence::High)
-        {
+        let confidence = if access_list.iter().all(|a| a.confidence == Confidence::High) {
             Confidence::High
-        } else if access_list
-            .iter()
-            .any(|access| access.confidence == Confidence::Low)
-        {
-            Confidence::Low
         } else {
             Confidence::Medium
         };
@@ -511,15 +530,9 @@ pub fn recover(
             width,
             name,
             kind: kind.into(),
-            ty: match kind {
-                "incomingArgument" => TypeRef::pointer_to(
-                    TypeRef::unknown(None, "pointee type is not inferred"),
-                    bits as u16,
-                ),
-                _ => TypeRef::Int {
-                    bits: width,
-                    signed: None,
-                },
+            ty: TypeRef::Int {
+                bits: width,
+                signed: None,
             },
             user_name: None,
             user_type: None,
@@ -528,53 +541,42 @@ pub fn recover(
             first_instruction: access_list[0].instruction,
             last_instruction: access_list
                 .last()
-                .map(|access| access.instruction)
+                .map(|a| a.instruction)
                 .unwrap_or_default(),
             saved_register: saved,
             overlaps: vec![],
-            accesses: access_list,
             confidence,
+            accesses: access_list,
         });
     }
     slots.sort_by_key(|slot| slot.offset);
     for i in 0..slots.len() {
+        check()?;
         for j in (i + 1)..slots.len() {
-            let left = &slots[i];
-            let right = &slots[j];
-            let left_end = left.offset + i64::from(left.width / 8).max(1);
-            let right_end = right.offset + i64::from(right.width / 8).max(1);
-            if left.offset < right_end && right.offset < left_end {
-                let (left_offset, right_offset) = (left.offset, right.offset);
-                slots[i].overlaps.push(right_offset);
-                slots[j].overlaps.push(left_offset);
+            let left_end = slots[i].offset + i64::from(slots[i].width.div_ceil(8));
+            let right_end = slots[j].offset + i64::from(slots[j].width.div_ceil(8));
+            if slots[i].offset < right_end && slots[j].offset < left_end {
+                let (left, right) = (slots[i].offset, slots[j].offset);
+                slots[i].overlaps.push(right);
+                slots[j].overlaps.push(left);
             }
         }
     }
-    let frame_size = delta
-        .values()
-        .filter_map(|flow| match flow {
-            Flow::Known(value) if *value < 0 => Some((-value) as u64),
-            _ => None,
-        })
-        .max()
-        .unwrap_or_else(|| {
-            slots
-                .iter()
-                .filter(|slot| slot.offset < 0)
-                .map(|slot| (-slot.offset) as u64 + u64::from(slot.width / 8))
-                .max()
-                .unwrap_or(0)
-        });
     let local_bytes = slots
         .iter()
         .filter(|slot| slot.offset < 0)
-        .map(|slot| (-slot.offset) as u64 + u64::from(slot.width / 8))
+        .map(|slot| slot.offset.unsigned_abs())
         .max()
         .unwrap_or(0);
+    let incoming_start = if signature.is_some_and(|s| s.convention == CallingConvention::Win64) {
+        0x28
+    } else {
+        i64::from(bits / 8)
+    };
     let incoming_argument_bytes = slots
         .iter()
         .filter(|slot| slot.kind == "incomingArgument")
-        .map(|slot| (slot.offset - i64::from(bits / 8)) as u64 + u64::from(slot.width / 8))
+        .map(|slot| (slot.offset - incoming_start) as u64 + u64::from(slot.width).div_ceil(8))
         .max()
         .unwrap_or(0);
     let saved_registers = slots
@@ -584,29 +586,22 @@ pub fn recover(
         .into_iter()
         .collect();
     let mut notes = vec![
-        "Stack slots are physical locations with instruction provenance, not source variables."
-            .into(),
-        "Call instructions are assumed to preserve the caller's stack pointer across return."
-            .into(),
+        "Stack slots are physical locations with instruction provenance, not source variables.".into(),
+        "x64 calls assume ABI stack preservation. x86 calls invalidate the stack delta because callee cleanup is unknown; frame-pointer relations are retained.".into(),
+        "Frame size is the maximum proven stack decrement; alignment is unknown unless established independently.".into(),
+        "Saved-register labels require an entry-block store of the native-width incoming register before it is overwritten; restoration is not proved.".into(),
     ];
-    if rbp_conflict {
-        notes.push(
-            "conflicting frame-pointer definitions; rbp-relative confidence is reduced".into(),
-        );
-    }
     if unknown_access_candidates > 0 {
-        notes.push(format!(
-            "{unknown_access_candidates} memory access(es) had no resolvable stack delta or base register"
-        ));
+        notes.push(format!("{unknown_access_candidates} stack access(es) had an unresolved delta, index, segment or address width"));
     }
-    let truncated = access_count >= MAX_STACK_ACCESSES || slots.len() >= MAX_STACK_SLOTS;
+    check()?;
     Ok(StackFrame {
         function: function.address,
         address_width: bits as u16,
-        uses_frame_pointer: rbp_delta.is_some() && !rbp_conflict,
+        uses_frame_pointer: saw_frame_pointer,
         frame_size,
-        alignment: if bits == 64 { 16 } else { 4 },
-        return_address_offset,
+        alignment: 1,
+        return_address_offset: 0,
         saved_registers,
         local_bytes,
         incoming_argument_bytes,
@@ -615,6 +610,123 @@ pub fn recover(
         truncated,
         notes,
     })
+}
+
+fn transfer(decoded: &Decoded, bits: u8, state: &mut StackState) {
+    let instruction = &decoded.instruction;
+    let mnemonic = instruction.mnemonic();
+    if mnemonic == Mnemonic::Call {
+        if bits == 32 {
+            state.sp = Flow::Unknown;
+        }
+        return;
+    }
+    if mnemonic == Mnemonic::Ret {
+        return;
+    }
+    let old = *state;
+    let mut handled_sp = false;
+    let mut handled_fp = false;
+    if matches!(mnemonic, Mnemonic::Push | Mnemonic::Pop) {
+        state.sp = Flow::from_option(
+            old.sp
+                .value()
+                .and_then(|v| v.checked_add(i64::from(instruction.stack_pointer_increment()))),
+        );
+        handled_sp = true;
+        if mnemonic == Mnemonic::Pop && instruction.op0_kind() == OpKind::Register {
+            let dest = full_register(instruction.op0_register(), bits);
+            if dest == stack_pointer(bits) {
+                state.sp = Flow::Unknown;
+            }
+            if dest == frame_pointer(bits) {
+                state.fp = Flow::Unknown;
+                handled_fp = true;
+            }
+        }
+    } else if mnemonic == Mnemonic::Leave {
+        state.sp = Flow::from_option(
+            old.fp
+                .value()
+                .and_then(|v| v.checked_add(i64::from(bits / 8))),
+        );
+        state.fp = Flow::Unknown;
+        handled_sp = true;
+        handled_fp = true;
+    } else if matches!(mnemonic, Mnemonic::Mov | Mnemonic::Lea)
+        && instruction.op0_kind() == OpKind::Register
+    {
+        let destination = instruction.op0_register();
+        let name = full_register(destination, bits);
+        let value = (destination.size() == usize::from(bits / 8))
+            .then(|| instruction_pointer_value(instruction, old.sp.value(), old.fp.value(), bits))
+            .flatten();
+        if name == stack_pointer(bits) {
+            state.sp = Flow::from_option(value);
+            handled_sp = true;
+        }
+        if name == frame_pointer(bits) {
+            state.fp = Flow::from_option(value);
+            handled_fp = true;
+        }
+    } else if matches!(mnemonic, Mnemonic::Add | Mnemonic::Sub)
+        && instruction.op0_kind() == OpKind::Register
+        && immediate_kind(instruction.op1_kind())
+    {
+        let destination = instruction.op0_register();
+        let name = full_register(destination, bits);
+        if name == stack_pointer(bits) || name == frame_pointer(bits) {
+            let old_value = if name == stack_pointer(bits) {
+                old.sp
+            } else {
+                old.fp
+            };
+            let immediate = signed_displacement(instruction.immediate(1), bits);
+            let value = (destination.size() == usize::from(bits / 8))
+                .then(|| {
+                    old_value.value().and_then(|v| {
+                        if mnemonic == Mnemonic::Add {
+                            v.checked_add(immediate)
+                        } else {
+                            v.checked_sub(immediate)
+                        }
+                    })
+                })
+                .flatten();
+            if name == stack_pointer(bits) {
+                state.sp = Flow::from_option(value);
+                handled_sp = true;
+            } else {
+                state.fp = Flow::from_option(value);
+                handled_fp = true;
+            }
+        }
+    }
+    // Unsupported writes (including partial-register writes, XCHG and POP SP)
+    // invalidate the corresponding affine relation rather than retaining it.
+    for register in decoded.info.used_registers() {
+        if !matches!(
+            register.access(),
+            OpAccess::Write | OpAccess::CondWrite | OpAccess::ReadWrite | OpAccess::ReadCondWrite
+        ) {
+            continue;
+        }
+        let name = full_register(register.register(), bits);
+        if name == stack_pointer(bits) && !handled_sp {
+            state.sp = Flow::Unknown;
+        }
+        if name == frame_pointer(bits) && !handled_fp {
+            state.fp = Flow::Unknown;
+        }
+    }
+}
+
+fn signed_displacement(value: u64, bits: u8) -> i64 {
+    if bits == 32 {
+        value as u32 as i32 as i64
+    } else {
+        value as i64
+    }
 }
 
 fn push_access(
@@ -645,12 +757,12 @@ fn frame_pointer(bits: u8) -> &'static str {
 fn register_name(register: Register) -> String {
     format!("{register:?}").to_ascii_lowercase()
 }
-fn full_register(register: Register) -> String {
-    register_name(register.full_register())
-}
-fn memory_bits(instruction: &Instruction) -> Result<u16, ()> {
-    let width = instruction.memory_size().size() as u16 * 8;
-    matches!(width, 8 | 16 | 32 | 64).then_some(width).ok_or(())
+fn full_register(register: Register, bits: u8) -> String {
+    register_name(if bits == 32 {
+        register.full_register32()
+    } else {
+        register.full_register()
+    })
 }
 fn immediate_kind(kind: OpKind) -> bool {
     matches!(
@@ -680,10 +792,14 @@ fn instruction_pointer_value(
     instruction: &Instruction,
     current: Option<i64>,
     rbp_delta: Option<i64>,
+    bits: u8,
 ) -> Option<i64> {
     match instruction.mnemonic() {
-        Mnemonic::Mov if instruction.op1_kind() == OpKind::Register => {
-            let source = full_register(instruction.op1_register());
+        Mnemonic::Mov
+            if instruction.op1_kind() == OpKind::Register
+                && instruction.op1_register().size() == usize::from(bits / 8) =>
+        {
+            let source = full_register(instruction.op1_register(), bits);
             if source == "rsp" || source == "esp" {
                 current
             } else if source == "rbp" || source == "ebp" {
@@ -693,15 +809,17 @@ fn instruction_pointer_value(
             }
         }
         Mnemonic::Lea if instruction.op1_kind() == OpKind::Memory => {
-            if instruction.memory_index() != Register::None {
+            if instruction.memory_index() != Register::None
+                || instruction.memory_base().size() != usize::from(bits / 8)
+            {
                 return None;
             }
-            let base = full_register(instruction.memory_base());
-            let displacement = instruction.memory_displacement64() as i64;
+            let base = full_register(instruction.memory_base(), bits);
+            let displacement = signed_displacement(instruction.memory_displacement64(), bits);
             if base == "rsp" || base == "esp" {
-                current.map(|value| value + displacement)
+                current.and_then(|value| value.checked_add(displacement))
             } else if base == "rbp" || base == "ebp" {
-                rbp_delta.map(|value| value + displacement)
+                rbp_delta.and_then(|value| value.checked_add(displacement))
             } else {
                 None
             }

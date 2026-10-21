@@ -1,3 +1,12 @@
+# Current source audit status
+
+The release notes below describe the historical `1194403` archive published as
+`v0.8.0-dev`. Current branch source adds correctness repairs, native editing and
+schema v5 user type libraries. Those changes are **not in the published ZIP**.
+The full supplied v0.8 checklist is incomplete; [AUDIT-0.8.md](AUDIT-0.8.md)
+records the remaining work. No existing tag/artifact is replaced and no new
+accepted prerelease is claimed by the audit checkpoint.
+
 # URA v0.8.0-dev prerelease
 
 Published as a GitHub prerelease from `v0.8-decompiler-foundations`. This is a

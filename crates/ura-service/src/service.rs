@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use ura_core::binary::{ExportView, ImportView};
 use ura_core::decomp::signature::SignatureOverride;
-use ura_core::decomp::types::TypeRef;
+use ura_core::decomp::types::{TypeDatabase, TypeRef};
 use ura_core::{
     analyze_binary_with_seeds, analyze_path, format_address, parse_address, AnalysisOptions,
     AnalysisSeed, BinaryView, Function, FunctionOrigin, LoadedBinary, ProgramAnalysis, SectionView,
@@ -49,6 +49,7 @@ pub(crate) struct Session {
     pub(crate) ir_cache_order: VecDeque<u64>,
     pub(crate) signature_overrides: BTreeMap<u64, SignatureOverride>,
     pub(crate) stack_overrides: StackOverrides,
+    pub(crate) type_library: TypeDatabase,
     pub(crate) decomp_cache: BTreeMap<u64, Arc<ura_core::decomp::FunctionDecompilation>>,
     pub(crate) decomp_cache_order: VecDeque<u64>,
 }
@@ -81,6 +82,7 @@ impl Service {
         let mut manual = Vec::new();
         let mut signature_overrides = BTreeMap::new();
         let mut stack_overrides = BTreeMap::new();
+        let mut type_library = TypeDatabase::new(binary.analysis().bitness as u16);
         let mut attached_project = None;
 
         if let Some(project_path) = project {
@@ -98,6 +100,14 @@ impl Service {
             manual = manual_from_snapshot(&snapshot);
             signature_overrides = signature_overrides_from_snapshot(&snapshot);
             stack_overrides = stack_overrides_from_snapshot(&snapshot);
+            if let Some(library) = snapshot.type_library {
+                if library.address_bits != type_library.address_bits {
+                    return Err(ServiceError::InvalidArgument(
+                        "project type library target width differs from the binary".into(),
+                    ));
+                }
+                type_library = library;
+            }
             attached_project = Some(display_path(&project_resolved));
         }
 
@@ -132,6 +142,7 @@ impl Service {
                 ir_cache_order: VecDeque::new(),
                 signature_overrides,
                 stack_overrides,
+                type_library,
                 decomp_cache: BTreeMap::new(),
                 decomp_cache_order: VecDeque::new(),
             },
@@ -669,6 +680,9 @@ impl Service {
         session.manual = manual;
         session.signature_overrides = signatures;
         session.stack_overrides = stack;
+        session.type_library = ura_project::read_project(&resolved)?
+            .type_library
+            .unwrap_or_else(|| TypeDatabase::new(session.binary.analysis().bitness as u16));
         session.decomp_cache.clear();
         session.decomp_cache_order.clear();
 

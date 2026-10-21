@@ -308,6 +308,7 @@ pub struct Workspace {
     pub rename_open: bool,
     pub rename_value: String,
     pub rename_address: Option<u64>,
+    pub editor: Option<crate::editors::Editor>,
     pub palette_open: bool,
     pub palette_query: String,
     pub palette_focus: bool,
@@ -404,6 +405,7 @@ impl Workspace {
             rename_open: false,
             rename_value: String::new(),
             rename_address: None,
+            editor: None,
             palette_open: false,
             palette_query: String::new(),
             palette_focus: false,
@@ -480,6 +482,7 @@ impl Workspace {
         self.xref_filter.dirty = true;
         self.xref_key = None;
         self.rename_open = false;
+        self.editor = None;
         self.annotation_label.clear();
         self.annotation_note.clear();
     }
@@ -602,7 +605,7 @@ impl Workspace {
         self.ir_error = None;
     }
     pub fn ensure_ir(&mut self) {
-        if self.analyzing || self.opening {
+        if self.analyzing || self.opening || self.decomp_loading.is_some() {
             return;
         }
         let Some(function) = self.function().map(|f| f.address) else {
@@ -651,6 +654,9 @@ impl Workspace {
             });
     }
     fn reset_decomp(&mut self) {
+        if self.decomp_loading.is_some() {
+            self.cancel.store(true, Ordering::Relaxed);
+        }
         self.decomp_key = None;
         self.decomp_loading = None;
         self.decomp = None;
@@ -661,7 +667,7 @@ impl Workspace {
         self.call_graph_error = None;
     }
     pub fn ensure_decomp(&mut self) {
-        if self.analyzing || self.opening {
+        if self.analyzing || self.opening || self.ir_loading.is_some() {
             return;
         }
         let Some(function) = self.function().map(|f| f.address) else {
@@ -675,16 +681,22 @@ impl Workspace {
             return;
         };
         let context = self.decomp_context(function);
+        self.cancel = Arc::new(AtomicBool::new(false));
+        let control = Control {
+            cancel: self.cancel.clone(),
+            progress: self.progress.clone(),
+            ctx: self.ctx.clone(),
+            last: Mutex::new(Instant::now()),
+        };
         self.decomp_loading = Some(key);
         self.decomp_error = None;
         self.worker
             .submit_typed(self.generation, TaskKind::Decomp(key), move || {
-                ura_core::decomp::analyze_function(&binary, &analysis, function, &context, &()).map(
-                    |data| Event::Decomp {
+                ura_core::decomp::analyze_function(&binary, &analysis, function, &context, &control)
+                    .map(|data| Event::Decomp {
                         key,
                         data: Arc::new(data),
-                    },
-                )
+                    })
             });
     }
     fn decomp_context(&self, function: u64) -> DecompContext {
@@ -697,6 +709,9 @@ impl Workspace {
         let Some((_, snapshot)) = &self.project else {
             return context;
         };
+        if let Some(library) = &snapshot.type_library {
+            context.type_database = library.clone();
+        }
         let mut hints = SignatureHints::default();
         for entry in &snapshot.function_signatures {
             let Ok(address) = parse_address(&entry.address) else {
@@ -1081,6 +1096,8 @@ impl Workspace {
                 function_signatures: ura_project::load_function_signatures_for_path(&path)
                     .map_err(|e| e.to_string())?,
                 stack_variables: ura_project::load_stack_variables_for_path(&path)
+                    .map_err(|e| e.to_string())?,
+                type_library: ura_project::load_type_library_for_path(&path)
                     .map_err(|e| e.to_string())?,
                 view_state: ura_project::load_view_state_for_path(&path)
                     .map_err(|e| e.to_string())?,
@@ -2025,7 +2042,7 @@ mod tests {
             app.workspace.history.step(-1).unwrap().address,
             Some(0x140001000)
         );
-        assert_eq!(ura_project::SCHEMA_VERSION, 4);
+        assert_eq!(ura_project::SCHEMA_VERSION, 5);
     }
     #[test]
     fn stale_open_results_do_not_replace_current_binary() {

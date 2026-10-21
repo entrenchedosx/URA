@@ -429,7 +429,7 @@ fn project_writes_are_gated_and_persist_names_comments_and_exports() {
         .save_project(&handle, &project_path, Some("Fixture"))
         .unwrap();
     assert!(created.created);
-    assert_eq!(created.project.schema_version, 4);
+    assert_eq!(created.project.schema_version, ura_project::SCHEMA_VERSION);
     assert_eq!(created.project.binary_hash, opened.info.sha256);
 
     let reopened = service

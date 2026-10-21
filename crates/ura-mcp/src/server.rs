@@ -19,7 +19,8 @@ use crate::params::{
     AddCommentParams, AnalyzeParams, BinaryHandleParams, CallGraphParams, CfgParams,
     DecompFunctionParams, DisassemblyParams, ExportAnalysisParams, FunctionParams,
     GetFunctionsParams, OpenBinaryParams, ReadBytesParams, RenameFunctionParams, SaveProjectParams,
-    SearchStringsParams, SetFunctionSignatureParams, SetVariableTypeParams, XrefsParams,
+    SearchStringsParams, SetFunctionSignatureParams, SetTypeLibraryParams, SetVariableTypeParams,
+    StructureParams, TypesParams, XrefsParams,
 };
 
 const INSTRUCTIONS: &str = "URA performs local static analysis of PE, ELF and Mach-O binaries. \
@@ -159,25 +160,39 @@ impl UraServer {
     )]
     fn ura_get_types(
         &self,
-        Parameters(p): Parameters<DecompFunctionParams>,
+        Parameters(p): Parameters<TypesParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        respond(self.service().inferred_types(&p.handle, &p.function))
+        match p.function {
+            Some(function) => respond(self.service().inferred_types(&p.handle, &function)),
+            None => respond(self.service().type_library(&p.handle)),
+        }
     }
     #[tool(
         name = "ura_get_structure",
-        annotations(title = "Get recovered structure", read_only_hint = true),
-        description = "Return a bounded page of the recovered high-level control structure. The view is an experimental structural rendering, not decompiled source."
+        annotations(title = "Get structure definition", read_only_hint = true),
+        description = "Return an actual named structure or union definition from the project type library, with field offsets, types, size and alignment. An undefined name returns an error. Use ura_get_high_level_ir for control flow."
     )]
     fn ura_get_structure(
         &self,
-        Parameters(p): Parameters<DecompFunctionParams>,
+        Parameters(p): Parameters<StructureParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        respond(self.service().high_level(
-            &p.handle,
-            &p.function,
-            p.offset.unwrap_or(0),
-            p.limit.unwrap_or(200),
-        ))
+        respond(self.service().structure_definition(&p.handle, &p.name))
+    }
+    #[tool(
+        name = "ura_set_type_library",
+        annotations(title = "Save project type library", read_only_hint = false),
+        description = "Validate and atomically replace the user-authored structure/union and type-alias library in an existing matching project. Requires --enable-writes. Read the library with ura_get_types first; definitions are limited to 256 structures, 256 aliases, 512 fields per structure and 1 MiB serialized."
+    )]
+    fn ura_set_type_library(
+        &self,
+        Parameters(p): Parameters<SetTypeLibraryParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let library = serde_json::from_value::<ura_core::decomp::TypeDatabase>(p.database)
+            .map_err(|e| ServiceError::InvalidArgument(e.to_string()));
+        respond(library.and_then(|library| {
+            self.service()
+                .set_type_library(&p.handle, Path::new(&p.project), &library)
+        }))
     }
     #[tool(
         name = "ura_get_call_graph",

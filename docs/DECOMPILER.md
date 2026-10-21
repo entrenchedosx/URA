@@ -17,8 +17,9 @@ missing or conflicting. Sample code is never executed.
 1. Lift and verify the function's IR (`ir::inspect`). If verification fails,
    decompilation fails with the verifier diagnostic.
 2. Recover stack accesses and slots, first without a signature.
-3. Recover the calling convention, register/stack parameters, return value and
-   caller-observed arguments from the lifted entry values and their taint roots.
+3. Recover candidate convention, register/stack parameters and return provenance
+   from entry values and their roots. Supplied callee signatures add constraints;
+   caller-observed argument counts are not computed and remain unknown.
 4. Apply a user signature override when one is supplied and valid.
 5. Recover the final stack frame using the recovered signature.
 6. Apply stack-slot name/type overrides.
@@ -28,8 +29,7 @@ missing or conflicting. Sample code is never executed.
    frame.
 
 The call graph is a separate program-wide pass over the existing analysis.
-All passes accept `AnalysisControl`; cancellation aborts cleanly instead of
-returning partial typed output.
+IR, stack and ABI passes poll `AnalysisControl`; the bounded type/HIR passes are checked at their boundaries. MCP transport cancellation remains unimplemented. Cancellation returns an error rather than partial typed output.
 
 The result (`FunctionDecompilation`) groups the signature, frame, type
 inference, high-level function and diagnostics. Addresses remain `u64` in the
@@ -39,8 +39,7 @@ core; adapters serialize them as `0x`-prefixed strings.
 
 Supported conventions are Win64, SysV64, cdecl, stdcall, fastcall, thiscall and
 unknown. The platform default is Win64 for PE x64, SysV64 for ELF/Mach-O x64 and
-cdecl for 32-bit x86. Observed argument-register and stack use can override the
-default; mixed evidence lowers confidence and is recorded as a conflict.
+cdecl for 32-bit x86. Shared x64 register reads do not override that low-confidence default. Supported x86 cleanup/register evidence can distinguish candidates; conflicting evidence stays explicit. XMM and aggregate classifications are not implemented.
 
 Recovery records:
 
@@ -61,9 +60,7 @@ for callees that have not themselves been decompiled. Overrides are stored
 separately from inference, are limited to 64 parameters, and are validated
 before use; invalid overrides are rejected rather than silently sanitized.
 
-A curated database of 41 documented C and Windows API prototypes supplies types
-for known imports. It is external knowledge and is labelled as such; unknown
-import names are not invented.
+A curated helper database of 41 C and Windows API prototypes can instantiate explicitly requested signatures. It is not automatically bound to imported functions or inserted into the native/service hints. `size_t` follows target width; `time_t` remains incomplete without a data model. Unknown names are rejected. Imported graph nodes and reliable library binding remain open work.
 
 ## Stack frames
 
@@ -105,11 +102,11 @@ lines and nesting depth 64. The view reports `experimental-foundations` and
 
 ## Call graph
 
-`callgraph::build` uses direct calls from the verified IR, preserves indirect
+`callgraph::build` uses direct call xrefs from program analysis, preserves indirect
 calls as unresolved counts and computes roots, leaves and strongly connected
 components. Self-loops and cycles are reported explicitly. Focused subgraphs
 (depth 1-16) and bounded path queries are available; the complete graph is
-limited to 8,192 functions and marks truncation.
+limited to 8,192 functions and 20,000 call sites and marks truncation. Every retained direct call site has its own edge; indirect calls and jumps are counted separately. Imported external nodes are not yet represented.
 
 Service/CLI/MCP queries additionally bound focused expansion to 2,000 nodes and
 20,000 edges. JSON pages use explicit node/edge totals so a client can tell a
@@ -117,22 +114,21 @@ complete answer from a truncated one.
 
 ## Persistence and adapters
 
-Project schema v4 adds `function_signatures(address, signature_json,
+Project schema v4 introduced `function_signatures(address, signature_json,
 updated_at)` and `stack_variables(function_address, slot_offset, name,
-type_json, updated_at)`. Existing schema v1-v3 projects migrate forward; newer
-schemas are rejected. Signature and stack overrides survive save/reopen and are
+type_json, updated_at)`. Schema v5 adds `type_library(id, library_json)` for user structures/unions/aliases. Existing schema v1-v4 projects migrate forward; newer schemas are rejected. Older URA builds cannot read a migrated v5 project. Signature and stack overrides survive save/reopen and are
 reloaded into decompilation hints.
 
 Headless access is shared:
 
 - CLI: `signature`, `stack`, `types`, `callgraph`, `highlevel` (text or
-  `--json`).
-- MCP: eight read-only tools and two write tools
-  (`ura_set_function_signature`, `ura_set_variable_type`). Writes require
+  `--json`), plus `type-library`, `set-signature` and `set-variable-type`. The latter editing commands require a project and `--enable-writes`.
+- MCP: eight decompiler read tools and three decompiler write tools
+  (`ura_set_function_signature`, `ura_set_variable_type`, `ura_set_type_library`), 30 tools total. `ura_get_structure` takes a type name and returns actual fields; `ura_get_types` without a function reads the library. Writes require
   `--enable-writes` and an attached, matching project.
 - Native: Function signature, Stack frame, Types, Call graph and Analysis
   inspector panels. Selection follows the function selected in the rest of the
-  workspace; recovered addresses navigate back to disassembly/IR.
+  workspace; recovered addresses navigate back to disassembly/IR. Signature forms, stack name/type forms and structure/alias forms save user-authored data to the attached project.
 
 Service decompilations are cached per handle (four functions, LRU) and
 invalidated by reanalysis or override changes. Golden tests compare the native
@@ -150,3 +146,7 @@ worker, service, CLI JSON and MCP responses with direct core calls.
 - Samples remain read-only; nothing in this layer executes them.
 
 See [VERIFICATION-0.8.md](VERIFICATION-0.8.md) for the exact gates and tests.
+
+## Checklist scope
+
+This is not the entire requested v0.8 architecture. High-level rendering is still text coupled to structuring, without a typed expression AST or true postdominator pass. Inferred signatures are not solved across the whole program to a fixed point. See [AUDIT-0.8.md](AUDIT-0.8.md) for the complete distinction between implemented foundations, repaired defects and remaining work.

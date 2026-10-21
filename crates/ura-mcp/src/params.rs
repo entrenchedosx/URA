@@ -207,6 +207,29 @@ pub struct DecompFunctionParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+pub struct TypesParams {
+    pub handle: String,
+    /// Omit to read the persisted project type library without decompiling a function.
+    pub function: Option<String>,
+}
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct StructureParams {
+    pub handle: String,
+    /// Exact name from the project type library.
+    pub name: String,
+}
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SetTypeLibraryParams {
+    pub handle: String,
+    pub project: String,
+    /// Complete TypeDatabase object (addressBits, structures and typedefs). Replaces the library atomically after validation; use ura_get_types first.
+    pub database: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct CallGraphParams {
     #[schemars(description = "Handle returned by ura_open_binary")]
     pub handle: String,

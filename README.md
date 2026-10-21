@@ -5,7 +5,7 @@
 Ultimate Reverse Engineer
 
 Public prerelease: [`v0.8.0-dev`](https://github.com/entrenchedosx/URA/releases/tag/v0.8.0-dev)
-from `v0.8-decompiler-foundations`. The previous public prerelease is v0.7.0-dev.
+from commit `1194403`. Current `v0.8-decompiler-foundations` source contains later audit repairs that are not in that ZIP. The complete v0.8 checklist remains unfinished; see the [checklist audit](docs/AUDIT-0.8.md).
 High-level output is experimental and variable idle CPU remains an unexplained
 known limitation; see [v0.8 verification](docs/VERIFICATION-0.8.md) and
 [decompiler design](docs/DECOMPILER.md).
@@ -32,7 +32,7 @@ analysis limits; it is not a replacement for the full feature sets of IDA or Ghi
 - Narrow guarded absolute/relative jump-table patterns and tail/thunk candidates.
 - Evidence-based ABI/signature recovery, physical stack frames and conservative types.
 - Bounded interprocedural call graph and experimental C-like high-level rendering.
-- Native CLI with text/JSON output and a local stdio MCP server with 29 tools.
+- Native CLI with text/JSON output and a local stdio MCP server with 30 tools.
 
 High-level output is a structural view of verified SSA, not reconstructed source,
 and is not claimed to compile. There is no debugger, PDB/C++ loader or public
@@ -64,8 +64,7 @@ and exports. Imports without mapped addresses are informational.
 The Function signature, Stack frame, Types, Call graph and Analysis inspector
 panels follow the selected function. They show evidence, confidence, conflicts
 and hard-bound truncation, and addresses navigate back to disassembly.
-Decompiler panels are read-only in the desktop; overrides are edited through the
-MCP write tools and persisted in the project. Recovered high-level text is
+The desktop edits signatures, physical stack-slot names/types and user structures/unions/aliases. Open a project to save edits; double-click a stack name or right-click for references. Schema v5 preserves these overrides separately from inference. CLI and MCP expose matching guarded writes. Recovered high-level text is
 explicitly labelled experimental and is not source code.
 
 Open the optional **IR** panel from Windows or search `IR` in Ctrl+K. It follows
@@ -155,8 +154,12 @@ ura-cli functions sample.exe --project analysis.ura --json
 JSON responses carry `schemaVersion: 1`; addresses are strings. Operation errors
 use a structured error object and exit code 1. Invalid command-line syntax uses
 Clap's usage errors. `--help` documents per-command limits. The CLI reads project
-names/manual starts without migrating the database. Project creation and editing
-are currently exposed through the desktop and MCP tools, not CLI subcommands.
+names, manual starts and type/signature overrides without migrating the database.
+Create projects through the desktop or MCP. CLI signature, stack-variable and
+type-library edits require `--enable-writes` and an existing `--project`; use
+`set-signature --input FILE`, `set-variable-type --function ADDRESS --offset OFFSET`,
+or `type-library --import FILE`. Definition files use the shared structured
+signature/type model and are limited to 1 MiB.
 Analysis commands accept instruction/function/block limits, `--no-follow-calls`
 and `--no-symbol-seeds`. IR pages include `irVersion:1`, binary identity, normalized
 analysis options, source operations and the variable definitions referenced by the
@@ -190,20 +193,19 @@ After analysis, `ura_get_ir`, `ura_get_ssa`, `ura_get_dominators` and
 Decompiler queries are `ura_get_function_signature`,
 `ura_get_calling_convention`, `ura_get_stack_variables`, `ura_get_types`,
 `ura_get_structure`, `ura_get_call_graph`, `ura_get_type_constraints` and
-`ura_get_high_level_ir`. Overrides use `ura_set_function_signature` and
-`ura_set_variable_type`.
+`ura_get_high_level_ir`. Overrides use `ura_set_function_signature`, `ura_set_variable_type` and `ura_set_type_library`. `ura_get_types` without `function` reads the project type library. `ura_get_structure` now takes `handle` and `name` and returns a real structure/union definition; the original high-level alias is superseded by `ura_get_high_level_ir`. CLI equivalents include `type-library --name NAME` and `type-library --import FILE`.
 `ura_get_function` returns at most 500 blocks per call (`maxBlocks`, default 200)
 plus at most 1000 callers/callees, and reports `blocksTruncated`,
 `callersTruncated` and `calleesTruncated` when more exist. Requests reuse a
 verified least-recently-used function cache, invalidated by reanalysis. At most
-eight binary handles and eight IR bundles per handle are retained.
+eight binary handles and two IR bundles per handle are retained.
 
 `ura_save_project`, `ura_rename_function`, `ura_add_comment`,
-`ura_export_analysis`, `ura_set_function_signature` and `ura_set_variable_type`
-require the explicit `--enable-writes` process option. Signature/stack overrides
-also require an attached project.
+`ura_export_analysis`, `ura_set_function_signature`, `ura_set_variable_type` and `ura_set_type_library`
+require the explicit `--enable-writes` process option. Signature, stack and type-library
+overrides also require that the target project is attached to the binary.
 No network listener is started. Stdout contains MCP JSON only; logs go to stderr.
-Read-only project attachments support schema v1-v4 without migration or following
+Read-only project attachments support schema v1-v5 without migration or following
 the database's recorded binary path. The opened binary's SHA-256 must match.
 Allowed roots constrain resolved paths, but are not an operating-system sandbox
 against a concurrent local attacker changing files or links.
