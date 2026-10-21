@@ -15,7 +15,11 @@ pub mod types;
 
 pub use abi::{SignatureHints, SignatureRecovery};
 pub use callgraph::{CallGraph, CallGraphEdge, CallGraphNode};
-pub use hir::{HighLevelFunction, HighLevelLine};
+pub use hir::{
+    HirArgument, HirBinaryOp, HirCastKind, HirExpr, HirFunction, HirIncoming, HirInvocation,
+    HirReturnShape, HirStatement, HirValueDisplay, HighLevelFunction, HighLevelLine, IfExitTarget,
+    UnsupportedCase,
+};
 pub use postdom::{PostDominators, SINK};
 pub use signature::{
     CallingConvention, FunctionSignature, Location, Parameter, ReturnValue, SignatureOverride,
@@ -60,6 +64,10 @@ pub struct FunctionDecompilation {
     pub frame: StackFrame,
     pub types: TypeInference,
     pub high_level: HighLevelFunction,
+    /// Typed high-level IR tree; the source of `high_level` lines. Never
+    /// serialised through string rendering. Old project files omit it.
+    #[serde(default)]
+    pub ast: Option<hir::HirFunction>,
     pub diagnostics: Vec<String>,
 }
 
@@ -109,7 +117,7 @@ pub fn analyze_function(
     stack::apply_overrides(&mut frame, &context.stack_overrides);
     let mut inferred = types::infer_types(&bundle);
     abi::merge_value_constraints(&mut inferred, &recovery.value_constraints);
-    let high_level = hir::build(
+    let (high_level, ast) = hir::build_with_ast(
         &bundle.ssa,
         &bundle.dataflow,
         &signature,
@@ -146,6 +154,7 @@ pub fn analyze_function(
         frame,
         types: inferred,
         high_level,
+        ast: Some(ast),
         diagnostics,
     })
 }
