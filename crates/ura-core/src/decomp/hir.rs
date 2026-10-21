@@ -7,6 +7,7 @@
 //! rendered lines are a deterministic printer over it, and the legacy text
 //! contract is locked by snapshot tests.
 use super::abi::SignatureHints;
+use super::postdom::{PostDominators, build as build_post_dominators};
 use super::signature::{FunctionSignature, Location};
 use super::stack::StackFrame;
 use crate::ir::dataflow::Dataflow;
@@ -277,6 +278,7 @@ struct Structurer<'a> {
     blocks: BTreeMap<u64, &'a SsaBlock>,
     predecessors: BTreeMap<u64, Vec<u64>>,
     latches: BTreeMap<u64, Vec<u64>>,
+    postdominators: Option<PostDominators>,
     constants: BTreeMap<Value, Constant>,
     dead: BTreeSet<Value>,
     hints: &'a SignatureHints,
@@ -336,6 +338,7 @@ pub fn build_with_ast(
         blocks,
         predecessors,
         latches,
+        postdominators: build_post_dominators(ssa).ok(),
         constants: dataflow.constants.iter().copied().collect(),
         dead: dataflow.dead_definitions.iter().copied().collect(),
         hints,
@@ -1183,6 +1186,14 @@ impl<'a> Structurer<'a> {
     fn join_point(&self, a: u64, b: u64) -> Option<u64> {
         if a == b {
             return Some(a);
+        }
+        // The post-dominator analysis reports the nearest block every path
+        // from both targets must reach; when it is unavailable or the traces
+        // only share the synthetic sink, fall back to the bounded search.
+        if let Some(analysis) = &self.postdominators {
+            if let Some(common) = analysis.first_common(a, b) {
+                return Some(common);
+            }
         }
         let mut from_a = BTreeMap::from([(a, 0usize)]);
         let mut queue = VecDeque::from([a]);
