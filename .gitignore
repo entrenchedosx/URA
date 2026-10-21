@@ -3,6 +3,10 @@
 /src-tauri/target/
 **/*.rs.bk
 
+# Python measurement helpers
+__pycache__/
+*.pyc
+
 # Node / Vite build artifacts
 /node_modules/
 /dist/

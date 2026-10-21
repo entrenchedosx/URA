@@ -1,6 +1,8 @@
-param([ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '0.6.0')
+param([ValidatePattern('^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$')][string]$Version = '0.7.0-dev')
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path "$PSScriptRoot/..").Path
+$nativeVersion = (Get-Item -LiteralPath "$root/target/release/ura-native.exe").VersionInfo.FileVersion
+if ($nativeVersion -ne $Version) { throw "Requested package version $Version differs from native build $nativeVersion" }
 $package = Join-Path $root "target/URA-$Version-windows-x64"
 if ((Test-Path -LiteralPath $package) -and @(Get-ChildItem -LiteralPath $package -Force).Count -gt 0) { throw "Package directory already exists and is nonempty: $package" }
 cargo metadata --format-version 1 --filter-platform x86_64-pc-windows-msvc | Set-Content -Encoding utf8 "$root/target/release-metadata.json"

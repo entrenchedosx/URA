@@ -1,5 +1,9 @@
 # Analysis architecture research
 
+This file records the v0.6 research state. The working IR, SSA and guarded switch
+implementation is now described in [IR-DESIGN.md](IR-DESIGN.md); that document
+supersedes the proposed/absent statuses below for the v0.7 development branch.
+
 Inspected official Ghidra source on 2026-10-20, pinned to
 [`b8e9917e4c01959fe97ba94954731ed8cf2d201c`](https://github.com/NationalSecurityAgency/ghidra/tree/b8e9917e4c01959fe97ba94954731ed8cf2d201c).
 This is an architectural study, not an embedded Ghidra implementation. No Ghidra

@@ -4,6 +4,10 @@
 
 Ultimate Reverse Engineer
 
+Development checkpoint: `0.7.0-dev` on `v0.7-advanced-analysis`. The latest public
+release remains v0.6.0. Variable idle CPU is still a release blocker; see
+[v0.7 verification](docs/VERIFICATION-0.7.md) and [IR design](docs/IR-DESIGN.md).
+
 ## Overview
 
 URA is a native Rust static-analysis workbench for executable files. The desktop,
@@ -21,10 +25,13 @@ analysis limits; it is not a replacement for the full feature sets of IDA or Ghi
 - ASCII/UTF-16LE strings and bounded hex reads.
 - SQLite projects with annotations, name overrides, manual function starts,
   navigation history and saved workspace state.
-- Native CLI with text/JSON output and a local stdio MCP server with 15 tools.
+- Typed raw/SSA IR for a tested scalar x86/x64 subset, with explicit unknown effects.
+- Dominators/frontiers, phi nodes, def-use counts, conservative constants and dead definitions.
+- Narrow guarded absolute/relative jump-table patterns and tail/thunk candidates.
+- Native CLI with text/JSON output and a local stdio MCP server with 19 tools.
 
-There is no decompiler, debugger, semantic IR, type recovery, jump-table recovery,
-PDB loader or public plugin API. Indirect transfers remain unresolved. Discovery
+There is no decompiler, debugger, type recovery, PDB loader or public plugin API.
+Indirect transfers remain open, including transfers with heuristic recovered edges. Discovery
 is conservative and can miss code, reject ambiguous seeds or stop at limits.
 
 ## Supported architectures and executable formats
@@ -46,6 +53,11 @@ Compact native menus and docking provide Functions, Project structure,
 Disassembly, Graph, Hex View, Strings, Xrefs, Overview, Inspector, Output and
 Graph overview panels. Project structure includes sections, symbols, imports and
 exports. Imports without mapped addresses are informational.
+
+Open the optional **IR** panel from Windows or search `IR` in Ctrl+K. It follows
+the selected function, offers Raw IR / SSA IR, and links operation addresses back
+to source instructions. It stays hidden in the default layout. Exact coverage,
+memory/call assumptions and function budgets are in [IR-DESIGN.md](docs/IR-DESIGN.md).
 
 Classic light and professional dark themes share one rendering implementation.
 Preferences control interface/code/graph fonts, row height, bytes and panel
@@ -71,6 +83,10 @@ Generated icons are committed. Regeneration requires Python and Pillow:
 ```powershell
 python scripts/generate_icons.py
 ```
+
+Create a local development archive after the Release build with
+`./scripts/package-windows.ps1 -Version 0.7.0-dev`. It checks the native version
+resource and includes dependency license texts. This does not publish a release.
 
 ## Usage
 
@@ -99,13 +115,17 @@ accepts `@200` file offsets, relative deltas and expressions such as `.text+10`.
 The CLI does not start a GUI. Paths must resolve inside `--allow` roots; the
 default root is the current directory. Use repeatable `--allow DIR` for samples
 elsewhere. Commands are `info`, `analyze`, `functions`, `disasm`, `strings`,
-`xrefs`, `cfg` and `hex`.
+`xrefs`, `cfg`, `ir`, `dominators`, `diagnostics` and `hex`.
 
 ```powershell
 ura-cli info sample.exe --json
 ura-cli functions sample.exe --limit 50 --sort name --json
 ura-cli disasm sample.exe --address 140001000 --count 20 --json
 ura-cli cfg sample.exe --function 140001020 --json
+ura-cli ir sample.exe --function 140001020 --limit 50 --json
+ura-cli ir sample.exe --function 140001020 --ssa --offset 50 --limit 50 --json
+ura-cli dominators sample.exe --function 140001020 --json
+ura-cli diagnostics sample.exe --function 140001020 --json
 ura-cli hex sample.exe --offset 200 --length 32 --json
 ura-cli functions sample.exe --project analysis.ura --json
 ```
@@ -115,6 +135,10 @@ use a structured error object and exit code 1. Invalid command-line syntax uses
 Clap's usage errors. `--help` documents per-command limits. The CLI reads project
 names/manual starts without migrating the database. Project creation and editing
 are currently exposed through the desktop and MCP tools, not CLI subcommands.
+Analysis commands accept instruction/function/block limits, `--no-follow-calls`
+and `--no-symbol-seeds`. IR pages include `irVersion:1`, binary identity, normalized
+analysis options, source operations and the variable definitions referenced by the
+page. Requests exceeding a function's IR budget return an explicit error.
 
 ## MCP integration
 
@@ -136,6 +160,12 @@ Call `ura_open_binary`, retain the returned handle, call `ura_analyze`, then que
 `ura_get_disassembly`, `ura_get_cfg`, `ura_get_xrefs`, `ura_search_strings` or
 `ura_read_bytes`. Close handles with `ura_close_binary`.
 
+After analysis, `ura_get_ir`, `ura_get_ssa`, `ura_get_dominators` and
+`ura_get_analysis_diagnostics` take `handle`, `function`, optional `offset` and
+`limit`. IR/diagnostic pages allow 1–500 rows; dominator pages allow 1–200.
+Requests reuse a verified function cache, invalidated by reanalysis. At most
+eight binary handles and two IR bundles per handle are retained.
+
 `ura_save_project`, `ura_rename_function`, `ura_add_comment` and
 `ura_export_analysis` require the explicit `--enable-writes` process option.
 No network listener is started. Stdout contains MCP JSON only; logs go to stderr.
@@ -148,6 +178,10 @@ against a concurrent local attacker changing files or links.
 
 Actual captures of URA's native renderer, using the deterministic regression
 fixture (not simulated analysis):
+
+The development IR view below was captured at Windows OS 150% scale:
+
+![Native SSA IR at Windows 150% scale](docs/screenshots/ir-ssa-os150.png)
 
 ![Classic graph workspace](docs/screenshots/classic-graph.png)
 
@@ -189,16 +223,17 @@ cargo build --workspace --release
 Tests cover deterministic PE/ELF decoding, malformed input, CFG/reference
 behavior, database migrations and annotation persistence, service restrictions,
 CLI processes, actual MCP handshakes/tool calls, and native-panel tessellation.
-Renderer checks are opt-in; see [verification](docs/VERIFICATION-0.6.md).
+Renderer checks are opt-in; see [development verification](docs/VERIFICATION-0.7.md)
+and the [v0.6 historical measurements](docs/VERIFICATION-0.6.md).
 
 ## Roadmap
 
-Priorities are CFG validation under limits, bounded data-memory access,
-relocation/import references and improved function recovery. Architecture-neutral
-semantics must precede SSA, type inference and decompilation. See the
+Priorities are closing the idle-CPU blocker, expanding semantic/ABI validation,
+relocation/import references and broader compiler-pattern recovery. Type inference
+and structured control flow must precede decompilation. See the
 [Ghidra source study and feature matrix](docs/GHIDRA-RESEARCH.md) for dependencies,
-complexity and verification strategies. OS-level high-DPI, cross-platform input,
-packaging and broader executable-format coverage remain follow-ups.
+complexity and verification strategies. Multi-monitor DPI, cross-platform input
+and broader executable-format coverage remain follow-ups.
 
 ## Contributing
 

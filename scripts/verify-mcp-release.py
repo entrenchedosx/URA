@@ -1,0 +1,51 @@
+"""Exercise the built Release MCP transport and prepare a disposable project.
+Samples are parsed statically. Only target/v07-profile/fixture.ura is written.
+"""
+import json
+from pathlib import Path
+import queue
+import subprocess
+import threading
+import time
+
+root = Path.cwd().resolve()
+child = subprocess.Popen(['target/release/ura-mcp.exe','--allow',str(root),'--enable-writes','--log','off'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,text=True)
+replies = queue.Queue()
+def reader():
+    for line in child.stdout:
+        replies.put(json.loads(line))
+threading.Thread(target=reader,daemon=True).start()
+number = 0
+def request(method,params):
+    global number
+    number += 1
+    child.stdin.write(json.dumps({'jsonrpc':'2.0','id':number,'method':method,'params':params})+'\n');child.stdin.flush()
+    while True:
+        data = replies.get(timeout=15)
+        if data.get('id') == number:
+            assert 'error' not in data,data
+            return data['result']
+def tool(name,args):
+    data = request('tools/call',{'name':name,'arguments':args})
+    assert not data.get('isError'),data
+    return data['structuredContent']
+try:
+    request('initialize',{'protocolVersion':'2025-03-26','capabilities':{},'clientInfo':{'name':'ura-release-check','version':'1'}})
+    child.stdin.write(json.dumps({'jsonrpc':'2.0','method':'notifications/initialized'})+'\n');child.stdin.flush()
+    assert len(request('tools/list',{})['tools']) == 19
+    opened = tool('ura_open_binary',{'binary':str(root/'tests/fixtures/ura64.exe')})
+    handle = opened['handle'];tool('ura_analyze',{'handle':handle})
+    timings = {}
+    for name in ['ura_get_ir','ura_get_ssa','ura_get_dominators','ura_get_analysis_diagnostics']:
+        start = time.perf_counter()
+        data = tool(name,{'handle':handle,'function':'140001020','limit':50})
+        timings[name] = (time.perf_counter()-start)*1000
+        assert data['irVersion'] == 1
+    project = root/'target/v07-profile/fixture.ura'
+    if not project.exists():
+        tool('ura_save_project',{'handle':handle,'project':str(project)})
+    result = {'tools':19,'irSchema':1,'fixtureQueryMs':timings,'projectPrepared':project.name}
+    (project.parent/'mcp-release.json').write_text(json.dumps(result,indent=2),encoding='utf-8')
+    print(json.dumps(result,indent=2))
+finally:
+    child.terminate();child.wait(timeout=10)

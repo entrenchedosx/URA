@@ -1,6 +1,6 @@
 # Architecture
 
-## Native desktop (v0.6)
+## Native desktop (v0.7 development)
 
 `crates/ura-native` is the default workspace member. Its eframe entry point
 renders egui directly through OpenGL and winit; no browser engine or IPC is
@@ -14,6 +14,8 @@ snapshot API supports headless attachment without migration or binary-path IO.
 - `worker.rs`: serial background jobs, progress/cancellation and panic recovery.
   Immutable binaries and analysis results are shared with `Arc`. IO, parsing,
   decoding, analysis, string scanning and graph layout stay off the paint path.
+  IR lifting, SSA/dataflow and IR row formatting also run here. Revision-tagged
+  replies cannot replace newer analysis. Raw/SSA views reuse one verified bundle.
 - `navigation.rs`: u64 address/offset mapping and bounded history.
 - `graph.rs`: deterministic, cycle-safe layered graph geometry with height-aware
   spacing; at most 240 blocks and 32 displayed instructions per block.
@@ -29,23 +31,44 @@ continuous repaint loop in normal use; background replies request repaints.
 
 Native project view state extends the existing v1 JSON document with a `native`
 member containing dock geometry, history, selection and the retained CFG
-function. Compatible top-level fields remain readable by v0.4. Global preferences
+function, plus an optional defaulted IR representation preference. The IR panel
+is absent from the default dock. Compatible top-level fields remain readable by v0.4. Global preferences
 and window geometry use eframe storage. Saving queues database writes and the
 worker drains them on shutdown. Samples remain read-only.
 
-## Headless adapters (v0.6)
+## Headless adapters
 
 `ura-service` owns sessions, normalized analysis options, schema-versioned DTOs,
 path restrictions and explicit write permissions. It invokes the same core
 analysis and project functions used by the desktop. `ura-cli` is a synchronous
-text/JSON adapter; `ura-mcp` routes 15 stdio tools to the service. Neither starts
+text/JSON adapter; `ura-mcp` routes 19 stdio tools to the service. Neither starts
 the desktop. MCP uses rmcp and stderr logging; there is no network listener.
 Query pages and byte reads have explicit limits. Address-based byte reads must
 fit one file-backed section. Read-only project snapshots support v1-v3 and
 compare the supplied binary's hash, without reading a recorded external path.
 Service calls are serialized per process; cancellation/progress notifications and
-persisted analysis caches are not implemented in MCP. Strings are rescanned per
+persisted analysis caches are not implemented in MCP. Verified IR bundles are
+cached in memory, at most two per handle and eight handles. Normalized options
+and binary identity accompany IR pages; reanalysis invalidates the cache. SQLite
+remains schema v3 and no IR migration is needed. Strings are rescanned per
 query; future caching should be keyed by binary identity and scan options.
+
+## Semantic analysis
+
+`ura-core/src/ir` implements typed bit-vector operations, explicit register
+regions/flags/memory, decoded-byte lifting, verification, dominators/frontiers,
+scalar SSA, propagation and side-effect-aware dead-definition reports. `inspect`
+is the shared orchestration and row projection boundary. Each pass is bounded;
+core and native calls support cancellation. There is one lifter for all adapters.
+See [IR-DESIGN.md](IR-DESIGN.md) for exact semantics and limits.
+
+`jumptable.rs` recognizes two narrow guarded switch patterns using a separate
+read-only file-backed data image. Targets are validated before CFG recovery.
+Recovered edges remain heuristic and indirect transfers remain unresolved.
+Tail calls and single-jump thunks are candidates relative to known function
+entries. The native graph caches these summaries on the worker and displays
+uncertainty. Block-limit stops preserve function ownership and remove dangling
+edges. Function lookup requires a retained block rather than an extent alone.
 
 ## Preserved v0.4 frontend architecture
 
@@ -84,6 +107,8 @@ Pure analysis library with no Tauri or UI dependencies.
 | `analysis.rs` | Recursive-descent function discovery, basic-block partitioning, call/jump/data xrefs, bounded CFG projection, cancellation, diagnostics |
 | `hex.rs` | Bounded file-offset reads with section/address annotation |
 | `strings.rs` | ASCII and UTF-16LE scanning with length/encoding/max-result controls |
+| `ir/` | Typed raw/SSA IR, verified lifting and conservative dataflow reports |
+| `jumptable.rs` | Guarded absolute/relative switch candidates, bounded table validation |
 | `error.rs` | `UraError` variants used by every fallible operation |
 
 `LoadedBinary` keeps the parsed image and derived tables in memory. The file bytes are opened

@@ -1,5 +1,28 @@
 # Roadmap
 
+## v0.7 — development checkpoint, release blocked
+
+- [x] Typed bit-vector IR and scalar x86/x64 lifting with explicit unknown effects.
+- [x] Register aliasing, arithmetic flags, stack/address and conservative memory/call semantics.
+- [x] Verifiers, dominators/frontiers, scalar SSA, def-use, constants and dead definitions.
+- [x] Guarded absolute/relative jump tables; optimized PE/ELF and adversarial fixtures.
+- [x] Tail/thunk candidates, honest indirect-flow metadata and CFG budget consistency.
+- [x] Optional native IR panel; matching CLI and four new MCP queries.
+- [x] Bounded revision-aware memory caches; existing SQLite projects preserved.
+- [x] Actual Windows OS 150% scale check and Release measurements.
+- [ ] Explain/fix variable process CPU outside UI painting; stack profiling unavailable on this host.
+- [ ] Capture OS/thread wakeup counts and GPU/presentation timing.
+- [ ] Complete broader cross-compiler/relocation-aware jump-table and ABI coverage.
+- [ ] Publish v0.7 prerelease only after blockers close.
+
+See [verification](VERIFICATION-0.7.md) and [IR design](IR-DESIGN.md). Historical
+milestones below describe earlier releases; unchecked legacy items can be
+superseded by the development work above.
+
+Proposed next stages are broader semantic/dataflow validation, then types and ABI
+inference, structured control flow, and only afterward tested C-like output.
+Decompiler milestones are conditional on correctness rather than fixed dates.
+
 ## v0.1 — shipped
 
 The first release is a complete read-only inspection loop, verified end-to-end against the
