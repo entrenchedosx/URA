@@ -49,6 +49,13 @@ impl Workspace {
             ui.label("Preparing graph…");
             return;
         };
+        let facts = &graph.flow;
+        if !facts.unresolved_indirect.is_empty()
+            || !facts.tail_calls.is_empty()
+            || facts.thunk_candidate
+        {
+            ui.colored_label(self.colors().gold,format!("{} unresolved indirect transfers · {} guarded table candidates · {} tail-call candidates{}",facts.unresolved_indirect.len(),graph.table_candidates,facts.tail_calls.len(),if facts.thunk_candidate {" · thunk candidate"} else {""}));
+        }
         if graph.total_blocks > graph.nodes.len() || graph.nodes.iter().any(|n| n.omitted > 0) {
             ui.colored_label(
                 self.colors().gold,

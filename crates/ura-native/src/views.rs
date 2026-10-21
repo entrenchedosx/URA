@@ -31,6 +31,7 @@ impl egui_dock::TabViewer for Workspace {
             Panel::Inspector => self.inspector(ui),
             Panel::Messages => self.messages_view(ui),
             Panel::GraphOverview => self.graph_overview(ui),
+            Panel::Ir => self.ir_view(ui),
         }
     }
     fn scroll_bars(&self, _tab: &Panel) -> [bool; 2] {
@@ -58,6 +59,103 @@ impl egui_dock::TabViewer for Workspace {
 }
 
 impl Workspace {
+    fn ir_view(&mut self, ui: &mut egui::Ui) {
+        let Some(function) = self.function().map(|f| (f.address, self.name(f))) else {
+            ui.label("Select an analyzed function to inspect IR.");
+            return;
+        };
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(function.1).strong());
+            ui.selectable_value(&mut self.ir_ssa, false, "Raw IR");
+            ui.selectable_value(&mut self.ir_ssa, true, "SSA IR");
+        });
+        self.ensure_ir();
+        if let Some(error) = &self.ir_error {
+            ui.colored_label(self.colors().error, error);
+            if ui.button("Retry IR analysis").clicked() {
+                self.ir_key = None;
+                self.ir_error = None;
+                self.cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            }
+            return;
+        }
+        if self.ir_key != Some((self.analysis_revision, function.0, self.ir_ssa)) {
+            ui.label("Lifting and verifying function…");
+            return;
+        }
+        if let Some(bundle) = &self.ir_bundle {
+            ui.label(format!(
+                "{} blocks · {} source instructions · {} unsupported instructions · IR schema {}",
+                bundle.raw.blocks.len(),
+                bundle.raw.source_instructions,
+                bundle.raw.diagnostics.len(),
+                bundle.raw.ir_version
+            ));
+        }
+        ui.separator();
+        let colors = self.colors();
+        let mut navigate = None;
+        egui::ScrollArea::both()
+            .id_salt(("ir-rows", function.0, self.ir_ssa))
+            .show_rows(
+                ui,
+                self.settings.row_height,
+                self.ir_rows.len(),
+                |ui, range| {
+                    for i in range {
+                        let row = &self.ir_rows[i];
+                        ui.horizontal(|ui| {
+                            if ui
+                                .selectable_label(
+                                    self.location.address == Some(row.source),
+                                    RichText::new(format_address(row.source))
+                                        .monospace()
+                                        .color(colors.accent),
+                                )
+                                .on_hover_text("Navigate to source instruction")
+                                .clicked()
+                            {
+                                navigate = Some(row.source);
+                            }
+                            let color = if row.unsupported {
+                                colors.error
+                            } else if row.block {
+                                colors.branch
+                            } else {
+                                colors.text
+                            };
+                            let mut job = egui::text::LayoutJob::default();
+                            for word in row.text.split_inclusive(|c: char| {
+                                c.is_whitespace() || c == ',' || c == '(' || c == ')'
+                            }) {
+                                let token_color =
+                                    if word.contains(':') && !row.block && !row.unsupported {
+                                        colors.register
+                                    } else if word.starts_with("0x") {
+                                        colors.gold
+                                    } else {
+                                        color
+                                    };
+                                job.append(
+                                    word,
+                                    0.0,
+                                    egui::TextFormat {
+                                        font_id: FontId::monospace(self.settings.font_size),
+                                        color: token_color,
+                                        ..Default::default()
+                                    },
+                                );
+                            }
+                            job.wrap.max_width = f32::INFINITY;
+                            ui.add(egui::Label::new(job).wrap_mode(egui::TextWrapMode::Extend));
+                        });
+                    }
+                },
+            );
+        if let Some(address) = navigate {
+            self.navigate_address(address);
+        }
+    }
     pub fn status(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             if self.opening {
@@ -78,6 +176,8 @@ impl Workspace {
                 } else {
                     ui.label("Preparing analysis…");
                 }
+            } else if self.ir_loading.is_some() {
+                ui.label("Analyzing IR…");
             } else {
                 ui.colored_label(self.colors().accent, "●");
                 ui.label("Ready");
@@ -1605,7 +1705,10 @@ impl Workspace {
                         ui.image((self.icon.id(), egui::vec2(96.0, 96.0)));
                         ui.vertical(|ui| {
                             ui.heading("URA");
-                            ui.label("Ultimate Reverse Engineer · 0.6");
+                            ui.label(format!(
+                                "Ultimate Reverse Engineer · {}",
+                                env!("CARGO_PKG_VERSION")
+                            ));
                             ui.label("Native Rust static analysis · MIT license");
                             ui.hyperlink_to(
                                 "Source and documentation",

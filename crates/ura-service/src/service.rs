@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use ura_core::binary::{ExportView, ImportView};
 use ura_core::{
@@ -24,19 +25,21 @@ pub struct Service {
     policy: PathPolicy,
     writes_enabled: bool,
     next_handle: u64,
-    sessions: BTreeMap<String, Session>,
+    pub(crate) sessions: BTreeMap<String, Session>,
 }
 
-struct Session {
-    binary: LoadedBinary,
-    info: BinaryView,
+pub(crate) struct Session {
+    pub(crate) binary: LoadedBinary,
+    pub(crate) info: BinaryView,
     sections: Vec<SectionView>,
     imports: Vec<ImportView>,
     exports: Vec<ExportView>,
     project: Option<PathBuf>,
     names: BTreeMap<u64, String>,
     manual: Vec<u64>,
-    analysis: Option<ProgramAnalysis>,
+    pub(crate) analysis: Option<ProgramAnalysis>,
+    pub(crate) analysis_options: Option<AnalysisOptions>,
+    pub(crate) ir_cache: BTreeMap<u64, Arc<ura_core::ir::inspect::Bundle>>,
 }
 
 impl Service {
@@ -54,6 +57,11 @@ impl Service {
         path: &Path,
         project: Option<&Path>,
     ) -> ServiceResult<OpenBinaryResponse> {
+        if self.sessions.len() >= 8 {
+            return Err(ServiceError::LimitExceeded(
+                "at most eight binary handles may be open; close a handle first".into(),
+            ));
+        }
         let resolved = self.policy.allow_read(path)?;
         let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
         let binary = analyze_path(&resolved)?;
@@ -104,6 +112,8 @@ impl Service {
                 names,
                 manual,
                 analysis: None,
+                analysis_options: None,
+                ir_cache: BTreeMap::new(),
             },
         );
 
@@ -162,6 +172,8 @@ impl Service {
         let analysis = analyze_binary_with_seeds(&session.binary, &normalized, &seeds, &());
         let report = analysis.report.clone();
         session.analysis = Some(analysis);
+        session.analysis_options = Some(normalized.clone());
+        session.ir_cache.clear();
         Ok(AnalyzeResponse {
             schema_version: RESPONSE_SCHEMA_VERSION,
             handle: handle.to_string(),
@@ -330,6 +342,40 @@ impl Service {
                         kind: edge.kind.name().to_string(),
                     })
                     .collect(),
+                indirect_unresolved: block
+                    .instructions
+                    .last()
+                    .and_then(|a| analysis.instructions.get(a))
+                    .is_some_and(|i| i.flow == ura_core::InstructionFlow::IndirectJump),
+                tail_call_candidate: block
+                    .instructions
+                    .last()
+                    .and_then(|a| analysis.instructions.get(a))
+                    .filter(|i| i.flow == ura_core::InstructionFlow::Jump)
+                    .and_then(|i| i.target)
+                    .filter(|target| {
+                        *target != selected.address && analysis.function_by_start(*target).is_some()
+                    })
+                    .map(format_address),
+                jump_table: block
+                    .instructions
+                    .last()
+                    .and_then(|a| analysis.jump_tables.get(a))
+                    .map(|t| crate::dto::JumpTableView {
+                        source: format_address(t.source),
+                        guard: format_address(t.guard),
+                        table: format_address(t.table),
+                        entry_bytes: t.entry_width,
+                        encoding: if t.relative {
+                            "signedRelative32"
+                        } else {
+                            "absolutePointer"
+                        }
+                        .into(),
+                        confidence: "guardedPatternHeuristic".into(),
+                        exhaustive: false,
+                        targets: t.targets.iter().map(|a| format_address(*a)).collect(),
+                    }),
             })
             .collect();
 
@@ -338,7 +384,9 @@ impl Service {
             handle: handle.to_string(),
             function: function_summary(session, selected),
             max_blocks,
-            truncated: selected.blocks.len() > max_blocks,
+            truncated: selected.blocks.len() > max_blocks
+                || analysis.report.truncated
+                || analysis.report.cancelled,
             blocks,
         })
     }
@@ -704,6 +752,7 @@ fn display_name(session: &Session, function: &Function) -> String {
 }
 
 fn function_summary(session: &Session, function: &Function) -> FunctionSummary {
+    let flow = session.analysis.as_ref().map(|a| a.flow_facts(function));
     FunctionSummary {
         address: format_address(function.address),
         end: format_address(function.end),
@@ -717,6 +766,9 @@ fn function_summary(session: &Session, function: &Function) -> FunctionSummary {
         reference_count: function.reference_count,
         caller_count: function.callers.len(),
         callee_count: function.callees.len(),
+        tail_call_candidates: flow.as_ref().map_or(0, |f| f.tail_calls.len()),
+        thunk_candidate: flow.as_ref().is_some_and(|f| f.thunk_candidate),
+        thunk_target: flow.and_then(|f| f.thunk_target).map(format_address),
     }
 }
 

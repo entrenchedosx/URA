@@ -22,6 +22,8 @@ pub struct GraphLayout {
     pub nodes: Vec<GraphNode>,
     pub edges: Vec<GraphEdge>,
     pub total_blocks: usize,
+    pub flow: ura_core::analysis::FunctionFlowFacts,
+    pub table_candidates: usize,
 }
 
 // Deterministic breadth layers. Cycles are drawn as back edges, never fed back
@@ -127,6 +129,17 @@ pub fn layout(analysis: &ProgramAnalysis, address: u64) -> Result<GraphLayout, S
         }
     }
     Ok(GraphLayout {
+        flow: analysis.flow_facts(f),
+        table_candidates: f
+            .blocks
+            .iter()
+            .filter_map(|b| analysis.blocks.get(b))
+            .filter(|b| {
+                b.instructions
+                    .last()
+                    .is_some_and(|i| analysis.jump_tables.contains_key(i))
+            })
+            .count(),
         function: f.address,
         nodes,
         edges,

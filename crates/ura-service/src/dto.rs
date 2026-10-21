@@ -113,6 +113,7 @@ pub struct AnalysisOptionsView {
     pub max_functions: usize,
     pub max_blocks: usize,
     pub follow_calls: bool,
+    pub seed_symbols: bool,
 }
 
 impl From<&AnalysisOptions> for AnalysisOptionsView {
@@ -122,6 +123,7 @@ impl From<&AnalysisOptions> for AnalysisOptionsView {
             max_functions: options.max_functions,
             max_blocks: options.max_blocks,
             follow_calls: options.follow_calls,
+            seed_symbols: options.seed_symbols,
         }
     }
 }
@@ -150,6 +152,9 @@ pub struct FunctionSummary {
     pub reference_count: usize,
     pub caller_count: usize,
     pub callee_count: usize,
+    pub tail_call_candidates: usize,
+    pub thunk_candidate: bool,
+    pub thunk_target: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -207,6 +212,22 @@ pub struct CfgBlock {
     pub end: String,
     pub instructions: Vec<String>,
     pub successors: Vec<EdgeView>,
+    pub indirect_unresolved: bool,
+    pub tail_call_candidate: Option<String>,
+    pub jump_table: Option<JumpTableView>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JumpTableView {
+    pub source: String,
+    pub guard: String,
+    pub table: String,
+    pub entry_bytes: u8,
+    pub encoding: String,
+    pub confidence: String,
+    pub exhaustive: bool,
+    pub targets: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

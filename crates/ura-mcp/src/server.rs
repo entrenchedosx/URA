@@ -49,6 +49,68 @@ impl UraServer {
 #[tool_router]
 impl UraServer {
     #[tool(
+        name = "ura_get_ir",
+        description = "Get a bounded page of verified raw bit-vector IR, with typed operations and source instruction addresses. Requires ura_analyze. Unsupported semantics are explicit barriers."
+    )]
+    fn ura_get_ir(
+        &self,
+        Parameters(p): Parameters<crate::params::IrParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        respond(self.service().ir(
+            &p.handle,
+            &p.function,
+            false,
+            p.offset.unwrap_or(0),
+            p.limit.unwrap_or(100),
+        ))
+    }
+    #[tool(
+        name = "ura_get_ssa",
+        description = "Get a bounded page of scalar SSA IR and predecessor-indexed phi nodes. Uses the same cached lifter as raw IR; memory remains an opaque conservative token."
+    )]
+    fn ura_get_ssa(
+        &self,
+        Parameters(p): Parameters<crate::params::IrParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        respond(self.service().ir(
+            &p.handle,
+            &p.function,
+            true,
+            p.offset.unwrap_or(0),
+            p.limit.unwrap_or(100),
+        ))
+    }
+    #[tool(
+        name = "ura_get_dominators",
+        description = "Get immediate dominators, dominator tree children and dominance frontiers for a function. Entry-reachable CFG only; unreachable blocks are listed explicitly."
+    )]
+    fn ura_get_dominators(
+        &self,
+        Parameters(p): Parameters<crate::params::IrParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        respond(self.service().dominators(
+            &p.handle,
+            &p.function,
+            p.offset.unwrap_or(0),
+            p.limit.unwrap_or(100),
+        ))
+    }
+    #[tool(
+        name = "ura_get_analysis_diagnostics",
+        description = "Get paginated unsupported-semantic diagnostics and conservative constant/dead-definition summaries for a function. No instructions or branches are rewritten."
+    )]
+    fn ura_get_analysis_diagnostics(
+        &self,
+        Parameters(p): Parameters<crate::params::IrParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        respond(self.service().analysis_diagnostics(
+            &p.handle,
+            &p.function,
+            p.offset.unwrap_or(0),
+            p.limit.unwrap_or(100),
+        ))
+    }
+    #[tool(
         name = "ura_open_binary",
         description = "Open a PE, ELF or Mach-O file for inspection. Returns a handle, binary metadata, sections, imports and exports. Optionally attaches an existing .ura project and applies its function names and manual function seeds."
     )]
@@ -76,7 +138,7 @@ impl UraServer {
             max_functions: params.max_functions.unwrap_or(defaults.max_functions),
             max_blocks: params.max_blocks.unwrap_or(defaults.max_blocks),
             follow_calls: params.follow_calls.unwrap_or(defaults.follow_calls),
-            seed_symbols: true,
+            seed_symbols: params.seed_symbols.unwrap_or(defaults.seed_symbols),
         };
         respond(self.service().analyze(&params.handle, &options))
     }

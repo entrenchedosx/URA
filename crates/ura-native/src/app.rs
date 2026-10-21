@@ -35,9 +35,10 @@ pub enum Panel {
     Inspector,
     Messages,
     GraphOverview,
+    Ir,
 }
 impl Panel {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::Explorer,
         Self::Disassembly,
         Self::Functions,
@@ -49,6 +50,7 @@ impl Panel {
         Self::Inspector,
         Self::Messages,
         Self::GraphOverview,
+        Self::Ir,
     ];
     pub fn title(self) -> &'static str {
         match self {
@@ -63,6 +65,7 @@ impl Panel {
             Self::Inspector => "Inspector",
             Self::Messages => "Output",
             Self::GraphOverview => "Graph overview",
+            Self::Ir => "IR",
         }
     }
     fn legacy(self) -> &'static str {
@@ -78,6 +81,7 @@ impl Panel {
             Self::Inspector => "inspector",
             Self::Messages => "messages",
             Self::GraphOverview => "graphOverview",
+            Self::Ir => "ir",
         }
     }
     fn from_legacy(s: &str) -> Option<Self> {
@@ -170,6 +174,8 @@ pub struct NativeView {
     pub active: Panel,
     #[serde(default)]
     pub graph_function: Option<u64>,
+    #[serde(default)]
+    pub ir_ssa: bool,
 }
 #[derive(Default)]
 pub struct Filter {
@@ -224,6 +230,12 @@ pub struct Workspace {
     pub graph_zoom: f32,
     pub graph_pan: egui::Vec2,
     pub graph_function: Option<u64>,
+    pub ir_ssa: bool,
+    pub ir_key: Option<(u64, u64, bool)>,
+    pub ir_loading: Option<(u64, u64, bool)>,
+    pub ir_bundle: Option<Arc<ura_core::ir::inspect::Bundle>>,
+    pub ir_rows: Vec<crate::worker::IrRow>,
+    pub ir_error: Option<String>,
     pub cancel: Arc<AtomicBool>,
     pub progress: Arc<Mutex<Option<ura_core::AnalysisProgress>>>,
     pub analyzing: bool,
@@ -299,6 +311,12 @@ impl Workspace {
             graph_zoom: 1.0,
             graph_pan: egui::vec2(30.0, 25.0),
             graph_function: None,
+            ir_ssa: false,
+            ir_key: None,
+            ir_loading: None,
+            ir_bundle: None,
+            ir_rows: vec![],
+            ir_error: None,
             cancel: Arc::new(AtomicBool::new(false)),
             progress: Arc::new(Mutex::new(None)),
             analyzing: false,
@@ -310,7 +328,13 @@ impl Workspace {
             settings,
             actions: vec![],
             restore: None,
-            messages: vec![(false, "URA 0.6 · Native analysis workspace ready".into())],
+            messages: vec![(
+                false,
+                format!(
+                    "URA {} · Native analysis workspace ready",
+                    env!("CARGO_PKG_VERSION")
+                ),
+            )],
             names: BTreeMap::new(),
             annotation_indices: BTreeMap::new(),
             function_filter: Filter::default(),
@@ -390,6 +414,7 @@ impl Workspace {
         self.graph.clear();
         self.graph_loading = None;
         self.graph_function = None;
+        self.reset_ir();
         self.names.clear();
         self.annotation_indices.clear();
         self.history = History::default();
@@ -515,6 +540,62 @@ impl Workspace {
                 crate::graph::layout(&analysis, function).map(|graph| Event::Graph(revision, graph))
             });
     }
+    fn reset_ir(&mut self) {
+        self.ir_key = None;
+        self.ir_loading = None;
+        self.ir_bundle = None;
+        self.ir_rows.clear();
+        self.ir_error = None;
+    }
+    pub fn ensure_ir(&mut self) {
+        if self.analyzing || self.opening {
+            return;
+        }
+        let Some(function) = self.function().map(|f| f.address) else {
+            return;
+        };
+        let key = (self.analysis_revision, function, self.ir_ssa);
+        if self.ir_key == Some(key) || self.ir_loading.is_some() {
+            return;
+        }
+        let (Some(binary), Some(analysis)) = (self.binary.clone(), self.analysis.clone()) else {
+            return;
+        };
+        let cached = self
+            .ir_bundle
+            .as_ref()
+            .filter(|b| b.raw.entry.0 == function)
+            .cloned();
+        self.cancel = Arc::new(AtomicBool::new(false));
+        let control = Control {
+            cancel: self.cancel.clone(),
+            progress: self.progress.clone(),
+            ctx: self.ctx.clone(),
+            last: Mutex::new(Instant::now()),
+        };
+        self.ir_loading = Some(key);
+        self.ir_error = None;
+        self.worker
+            .submit_typed(self.generation, TaskKind::Ir(key), move || {
+                let bundle = match cached {
+                    Some(b) => b,
+                    None => Arc::new(ura_core::ir::inspect::analyze(
+                        &binary, &analysis, function, &control,
+                    )?),
+                };
+                let rows = bundle
+                    .rows(key.2, 0, bundle.row_count(key.2))
+                    .into_iter()
+                    .map(|r| crate::worker::IrRow {
+                        source: r.source.0,
+                        text: r.text,
+                        unsupported: r.unsupported,
+                        block: matches!(r.detail, ura_core::ir::inspect::Detail::Block),
+                    })
+                    .collect();
+                Ok(Event::Ir(key, bundle, rows))
+            });
+    }
     fn analyze(&mut self) {
         if self.analyzing || self.opening {
             return;
@@ -538,6 +619,7 @@ impl Workspace {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
+        self.cancel.store(true, Ordering::Relaxed);
         self.cancel = Arc::new(AtomicBool::new(false));
         *self.progress.lock().unwrap_or_else(|e| e.into_inner()) = None;
         let control = Control {
@@ -587,6 +669,10 @@ impl Workspace {
             if reply.generation != self.generation {
                 continue;
             }
+            if matches!(reply.kind,TaskKind::Ir((revision,_,_)) if revision!=self.analysis_revision)
+            {
+                continue;
+            }
             match reply.result {
                 Err(error) => {
                     match reply.kind {
@@ -598,6 +684,12 @@ impl Workspace {
                         }
                         TaskKind::Graph(function) if self.graph_loading == Some(function) => {
                             self.graph_loading = None
+                        }
+                        TaskKind::Ir(key) if self.ir_loading == Some(key) => {
+                            self.ir_loading = None;
+                            self.ir_key = Some(key);
+                            self.ir_rows.clear();
+                            self.ir_error = Some(error.clone());
                         }
                         _ => {}
                     }
@@ -686,6 +778,7 @@ impl Workspace {
                     }
                     self.analysis = Some(analysis);
                     self.analysis_revision += 1;
+                    self.reset_ir();
                     self.graph.clear();
                     self.graph_loading = None;
                     self.function_filter.dirty = true;
@@ -733,6 +826,15 @@ impl Workspace {
                         self.graph.clear();
                     }
                     self.graph.insert(graph.function, graph);
+                }
+                Ok(Event::Ir(key, bundle, rows)) => {
+                    if key.0 != self.analysis_revision || self.ir_loading != Some(key) {
+                        continue;
+                    }
+                    self.ir_loading = None;
+                    self.ir_key = Some(key);
+                    self.ir_bundle = Some(bundle);
+                    self.ir_rows = rows;
                 }
                 Ok(Event::Project(path, snapshot, reanalyze)) => {
                     self.update_project(path, *snapshot);
@@ -837,7 +939,8 @@ impl Workspace {
         if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::F2)) {
             self.actions.push(Action::Rename);
         }
-        if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Space))
+        if ctx.input(|i| i.modifiers.is_none())
+            && ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Space))
             && matches!(self.active, Panel::Disassembly | Panel::Graph)
         {
             self.actions
@@ -933,6 +1036,14 @@ impl NativeApp {
             let _ = self.dock.set_active_tab(path);
             self.dock.set_focused_node_and_surface(path.node_path());
         } else {
+            if panel == Panel::Ir
+                && let Some(path) = self
+                    .dock
+                    .find_tab(&Panel::Disassembly)
+                    .or_else(|| self.dock.find_tab(&Panel::Graph))
+            {
+                self.dock.set_focused_node_and_surface(path.node_path());
+            }
             self.dock.push_to_focused_leaf(panel);
         }
         self.workspace.active = panel;
@@ -948,6 +1059,7 @@ impl NativeApp {
             location: w.location,
             active: w.active,
             graph_function: w.graph_function,
+            ir_ssa: w.ir_ssa,
         };
         let mut value: serde_json::Value = snapshot
             .view_state
@@ -1005,6 +1117,7 @@ impl NativeApp {
             self.workspace.history.normalize();
             self.workspace.location = native.location;
             self.workspace.graph_function = native.graph_function;
+            self.workspace.ir_ssa = native.ir_ssa;
             self.show_panel(native.active);
         } else {
             self.dock = default_dock();
@@ -1457,6 +1570,8 @@ mod tests {
     #[test]
     fn every_panel_tessellates_at_required_sizes_and_scale() {
         let mut app = test_app();
+        app.workspace.ensure_ir();
+        pump(&mut app, |a| a.workspace.ir_key.is_some());
         let ctx = app.workspace.ctx.clone();
         for (theme, width, height, scale) in
             [Theme::Classic, Theme::Dark].into_iter().flat_map(|theme| {
@@ -1501,6 +1616,64 @@ mod tests {
                 }
             }
         }
+    }
+    #[test]
+    fn native_ir_worker_matches_core_and_rejects_stale_analysis_results() {
+        let mut app = test_app();
+        assert!(app.dock.find_tab(&Panel::Ir).is_none());
+        app.show_panel(Panel::Functions);
+        app.show_panel(Panel::Ir);
+        assert_eq!(
+            app.dock.find_tab(&Panel::Ir).unwrap().node_path(),
+            app.dock.find_tab(&Panel::Disassembly).unwrap().node_path()
+        );
+        let expected = ura_core::ir::inspect::analyze(
+            app.workspace.binary.as_ref().unwrap(),
+            app.workspace.analysis.as_ref().unwrap(),
+            0x140001000,
+            &(),
+        )
+        .unwrap();
+        for ssa in [false, true] {
+            app.workspace.ir_ssa = ssa;
+            app.workspace.ensure_ir();
+            pump(&mut app, |a| {
+                a.workspace.ir_key.is_some_and(|k| k.2 == ssa) && a.workspace.ir_loading.is_none()
+            });
+            assert_eq!(
+                app.workspace
+                    .ir_rows
+                    .iter()
+                    .map(|r| &r.text)
+                    .collect::<Vec<_>>(),
+                expected
+                    .rows(ssa, 0, expected.row_count(ssa))
+                    .iter()
+                    .map(|r| &r.text)
+                    .collect::<Vec<_>>()
+            );
+        }
+        let key = app.workspace.ir_key.unwrap();
+        app.workspace.analysis_revision += 1;
+        app.workspace.reset_ir();
+        app.workspace
+            .worker
+            .submit_typed(app.workspace.generation, TaskKind::Ir(key), || {
+                Err("stale IR failure".into())
+            });
+        app.workspace.worker.submit(app.workspace.generation, || {
+            Ok(Event::Message("IR barrier".into()))
+        });
+        pump(&mut app, |a| {
+            a.workspace.messages.iter().any(|(_, s)| s == "IR barrier")
+        });
+        assert!(app.workspace.ir_key.is_none());
+        assert!(
+            !app.workspace
+                .messages
+                .iter()
+                .any(|(_, s)| s == "stale IR failure")
+        );
     }
     #[test]
     fn project_edits_manual_seeds_and_native_state_survive_reopen() {
@@ -1565,7 +1738,8 @@ mod tests {
         reopened.restore_project();
         assert_eq!(reopened.workspace.location.address, Some(manual));
         assert_eq!(reopened.workspace.active, Panel::Graph);
-        assert_eq!(reopened.dock.iter_all_tabs().count(), Panel::ALL.len());
+        assert_eq!(reopened.dock.iter_all_tabs().count(), 11);
+        assert!(reopened.dock.find_tab(&Panel::Ir).is_none());
         assert!(reopened.workspace.history.entries.len() >= 2);
         let destination = dir.path().join("annotations.json");
         let export = ura_project::export_annotations(&path, &destination).unwrap();

@@ -1,7 +1,9 @@
 pub mod dto;
 pub mod error;
+mod ir;
 pub mod paths;
 mod service;
+pub use ir::{DiagnosticsPage, DominatorPage, IrPage};
 
 pub use dto::{
     AnalysisOptionsView, AnalyzeResponse, BinaryInfoResponse, BlockSummary, BytesResponse,

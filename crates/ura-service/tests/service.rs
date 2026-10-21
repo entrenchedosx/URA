@@ -17,6 +17,44 @@ fn service() -> Service {
 }
 
 #[test]
+fn handle_budget_rejects_excess_without_poisoning_existing_sessions() {
+    let mut s = service();
+    let mut handles = Vec::new();
+    for _ in 0..8 {
+        handles.push(s.open_binary(&fixture("ura64.exe"), None).unwrap().handle);
+    }
+    assert_eq!(
+        s.open_binary(&fixture("ura64.exe"), None)
+            .unwrap_err()
+            .code(),
+        "limit_exceeded"
+    );
+    assert_eq!(s.info(&handles[0]).unwrap().info.format, "PE");
+    s.close_binary(&handles[0]).unwrap();
+    assert!(s.open_binary(&fixture("ura64.exe"), None).is_ok());
+}
+
+#[test]
+fn cfg_reports_table_uncertainty_and_separately_seeded_tail_targets() {
+    let mut s = service();
+    let h = analyzed(&mut s, &fixture("switch-O2.exe"));
+    let info = s.info(&h).unwrap();
+    let entry = info.info.entry_point.unwrap();
+    let cfg = s.cfg(&h, &entry, 200).unwrap();
+    let dispatch = cfg.blocks.iter().find(|b| b.jump_table.is_some()).unwrap();
+    let table = dispatch.jump_table.as_ref().unwrap();
+    assert!(dispatch.indirect_unresolved);
+    assert!(!table.exhaustive);
+    assert_eq!(table.confidence, "guardedPatternHeuristic");
+    assert_eq!(table.targets.len(), 6);
+    assert_eq!(cfg.function.tail_call_candidates, 6);
+    assert!(!cfg.function.thunk_candidate);
+    let diagnostics = s.analysis_diagnostics(&h, &entry, 0, 50).unwrap();
+    assert_eq!(diagnostics.jump_table_candidates, 1);
+    assert_eq!(diagnostics.unresolved_indirect_transfers, 1);
+}
+
+#[test]
 fn address_reads_do_not_leak_across_section_boundaries() {
     let mut service = service();
     let opened = service.open_binary(&fixture("ura64.exe"), None).unwrap();

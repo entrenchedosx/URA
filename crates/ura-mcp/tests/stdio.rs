@@ -100,12 +100,15 @@ fn stdio_queries_errors_and_read_only_permissions() {
     std::fs::copy(fixture(), &sample).unwrap();
     let mut client = Client::start(directory.path(), false);
     let tools = client.request("tools/list", json!({}));
-    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 15);
+    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 19);
     let data = client.tool("ura_open_binary", json!({"binary":sample}));
     let handle = data["handle"].as_str().unwrap();
     assert_eq!(data["info"]["format"], "PE");
     client.tool("ura_get_binary_info", json!({"handle":handle}));
     client.tool("ura_analyze", json!({"handle":handle}));
+    let mut shared = ura_service::Service::new(ura_service::PathPolicy::allow_all(), false);
+    let shared_handle = shared.open_binary(&sample, None).unwrap().handle;
+    shared.analyze(&shared_handle, &Default::default()).unwrap();
     let functions = client.tool("ura_get_functions", json!({"handle":handle}));
     assert_eq!(functions["total"], 2);
     for (name, arguments) in [
@@ -132,6 +135,43 @@ fn stdio_queries_errors_and_read_only_permissions() {
         ),
     ] {
         client.tool(name, arguments);
+    }
+    for name in [
+        "ura_get_ir",
+        "ura_get_ssa",
+        "ura_get_dominators",
+        "ura_get_analysis_diagnostics",
+    ] {
+        let result = client.tool(
+            name,
+            json!({"handle":handle,"function":"140001020","limit":50}),
+        );
+        assert_eq!(result["irVersion"], 1);
+        let expected = match name {
+            "ura_get_ir" => serde_json::to_value(
+                shared
+                    .ir(&shared_handle, "140001020", false, 0, 50)
+                    .unwrap(),
+            )
+            .unwrap(),
+            "ura_get_ssa" => {
+                serde_json::to_value(shared.ir(&shared_handle, "140001020", true, 0, 50).unwrap())
+                    .unwrap()
+            }
+            "ura_get_dominators" => serde_json::to_value(
+                shared
+                    .dominators(&shared_handle, "140001020", 0, 50)
+                    .unwrap(),
+            )
+            .unwrap(),
+            _ => serde_json::to_value(
+                shared
+                    .analysis_diagnostics(&shared_handle, "140001020", 0, 50)
+                    .unwrap(),
+            )
+            .unwrap(),
+        };
+        assert_eq!(result, expected);
     }
     let denied = client.tool_result(
         "ura_save_project",

@@ -207,7 +207,7 @@ impl Workspace {
                 );
                 command(
                     ui,
-                    self.analyzing,
+                    self.analyzing || self.ir_loading.is_some(),
                     "Cancel analysis",
                     Action::Cancel,
                     &mut self.actions,
@@ -303,7 +303,8 @@ impl Workspace {
                     self.actions.push(action);
                 }
             }
-            if self.analyzing && ui.small_button("Cancel").clicked() {
+            if (self.analyzing || self.ir_loading.is_some()) && ui.small_button("Cancel").clicked()
+            {
                 self.actions.push(Action::Cancel);
             }
             ui.separator();

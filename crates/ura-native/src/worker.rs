@@ -27,9 +27,20 @@ pub enum Event {
     Strings(StringScanResult),
     Page(u64, DisassemblyPage),
     Graph(u64, GraphLayout),
+    Ir(
+        (u64, u64, bool),
+        Arc<ura_core::ir::inspect::Bundle>,
+        Vec<IrRow>,
+    ),
     Project(PathBuf, Box<ProjectSnapshot>, bool),
     Message(String),
     Done,
+}
+pub struct IrRow {
+    pub source: u64,
+    pub text: String,
+    pub unsupported: bool,
+    pub block: bool,
 }
 type Task = Box<dyn FnOnce() -> Result<Event, String> + Send>;
 #[derive(Clone, Copy)]
@@ -40,6 +51,7 @@ pub enum TaskKind {
     Strings,
     Page(u64),
     Graph(u64),
+    Ir((u64, u64, bool)),
 }
 pub struct Reply {
     pub generation: u64,

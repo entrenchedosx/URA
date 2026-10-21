@@ -124,6 +124,47 @@ enum Command {
         #[arg(long = "max-cfg-blocks", default_value_t = 200)]
         max_cfg_blocks: usize,
     },
+    /// Inspect verified raw or SSA IR for a discovered function
+    Ir {
+        #[command(flatten)]
+        common: CommonArgs,
+        #[command(flatten)]
+        analysis: AnalysisArgs,
+        #[arg(long)]
+        function: String,
+        #[arg(long)]
+        ssa: bool,
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+    },
+    /// Inspect immediate dominators and dominance frontiers
+    Dominators {
+        #[command(flatten)]
+        common: CommonArgs,
+        #[command(flatten)]
+        analysis: AnalysisArgs,
+        #[arg(long)]
+        function: String,
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+    },
+    /// Inspect unsupported IR semantics and conservative dataflow summaries
+    Diagnostics {
+        #[command(flatten)]
+        common: CommonArgs,
+        #[command(flatten)]
+        analysis: AnalysisArgs,
+        #[arg(long)]
+        function: String,
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+    },
     /// Read raw file bytes by virtual address or file offset
     Hex {
         #[command(flatten)]
@@ -150,6 +191,9 @@ impl Command {
             | Command::Strings { common, .. }
             | Command::Xrefs { common, .. }
             | Command::Cfg { common, .. }
+            | Command::Ir { common, .. }
+            | Command::Dominators { common, .. }
+            | Command::Diagnostics { common, .. }
             | Command::Hex { common, .. } => common.json,
         }
     }
@@ -181,6 +225,9 @@ struct AnalysisArgs {
     /// Do not discover functions reached only through call instructions
     #[arg(long)]
     no_follow_calls: bool,
+    /// Disable automatic function seeds from symbols (manual project starts remain)
+    #[arg(long)]
+    no_symbol_seeds: bool,
 }
 
 impl AnalysisArgs {
@@ -190,7 +237,7 @@ impl AnalysisArgs {
             max_functions: self.max_functions,
             max_blocks: self.max_blocks,
             follow_calls: !self.no_follow_calls,
-            seed_symbols: true,
+            seed_symbols: !self.no_symbol_seeds,
         }
     }
 }
@@ -325,6 +372,80 @@ fn run(cli: Cli) -> Result<(), ServiceError> {
                 print_json(&response)
             } else {
                 render_cfg(&response);
+                Ok(())
+            }
+        }
+        Command::Ir {
+            common,
+            analysis,
+            function,
+            ssa,
+            offset,
+            limit,
+        } => {
+            let handle = open(&mut service, &common)?.handle;
+            service.analyze(&handle, &analysis.options())?;
+            let page = service.ir(&handle, &function, ssa, offset, limit)?;
+            if common.json {
+                print_json(&page)
+            } else {
+                println!(
+                    "{} IR v{} · {} · rows {}..{} / {}",
+                    page.representation,
+                    page.ir_version,
+                    page.function,
+                    page.offset,
+                    page.offset + page.rows.len(),
+                    page.total
+                );
+                for row in page.rows {
+                    println!("{}  {}", row.source, row.text);
+                }
+                Ok(())
+            }
+        }
+        Command::Dominators {
+            common,
+            analysis,
+            function,
+            offset,
+            limit,
+        } => {
+            let handle = open(&mut service, &common)?.handle;
+            service.analyze(&handle, &analysis.options())?;
+            let page = service.dominators(&handle, &function, offset, limit)?;
+            if common.json {
+                print_json(&page)
+            } else {
+                for row in page.rows {
+                    println!(
+                        "{}  idom={}  frontier={:?}",
+                        row.block, row.immediate_dominator, row.frontier
+                    );
+                }
+                Ok(())
+            }
+        }
+        Command::Diagnostics {
+            common,
+            analysis,
+            function,
+            offset,
+            limit,
+        } => {
+            let handle = open(&mut service, &common)?.handle;
+            service.analyze(&handle, &analysis.options())?;
+            let page = service.analysis_diagnostics(&handle, &function, offset, limit)?;
+            if common.json {
+                print_json(&page)
+            } else {
+                println!(
+                    "{} unsupported instructions · {} constant values · {} dead definitions",
+                    page.total, page.constant_values, page.dead_definitions
+                );
+                for d in page.diagnostics {
+                    println!("{}  {}", d.source, d.message);
+                }
                 Ok(())
             }
         }

@@ -49,6 +49,64 @@ fn text(path: &Path) -> &str {
 }
 
 #[test]
+fn raw_ssa_dominators_and_diagnostics_match_shared_service() {
+    let binary = fixture("ura64.exe");
+    let mut service = Service::new(PathPolicy::allow_all(), false);
+    let h = service.open_binary(&binary, None).unwrap().handle;
+    service.analyze(&h, &Default::default()).unwrap();
+    for ssa in [false, true] {
+        let mut args = vec![
+            "ir",
+            text(&binary),
+            "--function",
+            "140001020",
+            "--offset",
+            "3",
+            "--limit",
+            "7",
+            "--json",
+        ];
+        if ssa {
+            args.push("--ssa");
+        }
+        let output = run(args);
+        assert!(output.status.success(), "{}", stderr(&output));
+        let expected = service.ir(&h, "140001020", ssa, 3, 7).unwrap();
+        assert_eq!(json(&output), serde_json::to_value(expected).unwrap());
+    }
+    for command in ["dominators", "diagnostics"] {
+        let output = run([
+            command,
+            text(&binary),
+            "--function",
+            "140001020",
+            "--limit",
+            "7",
+            "--json",
+        ]);
+        assert!(output.status.success(), "{}", stderr(&output));
+        let expected = if command == "dominators" {
+            serde_json::to_value(service.dominators(&h, "140001020", 0, 7).unwrap()).unwrap()
+        } else {
+            serde_json::to_value(service.analysis_diagnostics(&h, "140001020", 0, 7).unwrap())
+                .unwrap()
+        };
+        assert_eq!(json(&output), expected);
+    }
+    let output = run([
+        "ir",
+        text(&binary),
+        "--function",
+        "140001020",
+        "--limit",
+        "501",
+        "--json",
+    ]);
+    assert!(!output.status.success());
+    assert_eq!(json(&output)["error"]["code"], "limit_exceeded");
+}
+
+#[test]
 fn info_reports_identity_in_text_and_json() {
     let binary = fixture("ura64.exe");
     let text_output = run(["info", text(&binary)]);

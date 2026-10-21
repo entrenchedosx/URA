@@ -25,6 +25,10 @@ pub struct AnalyzeParams {
         description = "Discover functions reached through call instructions (default true)"
     )]
     pub follow_calls: Option<bool>,
+    #[schemars(
+        description = "Seed discovered function symbols (default true); explicit project starts remain"
+    )]
+    pub seed_symbols: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -171,4 +175,14 @@ pub struct ExportAnalysisParams {
     pub project: String,
     #[schemars(description = "Destination JSON file inside an allowed root")]
     pub export: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct IrParams {
+    pub handle: String,
+    /// Function address (hex string), or an instruction in that function.
+    pub function: String,
+    pub offset: Option<usize>,
+    pub limit: Option<usize>,
 }
