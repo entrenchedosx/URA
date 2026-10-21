@@ -185,7 +185,11 @@ fn returns_function_detail_and_bounded_cfg() {
     let mut service = service();
     let handle = analyzed(&mut service, &fixture("ura64.exe"));
 
-    let detail = service.function(&handle, "0x140001020").unwrap();
+    let detail = service.function(&handle, "0x140001020", 500).unwrap();
+    assert_eq!(detail.max_blocks, 500);
+    assert!(!detail.blocks_truncated);
+    assert!(!detail.callers_truncated);
+    assert!(!detail.callees_truncated);
     assert_eq!(detail.function.address, "0x140001020");
     assert_eq!(detail.function.name, "sub_140001020");
     assert_eq!(detail.function.block_count, 3);
@@ -201,8 +205,12 @@ fn returns_function_detail_and_bounded_cfg() {
         vec!["0x140001020", "0x140001026", "0x14000102E"]
     );
 
-    let inside = service.function(&handle, "0x140001027").unwrap();
+    let inside = service.function(&handle, "0x140001027", 500).unwrap();
     assert_eq!(inside.function.address, "0x140001020");
+
+    let bounded_function = service.function(&handle, "0x140001020", 2).unwrap();
+    assert!(bounded_function.blocks_truncated);
+    assert_eq!(bounded_function.blocks.len(), 2);
 
     let cfg = service.cfg(&handle, "0x140001020", 200).unwrap();
     assert!(!cfg.truncated);
@@ -226,7 +234,10 @@ fn returns_function_detail_and_bounded_cfg() {
     assert_eq!(bounded.blocks.len(), 2);
 
     assert_eq!(
-        service.function(&handle, "0x140001100").unwrap_err().code(),
+        service
+            .function(&handle, "0x140001100", 500)
+            .unwrap_err()
+            .code(),
         "function_not_found"
     );
     assert_eq!(
@@ -467,6 +478,44 @@ fn project_writes_are_gated_and_persist_names_comments_and_exports() {
         .save_project(&elf.handle, &project_path, None)
         .unwrap_err();
     assert_eq!(mismatch.code(), "project_binary_mismatch");
+}
+
+#[test]
+fn project_writes_cannot_escape_through_dangling_symlinks_or_data_streams() {
+    let root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let target = outside.path().join("escaped.ura");
+    let link = root.path().join("project.ura");
+
+    #[cfg(windows)]
+    let created = std::os::windows::fs::symlink_file(&target, &link).is_ok();
+    #[cfg(not(windows))]
+    let created = std::os::unix::fs::symlink(&target, &link).is_ok();
+    if created {
+        let mut service = Service::new(PathPolicy::new([root.path().to_path_buf()]).unwrap(), true);
+        let handle = service
+            .open_binary(&fixture("ura64.exe"), None)
+            .unwrap()
+            .handle;
+        service
+            .analyze(&handle, &AnalysisOptions::default())
+            .unwrap();
+        let error = service
+            .save_project(&handle, &link, Some("Escape"))
+            .unwrap_err();
+        assert_eq!(error.code(), "path_denied");
+        assert!(!target.exists());
+    }
+
+    #[cfg(windows)]
+    {
+        let policy = PathPolicy::new([root.path().to_path_buf()]).unwrap();
+        let ads = root.path().join("project.ura:payload");
+        assert_eq!(
+            policy.allow_write(&ads).unwrap_err().code(),
+            "invalid_argument"
+        );
+    }
 }
 
 #[test]

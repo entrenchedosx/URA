@@ -200,8 +200,12 @@ pub struct FunctionDetailResponse {
     pub schema_version: u32,
     pub handle: String,
     pub function: FunctionSummary,
+    pub callers_truncated: bool,
+    pub callees_truncated: bool,
     pub callers: Vec<FunctionRef>,
     pub callees: Vec<FunctionRef>,
+    pub max_blocks: usize,
+    pub blocks_truncated: bool,
     pub blocks: Vec<BlockSummary>,
 }
 

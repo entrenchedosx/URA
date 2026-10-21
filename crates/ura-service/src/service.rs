@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -21,6 +21,8 @@ use crate::error::{ServiceError, ServiceResult};
 use crate::paths::{display_path, PathPolicy};
 use crate::RESPONSE_SCHEMA_VERSION;
 
+const MAX_FUNCTION_REFS: usize = 1_000;
+
 pub struct Service {
     policy: PathPolicy,
     writes_enabled: bool,
@@ -40,6 +42,7 @@ pub(crate) struct Session {
     pub(crate) analysis: Option<ProgramAnalysis>,
     pub(crate) analysis_options: Option<AnalysisOptions>,
     pub(crate) ir_cache: BTreeMap<u64, Arc<ura_core::ir::inspect::Bundle>>,
+    pub(crate) ir_cache_order: VecDeque<u64>,
 }
 
 impl Service {
@@ -114,6 +117,7 @@ impl Service {
                 analysis: None,
                 analysis_options: None,
                 ir_cache: BTreeMap::new(),
+                ir_cache_order: VecDeque::new(),
             },
         );
 
@@ -174,6 +178,7 @@ impl Service {
         session.analysis = Some(analysis);
         session.analysis_options = Some(normalized.clone());
         session.ir_cache.clear();
+        session.ir_cache_order.clear();
         Ok(AnalyzeResponse {
             schema_version: RESPONSE_SCHEMA_VERSION,
             handle: handle.to_string(),
@@ -260,7 +265,13 @@ impl Service {
         })
     }
 
-    pub fn function(&self, handle: &str, address: &str) -> ServiceResult<FunctionDetailResponse> {
+    pub fn function(
+        &self,
+        handle: &str,
+        address: &str,
+        max_blocks: usize,
+    ) -> ServiceResult<FunctionDetailResponse> {
+        let max_blocks = validate_limit("maxBlocks", max_blocks, 1, 500)?;
         let session = self.session(handle)?;
         let analysis = require_analysis(session)?;
         let address = parse_address(address)?;
@@ -268,9 +279,11 @@ impl Service {
             .function_containing(address)
             .ok_or_else(|| ServiceError::FunctionNotFound(format_address(address)))?;
 
+        let blocks_truncated = function.blocks.len() > max_blocks;
         let blocks = function
             .blocks
             .iter()
+            .take(max_blocks)
             .filter_map(|block_address| analysis.blocks.get(block_address))
             .map(|block| BlockSummary {
                 address: format_address(block.address),
@@ -286,14 +299,18 @@ impl Service {
                     .collect(),
             })
             .collect();
+        let callers_truncated = function.callers.len() > MAX_FUNCTION_REFS;
         let callers = function
             .callers
             .iter()
+            .take(MAX_FUNCTION_REFS)
             .map(|caller| function_ref(session, *caller))
             .collect();
+        let callees_truncated = function.callees.len() > MAX_FUNCTION_REFS;
         let callees = function
             .callees
             .iter()
+            .take(MAX_FUNCTION_REFS)
             .map(|callee| function_ref(session, *callee))
             .collect();
 
@@ -301,8 +318,12 @@ impl Service {
             schema_version: RESPONSE_SCHEMA_VERSION,
             handle: handle.to_string(),
             function: function_summary(session, function),
+            callers_truncated,
+            callees_truncated,
             callers,
             callees,
+            max_blocks,
+            blocks_truncated,
             blocks,
         })
     }

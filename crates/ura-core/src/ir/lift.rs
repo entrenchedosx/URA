@@ -766,11 +766,17 @@ impl Builder {
                 });
             }
             M::Call => {
-                let target = self.read(i, 0, self.bits)?;
-                let target = if self.ty(target) == Type::Bits(self.bits) {
-                    self.unary(Operation::ToAddress, target, Type::Address(self.bits))
+                let width = if matches!(i.op0_kind(), OpKind::Register | OpKind::Memory) {
+                    self.width(i, 0)?
                 } else {
+                    self.bits
+                };
+                let target = self.read(i, 0, width)?;
+                let target = if matches!(self.ty(target), Type::Address(_)) {
                     target
+                } else {
+                    let value = self.resize(target, self.bits, false);
+                    self.unary(Operation::ToAddress, value, Type::Address(self.bits))
                 };
                 let mut args = vec![target];
                 args.extend(self.state());

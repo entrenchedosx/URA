@@ -1,6 +1,6 @@
 [package]
 name = "ura-native"
-version = "0.7.0-dev"
+version.workspace = true
 edition = "2024"
 license.workspace = true
 rust-version = "1.95"

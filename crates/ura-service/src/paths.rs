@@ -59,17 +59,32 @@ impl PathPolicy {
                 path.display()
             ))
         })?;
-        let resolved = match std::fs::canonicalize(&absolute) {
-            Ok(existing) => existing,
-            Err(_) => {
+        let name = absolute.file_name().ok_or_else(|| {
+            ServiceError::InvalidArgument(format!("{} has no file name", path.display()))
+        })?;
+        #[cfg(windows)]
+        if name.to_string_lossy().contains(':') {
+            return Err(ServiceError::InvalidArgument(format!(
+                "{} is not a valid write target: alternate data streams are not supported",
+                path.display()
+            )));
+        }
+        match std::fs::symlink_metadata(&absolute) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() {
+                    return Err(ServiceError::PathDenied(display_path(&absolute)));
+                }
+                let resolved = std::fs::canonicalize(&absolute).map_err(|error| {
+                    ServiceError::Io(format!("{} could not be resolved: {error}", path.display()))
+                })?;
+                self.check(resolved)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 let parent = absolute.parent().ok_or_else(|| {
                     ServiceError::InvalidArgument(format!(
                         "{} has no parent directory",
                         path.display()
                     ))
-                })?;
-                let name = absolute.file_name().ok_or_else(|| {
-                    ServiceError::InvalidArgument(format!("{} has no file name", path.display()))
                 })?;
                 let parent = std::fs::canonicalize(parent).map_err(|error| {
                     ServiceError::Io(format!(
@@ -77,10 +92,13 @@ impl PathPolicy {
                         path.display()
                     ))
                 })?;
-                parent.join(name)
+                self.check(parent.join(name))
             }
-        };
-        self.check(resolved)
+            Err(error) => Err(ServiceError::Io(format!(
+                "{} could not be inspected: {error}",
+                path.display()
+            ))),
+        }
     }
 
     fn check(&self, resolved: PathBuf) -> ServiceResult<PathBuf> {

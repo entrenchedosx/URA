@@ -30,7 +30,16 @@ upstream_cache = {}
 for package in sorted((packages[i] for i in seen if packages[i]["source"]), key=lambda p: (p["name"], p["version"])):
     name, version = package["name"], package["version"]
     folder = Path(package["manifest_path"]).parent
-    candidates = [p for p in folder.rglob("*") if p.is_file() and any(term in str(p.relative_to(folder)).lower() for term in ("license", "licence", "copying", "copyright", "notice")) and p.suffix.lower() not in {".rs", ".py", ".js", ".c", ".h"}]
+    candidates = [
+        p
+        for p in folder.rglob("*")
+        if p.is_file()
+        and (
+            any(term in str(p.relative_to(folder)).lower() for term in ("license", "licence", "copying", "copyright", "notice"))
+            or (p.suffix.lower() == ".txt" and p.parent.name.lower() == "fonts")
+        )
+        and p.suffix.lower() not in {".rs", ".py", ".js", ".c", ".h"}
+    ]
     if package.get("license_file"):
         candidates.append(folder / package["license_file"])
     copied = 0

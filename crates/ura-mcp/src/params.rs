@@ -71,6 +71,8 @@ pub struct FunctionParams {
     pub handle: String,
     #[schemars(description = "Function start address, or any address inside the function")]
     pub address: String,
+    #[schemars(description = "Maximum basic blocks to return (1-500, default 200)")]
+    pub max_blocks: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -180,9 +182,12 @@ pub struct ExportAnalysisParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct IrParams {
+    #[schemars(description = "Handle returned by ura_open_binary")]
     pub handle: String,
-    /// Function address (hex string), or an instruction in that function.
+    #[schemars(description = "Function start address, or any address inside the function")]
     pub function: String,
+    #[schemars(description = "Zero-based row offset (default 0)")]
     pub offset: Option<usize>,
+    #[schemars(description = "Maximum rows to return (page-specific limits: 1-500)")]
     pub limit: Option<usize>,
 }

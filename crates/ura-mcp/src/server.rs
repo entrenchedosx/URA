@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{CallToolResult, ServerCapabilities, ServerConfig};
+use rmcp::model::{CallToolResult, Implementation, ServerCapabilities, ServerConfig};
 use rmcp::{tool, tool_handler, tool_router, ErrorData, ServerHandler};
 use serde::Serialize;
 use serde_json::Value;
@@ -50,6 +50,7 @@ impl UraServer {
 impl UraServer {
     #[tool(
         name = "ura_get_ir",
+        annotations(title = "Get raw IR", read_only_hint = true),
         description = "Get a bounded page of verified raw bit-vector IR, with typed operations and source instruction addresses. Requires ura_analyze. Unsupported semantics are explicit barriers."
     )]
     fn ura_get_ir(
@@ -66,6 +67,7 @@ impl UraServer {
     }
     #[tool(
         name = "ura_get_ssa",
+        annotations(title = "Get SSA IR", read_only_hint = true),
         description = "Get a bounded page of scalar SSA IR and predecessor-indexed phi nodes. Uses the same cached lifter as raw IR; memory remains an opaque conservative token."
     )]
     fn ura_get_ssa(
@@ -82,6 +84,7 @@ impl UraServer {
     }
     #[tool(
         name = "ura_get_dominators",
+        annotations(title = "Get dominators", read_only_hint = true),
         description = "Get immediate dominators, dominator tree children and dominance frontiers for a function. Entry-reachable CFG only; unreachable blocks are listed explicitly."
     )]
     fn ura_get_dominators(
@@ -97,6 +100,7 @@ impl UraServer {
     }
     #[tool(
         name = "ura_get_analysis_diagnostics",
+        annotations(title = "Get analysis diagnostics", read_only_hint = true),
         description = "Get paginated unsupported-semantic diagnostics and conservative constant/dead-definition summaries for a function. No instructions or branches are rewritten."
     )]
     fn ura_get_analysis_diagnostics(
@@ -112,6 +116,7 @@ impl UraServer {
     }
     #[tool(
         name = "ura_open_binary",
+        annotations(title = "Open binary", read_only_hint = true),
         description = "Open a PE, ELF or Mach-O file for inspection. Returns a handle, binary metadata, sections, imports and exports. Optionally attaches an existing .ura project and applies its function names and manual function seeds."
     )]
     fn ura_open_binary(
@@ -126,6 +131,7 @@ impl UraServer {
 
     #[tool(
         name = "ura_analyze",
+        annotations(title = "Analyze binary", read_only_hint = true),
         description = "Discover functions, basic blocks and cross-references for an opened binary. Analysis results are cached on the handle for subsequent queries."
     )]
     fn ura_analyze(
@@ -145,6 +151,7 @@ impl UraServer {
 
     #[tool(
         name = "ura_get_binary_info",
+        annotations(title = "Get binary info", read_only_hint = true),
         description = "Return metadata for an opened binary: format, architecture, hashes, entry point, section counts and warnings."
     )]
     fn ura_get_binary_info(
@@ -156,6 +163,7 @@ impl UraServer {
 
     #[tool(
         name = "ura_get_functions",
+        annotations(title = "List functions", read_only_hint = true),
         description = "List discovered functions with pagination, optional substring query and sorting by address, name, instruction count or reference count. Requires ura_analyze."
     )]
     fn ura_get_functions(
@@ -180,17 +188,23 @@ impl UraServer {
 
     #[tool(
         name = "ura_get_function",
-        description = "Return one function's summary plus its callers and callees. The address may point anywhere inside the function. Requires ura_analyze."
+        annotations(title = "Get function detail", read_only_hint = true),
+        description = "Return one function's summary plus a bounded page of its basic blocks and its callers/callees. The address may point anywhere inside the function. Requires ura_analyze."
     )]
     fn ura_get_function(
         &self,
         Parameters(params): Parameters<FunctionParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        respond(self.service().function(&params.handle, &params.address))
+        respond(self.service().function(
+            &params.handle,
+            &params.address,
+            params.max_blocks.unwrap_or(200),
+        ))
     }
 
     #[tool(
         name = "ura_get_disassembly",
+        annotations(title = "Get disassembly", read_only_hint = true),
         description = "Decode up to 2000 instructions starting at a virtual address. Returns instruction addresses, bytes, mnemonic text and the containing section. Does not require analysis."
     )]
     fn ura_get_disassembly(
@@ -206,6 +220,7 @@ impl UraServer {
 
     #[tool(
         name = "ura_get_cfg",
+        annotations(title = "Get CFG", read_only_hint = true),
         description = "Return the control-flow graph of a function: basic blocks, instruction addresses and successor edges. Requires ura_analyze."
     )]
     fn ura_get_cfg(
@@ -221,6 +236,7 @@ impl UraServer {
 
     #[tool(
         name = "ura_get_xrefs",
+        annotations(title = "Get cross-references", read_only_hint = true),
         description = "List cross-references to or from an address, optionally filtered by kind (call, jump, conditionalJump, data). Requires ura_analyze."
     )]
     fn ura_get_xrefs(
@@ -245,6 +261,7 @@ impl UraServer {
 
     #[tool(
         name = "ura_search_strings",
+        annotations(title = "Search strings", read_only_hint = true),
         description = "Scan the file for ASCII and UTF-16LE strings with pagination. Returns file offsets, virtual addresses where mapped, encoding and text."
     )]
     fn ura_search_strings(
@@ -267,6 +284,7 @@ impl UraServer {
 
     #[tool(
         name = "ura_read_bytes",
+        annotations(title = "Read bytes", read_only_hint = true),
         description = "Read raw file bytes by virtual address or file offset (exactly one), up to 65536 bytes. Returns hex and printable ASCII alongside the mapping."
     )]
     fn ura_read_bytes(
@@ -283,6 +301,7 @@ impl UraServer {
 
     #[tool(
         name = "ura_rename_function",
+        annotations(title = "Rename function", read_only_hint = false),
         description = "Persist a function name in an existing .ura project. Requires the server to be started with --enable-writes."
     )]
     fn ura_rename_function(
@@ -299,6 +318,7 @@ impl UraServer {
 
     #[tool(
         name = "ura_add_comment",
+        annotations(title = "Add comment", read_only_hint = false),
         description = "Persist a comment on an address in an existing .ura project. Requires the server to be started with --enable-writes."
     )]
     fn ura_add_comment(
@@ -316,6 +336,7 @@ impl UraServer {
 
     #[tool(
         name = "ura_save_project",
+        annotations(title = "Save project", read_only_hint = false),
         description = "Create or update a .ura project for an opened binary. Requires the server to be started with --enable-writes."
     )]
     fn ura_save_project(
@@ -331,6 +352,7 @@ impl UraServer {
 
     #[tool(
         name = "ura_export_analysis",
+        annotations(title = "Export analysis", read_only_hint = false),
         description = "Export a project's annotations and function names as JSON. Requires the server to be started with --enable-writes."
     )]
     fn ura_export_analysis(
@@ -345,6 +367,7 @@ impl UraServer {
 
     #[tool(
         name = "ura_close_binary",
+        annotations(title = "Close binary", read_only_hint = false),
         description = "Close an opened binary and release its analysis results. The handle becomes invalid."
     )]
     fn ura_close_binary(
@@ -359,6 +382,7 @@ impl UraServer {
 impl ServerHandler for UraServer {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
+            .with_server_info(Implementation::new("ura-mcp", env!("CARGO_PKG_VERSION")))
             .with_instructions(INSTRUCTIONS)
     }
 }

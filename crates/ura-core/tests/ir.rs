@@ -147,6 +147,59 @@ fn unsupported_far_jump_and_return_size_do_not_fabricate_targets() {
     assert!(f.blocks[0].terminator.value.is_none());
 }
 #[test]
+fn narrow_indirect_calls_extend_to_the_function_address_width() {
+    for (bytes, form) in [
+        (&[0x66u8, 0xff, 0xd0, 0xc3][..], "register"),
+        (&[0x66u8, 0xff, 0x10, 0xc3][..], "memory"),
+    ] {
+        let f = lift(bytes, 32);
+        let call = f
+            .blocks
+            .iter()
+            .flat_map(|block| &block.statements)
+            .find(|statement| matches!(statement.op, Operation::Call))
+            .unwrap_or_else(|| panic!("{form} call should lift"));
+        assert_eq!(
+            f.operand_type(call.args[0]),
+            Some(Type::Address(32)),
+            "{form} call target"
+        );
+    }
+}
+#[test]
+fn verifier_rejects_noncanonical_memory_widths_and_unresolved_target_types() {
+    let mut f = lift(&[0x48, 0x8b, 0x03, 0xc3], 64);
+    let load = f
+        .blocks
+        .iter_mut()
+        .flat_map(|block| &mut block.statements)
+        .find(|statement| matches!(statement.op, Operation::Load))
+        .expect("load should lift");
+    load.args[1] = Operand::Constant(ir::Constant {
+        ty: Type::Address(32),
+        value: Address(0x1000),
+    });
+    let errors = ir::verify(&f).unwrap_err();
+    assert!(
+        errors.iter().any(|error| error.contains("address width")),
+        "{errors:?}"
+    );
+
+    let mut f = lift(&[0xc3], 64);
+    f.blocks[0].terminator.kind = ir::FlowKind::Unresolved;
+    f.blocks[0].terminator.value = Some(Operand::Constant(ir::Constant {
+        ty: Type::Bits(64),
+        value: Address(0x1000),
+    }));
+    let errors = ir::verify(&f).unwrap_err();
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("transfer target is not an address")),
+        "{errors:?}"
+    );
+}
+#[test]
 fn ssa_rejects_forged_dominance_inputs_outputs_and_sources() {
     let f = lift(
         &[

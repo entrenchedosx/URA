@@ -50,6 +50,15 @@ impl Client {
             result["result"]["capabilities"]["tools"].is_object(),
             "{result}"
         );
+        assert_eq!(
+            result["result"]["serverInfo"]["name"], "ura-mcp",
+            "{result}"
+        );
+        assert_eq!(
+            result["result"]["serverInfo"]["version"],
+            env!("CARGO_PKG_VERSION"),
+            "{result}"
+        );
         client.send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}));
         client
     }
@@ -100,7 +109,19 @@ fn stdio_queries_errors_and_read_only_permissions() {
     std::fs::copy(fixture(), &sample).unwrap();
     let mut client = Client::start(directory.path(), false);
     let tools = client.request("tools/list", json!({}));
-    assert_eq!(tools["result"]["tools"].as_array().unwrap().len(), 19);
+    let listed = tools["result"]["tools"].as_array().unwrap();
+    assert_eq!(listed.len(), 19);
+    for tool in listed {
+        let expected = !matches!(
+            tool["name"].as_str().unwrap(),
+            "ura_rename_function"
+                | "ura_add_comment"
+                | "ura_save_project"
+                | "ura_export_analysis"
+                | "ura_close_binary"
+        );
+        assert_eq!(tool["annotations"]["readOnlyHint"], expected, "{tool}");
+    }
     let data = client.tool("ura_open_binary", json!({"binary":sample}));
     let handle = data["handle"].as_str().unwrap();
     assert_eq!(data["info"]["format"], "PE");

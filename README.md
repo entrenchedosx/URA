@@ -4,8 +4,9 @@
 
 Ultimate Reverse Engineer
 
-Development checkpoint: `0.7.0-dev` on `v0.7-advanced-analysis`. The latest public
-release remains v0.6.0. Variable idle CPU is still a release blocker; see
+Public prerelease: [`v0.7.0-dev`](https://github.com/entrenchedosx/URA/releases/tag/v0.7.0-dev)
+from `v0.7-advanced-analysis`. The previous public prerelease is v0.6.0.
+Variable idle CPU remains an unexplained known limitation; see
 [v0.7 verification](docs/VERIFICATION-0.7.md) and [IR design](docs/IR-DESIGN.md).
 
 ## Overview
@@ -84,9 +85,11 @@ Generated icons are committed. Regeneration requires Python and Pillow:
 python scripts/generate_icons.py
 ```
 
-Create a local development archive after the Release build with
-`./scripts/package-windows.ps1 -Version 0.7.0-dev`. It checks the native version
-resource and includes dependency license texts. This does not publish a release.
+Create the portable Windows archive after the Release build with
+`./scripts/package-windows.ps1 -Version 0.7.0-dev`. It checks all three executable
+version/product resources, writes per-file checksums, collects dependency license
+texts (including bundled font notices) and emits a SHA-256 sidecar for the ZIP.
+Publishing the archive is a separate release step.
 
 ## Usage
 
@@ -163,8 +166,11 @@ Call `ura_open_binary`, retain the returned handle, call `ura_analyze`, then que
 After analysis, `ura_get_ir`, `ura_get_ssa`, `ura_get_dominators` and
 `ura_get_analysis_diagnostics` take `handle`, `function`, optional `offset` and
 `limit`. IR/diagnostic pages allow 1–500 rows; dominator pages allow 1–200.
-Requests reuse a verified function cache, invalidated by reanalysis. At most
-eight binary handles and two IR bundles per handle are retained.
+`ura_get_function` returns at most 500 blocks per call (`maxBlocks`, default 200)
+plus at most 1000 callers/callees, and reports `blocksTruncated`,
+`callersTruncated` and `calleesTruncated` when more exist. Requests reuse a
+verified least-recently-used function cache, invalidated by reanalysis. At most
+eight binary handles and eight IR bundles per handle are retained.
 
 `ura_save_project`, `ura_rename_function`, `ura_add_comment` and
 `ura_export_analysis` require the explicit `--enable-writes` process option.

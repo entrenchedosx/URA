@@ -14,9 +14,10 @@ binaries. No package in the inspected locked metadata lacks a license declaratio
 Inspect the generated missing-text report before redistributing binaries.
 
 Notable obligations include bundled font licenses in epaint_default_fonts
-(OFL-1.1 and Ubuntu-font-1.0), Unicode data licenses, Apache notices and MPL-2.0
-components. Unmodified crate sources can be obtained from the versions linked
-in the generated inventory. URA does not vendor or modify those components.
+(OFL-1.1, Ubuntu-font-1.0 and Hack), whose `OFL.txt`, `UFL.txt` and
+`Hack-Regular.txt` sidecars are copied explicitly, plus Unicode data licenses,
+Apache notices and MPL-2.0 components. Unmodified crate sources can be obtained
+from the versions linked in the generated inventory. URA does not vendor or modify those components.
 Windows system fonts are loaded from the host if present; their files are not
 copied into the repository or package. egui's fallback fonts retain their notices.
 

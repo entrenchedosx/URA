@@ -6077,7 +6077,7 @@ checksum = "b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254"
 
 [[package]]
 name = "ura-app"
-version = "0.1.0"
+version = "0.7.0-dev"
 dependencies = [
  "serde",
  "serde_json",
@@ -6091,11 +6091,12 @@ dependencies = [
 
 [[package]]
 name = "ura-cli"
-version = "0.1.0"
+version = "0.7.0-dev"
 dependencies = [
  "clap",
  "serde",
  "serde_json",
+ "tauri-winres",
  "tempfile",
  "ura-core",
  "ura-service",
@@ -6103,7 +6104,7 @@ dependencies = [
 
 [[package]]
 name = "ura-core"
-version = "0.1.0"
+version = "0.7.0-dev"
 dependencies = [
  "iced-x86",
  "object",
@@ -6116,13 +6117,14 @@ dependencies = [
 
 [[package]]
 name = "ura-mcp"
-version = "0.1.0"
+version = "0.7.0-dev"
 dependencies = [
  "clap",
  "rmcp",
  "schemars 1.2.3",
  "serde",
  "serde_json",
+ "tauri-winres",
  "tempfile",
  "tokio",
  "tracing",
@@ -6151,7 +6153,7 @@ dependencies = [
 
 [[package]]
 name = "ura-project"
-version = "0.1.0"
+version = "0.7.0-dev"
 dependencies = [
  "rusqlite",
  "serde",
@@ -6163,7 +6165,7 @@ dependencies = [
 
 [[package]]
 name = "ura-service"
-version = "0.1.0"
+version = "0.7.0-dev"
 dependencies = [
  "serde",
  "serde_json",

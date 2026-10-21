@@ -167,6 +167,14 @@ pub fn verify(function: &Function) -> Result<(), Vec<String>> {
                     "operation type invariant at {}: {:?}",
                     statement.source, statement.op
                 ));
+            } else if matches!(statement.op, Operation::Load | Operation::Store)
+                && types.as_ref().and_then(|args| args.get(1))
+                    != Some(&Type::Address(function.address_width))
+            {
+                errors.push(format!(
+                    "operation address width invariant at {}: {:?}",
+                    statement.source, statement.op
+                ));
             }
             if let Some(id) = statement.output {
                 if let Some(var) = function.variables.get(id) {
@@ -191,7 +199,7 @@ pub fn verify(function: &Function) -> Result<(), Vec<String>> {
         }
         if matches!(
             t.kind,
-            FlowKind::Return | FlowKind::Indirect | FlowKind::Jump
+            FlowKind::Return | FlowKind::Indirect | FlowKind::Jump | FlowKind::Unresolved
         ) && t.value.is_some()
             && t.value.and_then(|v| function.operand_type(v))
                 != Some(Type::Address(function.address_width))

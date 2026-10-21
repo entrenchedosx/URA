@@ -4,6 +4,8 @@ use serde::Serialize;
 use std::sync::Arc;
 use ura_core::ir::{self, Address};
 
+const MAX_CACHED_FUNCTIONS: usize = 8;
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IrPage {
@@ -39,6 +41,7 @@ pub struct DominatorPage {
     pub function: Address,
     pub total: usize,
     pub offset: usize,
+    pub limit: usize,
     pub rows: Vec<DominatorRow>,
     pub unreachable: Vec<Address>,
 }
@@ -50,6 +53,7 @@ pub struct DiagnosticsPage {
     pub function: Address,
     pub total: usize,
     pub offset: usize,
+    pub limit: usize,
     pub diagnostics: Vec<ir::Diagnostic>,
     pub constant_values: usize,
     pub dead_definitions: usize,
@@ -74,18 +78,25 @@ impl Service {
             .function_containing(address)
             .ok_or_else(|| ServiceError::FunctionNotFound(ura_core::format_address(address)))?
             .address;
-        if let Some(cached) = session.ir_cache.get(&function) {
-            return Ok(cached.clone());
+        if let Some(cached) = session.ir_cache.get(&function).cloned() {
+            session.ir_cache_order.retain(|key| *key != function);
+            session.ir_cache_order.push_back(function);
+            return Ok(cached);
         }
         let bundle = Arc::new(
             ir::inspect::analyze(&session.binary, analysis, function, &())
                 .map_err(ServiceError::InvalidArgument)?,
         );
-        // Bounded per-session cache; it is invalidated on every core reanalysis.
-        if session.ir_cache.len() >= 2 {
-            session.ir_cache.clear();
+        // Bounded LRU cache; it is invalidated on every core reanalysis.
+        while session.ir_cache.len() >= MAX_CACHED_FUNCTIONS {
+            let Some(oldest) = session.ir_cache_order.pop_front() else {
+                session.ir_cache.clear();
+                break;
+            };
+            session.ir_cache.remove(&oldest);
         }
         session.ir_cache.insert(function, bundle.clone());
+        session.ir_cache_order.push_back(function);
         Ok(bundle)
     }
     pub fn ir(
@@ -160,6 +171,7 @@ impl Service {
             function: bundle.raw.entry,
             total: dom.immediate.len(),
             offset,
+            limit,
             rows,
             unreachable: dom.unreachable.clone(),
         })
@@ -199,6 +211,7 @@ impl Service {
             function: bundle.raw.entry,
             total,
             offset,
+            limit,
             diagnostics: diagnostics.into_iter().skip(offset).take(limit).collect(),
             constant_values: bundle.dataflow.constants.len(),
             dead_definitions: bundle.dataflow.dead_definitions.len(),

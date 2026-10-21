@@ -2,18 +2,18 @@
 
 ## Decision
 
-Ship the source checkpoint on `v0.7-advanced-analysis`, native version
-`0.7.0-dev`. **Do not publish a v0.7.0 prerelease yet.** Variable CPU outside UI
-painting remains unexplained. Windows stack profiling could not be enabled on
-this host. Kernel/thread wakeup counts, GPU/presentation timing and controlled
-input-to-paint latency remain unmeasured. These are explicit release blockers,
-not claims that changing the IR fixed performance.
+Ship the source checkpoint on `v0.7-advanced-analysis`, version `0.7.0-dev`, as
+the GitHub prerelease `v0.7.0-dev`. Variable CPU outside UI painting remains
+unexplained. Windows stack profiling could not be enabled on this host.
+Kernel/thread wakeup counts, GPU/presentation timing and controlled
+input-to-paint latency remain unmeasured. These are known limitations of this
+prerelease, not claims that changing the IR fixed performance. No final `v0.7.0`
+release is published.
 
 The baseline was clean commit `9d2b83ef2badca211ea37969c7e06adeb539d3ae`, tagged
 v0.6.0, with all original 55 tests passing. Work stayed in the existing Rust
 workspace. No original feature, icon, legacy source or user project was removed.
-Only the requested development branch is pushed; no v0.7 tag, public release,
-main-branch push or public build artifact is produced.
+The `v0.7.0-dev` tag points at the release commit; `main` is not updated.
 
 ## Host and reproduction
 
@@ -31,9 +31,9 @@ cargo test --workspace
 cargo build --workspace --release
 ```
 
-**94 tests pass**, including all original 55. Counts: binary inspection 8,
-function/CFG 17, IR semantics 23, switch/flow recovery 7, CLI 6, actual MCP stdio
-2, native 10, project persistence 9, service unit/integration 12. Native rendering
+**97 tests pass**, including all original 55. Counts: binary inspection 8,
+function/CFG 17, IR semantics 25, switch/flow recovery 7, CLI 6, actual MCP stdio
+2, native 10, project persistence 9, service unit/integration 13. Native rendering
 tests tessellate all 12 available panels in two themes at four size/scale
 configurations, with actual IR rows preloaded. That is CPU-side rendering
 verification, distinct from the live OS scaling checks below.
@@ -199,6 +199,23 @@ external human/agent review. Findings fixed and retested include:
 - Finalization cancellation is reported, and symbol-seeding configuration is honored.
 - Stale IR replies cannot replace newer analysis; Cancel is enabled during IR work.
 - Exit-state verification reuses a precomputed architectural set instead of rescanning all temporaries per block.
+- Narrow (`66`-prefixed) register and memory indirect CALL targets are extended to
+  the function address width before `ToAddress`, so verification no longer rejects
+  the entire function; regression tests cover `call ax` and `call word ptr [eax]`.
+- The verifier rejects non-canonical `Address(16/32)` memory operands in 64-bit
+  functions and non-address values on unresolved transfers.
+- The per-handle IR cache evicts the least-recently-used function after eight
+  bundles instead of discarding every cached function on each new lift.
+- Write policy rejects dangling final-component symlinks and NTFS alternate data
+  streams before project creation or export; a regression attempts a real escape.
+- `ura_get_function` bounds blocks (1-500, default 200) and caller/callee lists
+  (1000 each), reporting truncation instead of returning unbounded arrays.
+- `ura-cli` and `ura-mcp` now carry the same URA icon/product/version resources as
+  the desktop binary; the workspace has one package version (`0.7.0-dev`).
+- MCP identifies itself as `ura-mcp` with the package version, publishes read-only
+  hints/annotations, and the stdio test asserts both identity and hint values.
+- Font license sidecars (`OFL.txt`, `UFL.txt`, `Hack-Regular.txt`) are collected
+  from `epaint_default_fonts` instead of being hidden by another notice file.
 
 No runtime dependency was added; generated fixtures use original MIT-licensed
 source. Ghidra findings and licensing are documented in [IR-DESIGN.md](IR-DESIGN.md).
