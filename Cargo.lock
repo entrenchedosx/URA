@@ -6108,6 +6108,7 @@ dependencies = [
  "iced-x86",
  "object",
  "serde",
+ "serde_json",
  "sha2",
  "tempfile",
  "thiserror 2.0.21",
@@ -6133,7 +6134,7 @@ dependencies = [
 
 [[package]]
 name = "ura-native"
-version = "0.6.0"
+version = "0.7.0-dev"
 dependencies = [
  "eframe",
  "egui_dock",

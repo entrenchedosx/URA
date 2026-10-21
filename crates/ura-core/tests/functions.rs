@@ -8,6 +8,91 @@ use ura_core::analysis::{
 };
 use ura_core::{analyze_path, AnalysisSeed};
 
+#[test]
+fn discontiguous_function_lookup_uses_block_ownership_across_other_entries() {
+    let mut bytes = vec![0x90; 0x21];
+    bytes[..2].copy_from_slice(&[0xeb, 0x1e]);
+    bytes[0x10] = 0xc3;
+    bytes[0x20] = 0xc3;
+    let a = analyze_code(
+        &bytes,
+        0x1000,
+        0x1000,
+        &[AnalysisSeed {
+            address: 0x1010,
+            name: None,
+            origin: FunctionOrigin::UserDefined,
+        }],
+        &Default::default(),
+    );
+    assert_eq!(a.function_containing(0x1020).unwrap().address, 0x1000);
+    assert_eq!(a.function_containing(0x1010).unwrap().address, 0x1010);
+    assert!(a.function_containing(0x1008).is_none());
+}
+
+#[test]
+fn cancellation_during_finalization_is_reported_as_partial() {
+    use std::sync::atomic::AtomicBool;
+    struct Control(AtomicBool);
+    impl AnalysisControl for Control {
+        fn is_cancelled(&self) -> bool {
+            self.0.load(Ordering::Relaxed)
+        }
+        fn report(&self, p: AnalysisProgress) {
+            if p.stage == AnalysisStage::Finalizing {
+                self.0.store(true, Ordering::Relaxed);
+            }
+        }
+    }
+    let bytes = [0xc3];
+    let image = CodeImage::new(vec![CodeRegion {
+        start: 0x1000,
+        bytes: &bytes,
+    }]);
+    let a = analyze_image(
+        &image,
+        64,
+        Some(0x1000),
+        &[],
+        &Default::default(),
+        &Control(AtomicBool::new(false)),
+    );
+    assert!(a.report.cancelled);
+    assert!(a.blocks.is_empty());
+}
+#[test]
+fn symbol_seeding_option_preserves_explicit_manual_starts() {
+    let b = analyze_path(&fixture("switch-O2.elf")).unwrap();
+    let options = AnalysisOptions {
+        seed_symbols: false,
+        follow_calls: false,
+        ..Default::default()
+    };
+    let a = analyze_binary(&b, &options, &());
+    assert!(!a
+        .functions
+        .iter()
+        .any(|f| f.origin == FunctionOrigin::Symbol));
+    let manual = seeds_for_binary(&b)
+        .into_iter()
+        .find(|s| s.origin == FunctionOrigin::Symbol && Some(s.address) != b.analysis().entry_point)
+        .unwrap();
+    let a = ura_core::analyze_binary_with_seeds(
+        &b,
+        &options,
+        &[AnalysisSeed {
+            address: manual.address,
+            name: Some("manual".into()),
+            origin: FunctionOrigin::UserDefined,
+        }],
+        &(),
+    );
+    assert_eq!(
+        a.function_by_start(manual.address).unwrap().origin,
+        FunctionOrigin::UserDefined
+    );
+}
+
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/fixtures")

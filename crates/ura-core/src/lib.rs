@@ -4,6 +4,8 @@ pub mod binary;
 pub mod disasm;
 pub mod error;
 pub mod hex;
+pub mod ir;
+mod jumptable;
 pub mod strings;
 
 pub use address::{format_address, format_offset, parse_address};

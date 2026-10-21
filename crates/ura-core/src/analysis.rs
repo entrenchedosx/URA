@@ -328,12 +328,69 @@ pub struct ProgramAnalysis {
     pub instructions: BTreeMap<u64, DecodedInstruction>,
     pub xrefs: Vec<Xref>,
     pub report: AnalysisReport,
+    /// Guarded byte-pattern evidence, not a proof of exhaustive indirect flow.
+    pub jump_tables: BTreeMap<u64, JumpTable>,
     function_by_address: BTreeMap<u64, usize>,
     xrefs_to: BTreeMap<u64, Vec<usize>>,
     xrefs_from: BTreeMap<u64, Vec<usize>>,
 }
+#[derive(Debug, Clone)]
+pub struct JumpTable {
+    pub source: u64,
+    pub guard: u64,
+    pub table: u64,
+    pub entry_width: u8,
+    pub relative: bool,
+    pub targets: Vec<u64>,
+}
+#[derive(Debug, Clone)]
+pub struct FunctionFlowFacts {
+    /// Candidates require a direct jump to a separately discovered entry.
+    /// A function boundary can still be heuristic, so this is not an ABI proof.
+    pub tail_calls: Vec<(u64, u64)>,
+    pub thunk_candidate: bool,
+    pub thunk_target: Option<u64>,
+    pub unresolved_indirect: Vec<u64>,
+}
 
 impl ProgramAnalysis {
+    pub fn flow_facts(&self, function: &Function) -> FunctionFlowFacts {
+        let mut tail_calls = Vec::new();
+        let mut unresolved_indirect = Vec::new();
+        for block in &function.blocks {
+            let Some(last) = self
+                .blocks
+                .get(block)
+                .and_then(|b| b.instructions.last())
+                .and_then(|a| self.instructions.get(a))
+            else {
+                continue;
+            };
+            if last.flow == InstructionFlow::IndirectJump {
+                unresolved_indirect.push(last.address);
+            }
+            if last.flow == InstructionFlow::Jump {
+                if let Some(target) = last.target {
+                    if target != function.address && self.function_by_start(target).is_some() {
+                        tail_calls.push((last.address, target));
+                    }
+                }
+            }
+        }
+        let thunk_candidate = function.instruction_count == 1
+            && (!tail_calls.is_empty() || !unresolved_indirect.is_empty());
+        let thunk_target = if thunk_candidate {
+            tail_calls.first().map(|t| t.1)
+        } else {
+            None
+        };
+        FunctionFlowFacts {
+            tail_calls,
+            thunk_candidate,
+            thunk_target,
+            unresolved_indirect,
+        }
+    }
     pub fn function_by_start(&self, address: u64) -> Option<&Function> {
         self.function_by_address
             .get(&address)
@@ -341,13 +398,11 @@ impl ProgramAnalysis {
     }
 
     pub fn function_containing(&self, address: u64) -> Option<&Function> {
-        let index = self
-            .functions
-            .partition_point(|function| function.address <= address);
-        let candidate = index.checked_sub(1)?;
-        let function = &self.functions[candidate];
-        if address < function.end {
-            Some(function)
+        // Function extents can include holes. Require a retained source block,
+        // including interleaved/discontiguous bodies and partial analysis.
+        let block = self.blocks.range(..=address).next_back()?.1;
+        if address < block.end {
+            self.function_by_start(block.function)
         } else {
             None
         }
@@ -432,6 +487,25 @@ impl<'a> CodeImage<'a> {
         Self::new(regions)
     }
 
+    pub fn readonly_data(binary: &'a LoadedBinary) -> Self {
+        let regions = binary
+            .analysis()
+            .sections
+            .iter()
+            .filter(|s| s.readable && !s.writable)
+            .filter_map(|s| {
+                let offset = usize::try_from(s.file_offset?).ok()?;
+                let length = usize::try_from(s.file_size.min(s.size)).ok()?;
+                let end = offset.checked_add(length)?;
+                Some(CodeRegion {
+                    start: s.address,
+                    bytes: binary.bytes().get(offset..end)?,
+                })
+            })
+            .collect();
+        Self::new(regions)
+    }
+
     pub fn is_empty(&self) -> bool {
         self.regions.is_empty()
     }
@@ -485,11 +559,15 @@ pub fn analyze_binary_with_seeds(
     let image = CodeImage::from_binary(binary);
     let analysis = binary.analysis();
     let mut seeds = seeds_for_binary(binary);
+    if !options.seed_symbols {
+        seeds.retain(|s| s.origin != FunctionOrigin::Symbol);
+    }
     seeds.extend_from_slice(extra_seeds);
     let mapped = mapped_ranges(binary);
     let options = options.normalized();
-    analyze_image_mapped(
-        &image,
+    let memory = CodeImage::readonly_data(binary);
+    analyze_images(
+        (&image, &memory),
         analysis.bitness,
         analysis.entry_point,
         &seeds,
@@ -608,6 +686,27 @@ pub fn analyze_image_mapped(
     mapped: &[(u64, u64)],
     control: &dyn AnalysisControl,
 ) -> ProgramAnalysis {
+    analyze_images(
+        (image, image),
+        bitness,
+        entry,
+        seeds,
+        options,
+        mapped,
+        control,
+    )
+}
+
+fn analyze_images(
+    images: (&CodeImage<'_>, &CodeImage<'_>),
+    bitness: u8,
+    entry: Option<u64>,
+    seeds: &[AnalysisSeed],
+    options: &AnalysisOptions,
+    mapped: &[(u64, u64)],
+    control: &dyn AnalysisControl,
+) -> ProgramAnalysis {
+    let (image, memory) = images;
     let normalized_options = options.normalized();
     let options = &normalized_options;
     let started = Instant::now();
@@ -890,8 +989,79 @@ pub fn analyze_image_mapped(
                         queue.push_back(next);
                     }
                 }
-                InstructionFlow::IndirectJump
-                | InstructionFlow::Return
+                InstructionFlow::IndirectJump => {
+                    let mut preceding = Vec::new();
+                    let mut cursor = address;
+                    for _ in 0..7 {
+                        let Some((a, previous)) =
+                            discovered.instructions.range(..cursor).next_back()
+                        else {
+                            break;
+                        };
+                        if previous.end() != cursor
+                            || discovered.owner.get(a) != Some(&seed.address)
+                        {
+                            break;
+                        }
+                        let Some(bytes) = image.read(*a, previous.length as usize) else {
+                            break;
+                        };
+                        preceding.push(
+                            Decoder::with_ip(bitness as u32, bytes, *a, DecoderOptions::NONE)
+                                .decode(),
+                        );
+                        cursor = *a;
+                    }
+                    preceding.reverse();
+                    let decoded = Decoder::with_ip(
+                        bitness as u32,
+                        image.bytes_at(address).unwrap(),
+                        address,
+                        DecoderOptions::NONE,
+                    )
+                    .decode();
+                    match crate::jumptable::recover(image, memory, bitness, &decoded, &preceding) {
+                        Ok(table) => {
+                            let valid = table.targets.iter().all(|t| {
+                                let boundary = discovered
+                                    .instructions
+                                    .range(..=*t)
+                                    .next_back()
+                                    .map_or(true, |(a, i)| *a == *t || i.end() <= *t);
+                                let length = Decoder::with_ip(
+                                    bitness as u32,
+                                    image.bytes_at(*t).unwrap(),
+                                    *t,
+                                    DecoderOptions::NONE,
+                                )
+                                .decode()
+                                .len();
+                                let Some(end) = t.checked_add(length as u64) else {
+                                    return false;
+                                };
+                                let forward = discovered
+                                    .instructions
+                                    .range(*t..end)
+                                    .all(|(a, _)| *a == *t);
+                                boundary
+                                    && forward
+                                    && can_enter(image, *t, seed.address, &function_starts)
+                                    && discovered.owner.get(t).map_or(true, |f| *f == seed.address)
+                            });
+                            if valid {
+                                for target in &table.targets {
+                                    leaders.insert(*target);
+                                    queue.push_back(*target);
+                                }
+                                discovered.jump_tables.insert(address, table);
+                            } else {
+                                diagnostics.push(Some(address),"jump table rejected: target conflicts with an instruction or function boundary".into());
+                            }
+                        }
+                        Err(reason) => diagnostics.push(Some(address), reason),
+                    }
+                }
+                InstructionFlow::Return
                 | InstructionFlow::Interrupt
                 | InstructionFlow::Exception => {}
             }
@@ -952,7 +1122,7 @@ pub fn analyze_image_mapped(
         bitness,
         mapped,
     );
-    result.report.cancelled = cancelled;
+    result.report.cancelled |= cancelled;
     result.report.truncated |= truncated;
     result
 }
@@ -1013,7 +1183,6 @@ fn finalize(
                     break;
                 }
                 addresses.push(cursor);
-                function_end = function_end.max(instruction.end());
                 if instruction.is_terminal() {
                     break;
                 }
@@ -1036,6 +1205,7 @@ fn finalize(
                 .expect("instruction exists")
                 .clone();
             let mut successors: Vec<Edge> = Vec::new();
+            function_end = function_end.max(last.end());
             let mut push_edge = |target: u64, kind: EdgeKind| {
                 if leader_set.contains(&target)
                     && !successors.iter().any(|edge| edge.target == target)
@@ -1058,6 +1228,13 @@ fn finalize(
                 InstructionFlow::Next | InstructionFlow::Call | InstructionFlow::IndirectCall => {
                     push_edge(last.end(), EdgeKind::FallThrough);
                 }
+                InstructionFlow::IndirectJump => {
+                    if let Some(table) = discovered.jump_tables.get(&last.address) {
+                        for target in &table.targets {
+                            push_edge(*target, EdgeKind::Jump);
+                        }
+                    }
+                }
                 _ => {}
             }
             function_instruction_count += addresses.len();
@@ -1074,6 +1251,19 @@ fn finalize(
             );
         }
 
+        if !block_starts.is_empty() {
+            functions.push(Function {
+                address,
+                end: function_end,
+                origin: builder.seed.origin,
+                symbol: builder.seed.name,
+                blocks: block_starts,
+                instruction_count: function_instruction_count,
+                reference_count: 0,
+                callers: Vec::new(),
+                callees: Vec::new(),
+            });
+        }
         if block_cap_hit {
             diagnostics.push(
                 None,
@@ -1081,18 +1271,12 @@ fn finalize(
             );
             break;
         }
+    }
 
-        functions.push(Function {
-            address,
-            end: function_end,
-            origin: builder.seed.origin,
-            symbol: builder.seed.name,
-            blocks: block_starts,
-            instruction_count: function_instruction_count,
-            reference_count: 0,
-            callers: Vec::new(),
-            callees: Vec::new(),
-        });
+    // Budget stops must never leave dangling edges or orphaned retained blocks.
+    let retained: BTreeSet<_> = blocks.keys().copied().collect();
+    for block in blocks.values_mut() {
+        block.successors.retain(|e| retained.contains(&e.target));
     }
 
     let mut xref_set: BTreeSet<(u64, u64, u8, u8)> = BTreeSet::new();
@@ -1156,11 +1340,10 @@ fn finalize(
         .map(|(index, function)| (function.address, index))
         .collect();
 
-    let find_function = |address: u64, functions: &[Function]| -> Option<usize> {
-        let index = functions.partition_point(|function| function.address <= address);
-        let candidate = index.checked_sub(1)?;
-        if address < functions[candidate].end {
-            Some(candidate)
+    let find_function = |address: u64, _functions: &[Function]| -> Option<usize> {
+        let block = blocks.range(..=address).next_back()?.1;
+        if address < block.end {
+            function_by_address.get(&block.function).copied()
         } else {
             None
         }
@@ -1215,7 +1398,7 @@ fn finalize(
         block_count: blocks.len(),
         xref_count: xrefs.len(),
         data_xref_count,
-        cancelled: false,
+        cancelled: control.is_cancelled(),
         truncated: block_cap_hit,
         diagnostics_dropped: diagnostics.dropped,
         elapsed_ms: started.elapsed().as_millis() as u64,
@@ -1236,6 +1419,7 @@ fn finalize(
         instructions: discovered.instructions,
         xrefs,
         report,
+        jump_tables: discovered.jump_tables,
         function_by_address,
         xrefs_to,
         xrefs_from,
@@ -1395,6 +1579,7 @@ struct Discovery {
     instructions: BTreeMap<u64, DecodedInstruction>,
     owner: BTreeMap<u64, u64>,
     functions: BTreeMap<u64, FunctionBuilder>,
+    jump_tables: BTreeMap<u64, JumpTable>,
 }
 
 struct FunctionBuilder {
