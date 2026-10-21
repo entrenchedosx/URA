@@ -354,6 +354,22 @@ impl LoadedBinary {
         hex::read_hex_page(&self.bytes, &self.analysis, offset, length)
     }
 
+    /// File-backed bytes for a virtual address range. Returns `None` when any
+    /// part of the range is unmapped or only backed by zero-fill.
+    pub fn bytes_at_address(&self, address: u64, length: usize) -> Option<&[u8]> {
+        if length == 0 {
+            return Some(&[]);
+        }
+        let section = self.analysis.section_containing_address(address)?;
+        let offset = section.file_offset_for_address(address)? as usize;
+        let available =
+            (section.file_size as usize).saturating_sub((address - section.address) as usize);
+        if length > available {
+            return None;
+        }
+        self.bytes.get(offset..offset.checked_add(length)?)
+    }
+
     pub fn extract_strings(&self, options: &StringScanOptions) -> Result<StringScanResult> {
         Ok(strings::extract_strings(
             &self.bytes,

@@ -13,6 +13,7 @@ use std::{
 use ura_core::{
     AnalysisControl, AnalysisProgress, BinaryView, DisassemblyPage, LoadedBinary, ProgramAnalysis,
     StringScanResult,
+    decomp::{CallGraph, FunctionDecompilation},
 };
 use ura_project::ProjectSnapshot;
 
@@ -32,6 +33,14 @@ pub enum Event {
         Arc<ura_core::ir::inspect::Bundle>,
         Vec<IrRow>,
     ),
+    Decomp {
+        key: DecompKey,
+        data: Arc<FunctionDecompilation>,
+    },
+    CallGraph {
+        key: u64,
+        graph: Arc<CallGraph>,
+    },
     Project(PathBuf, Box<ProjectSnapshot>, bool),
     Message(String),
     Done,
@@ -52,7 +61,10 @@ pub enum TaskKind {
     Page(u64),
     Graph(u64),
     Ir((u64, u64, bool)),
+    Decomp(DecompKey),
+    CallGraph(u64),
 }
+pub type DecompKey = (u64, u64, u64);
 pub struct Reply {
     pub generation: u64,
     pub kind: TaskKind,

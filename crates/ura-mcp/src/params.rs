@@ -191,3 +191,94 @@ pub struct IrParams {
     #[schemars(description = "Maximum rows to return (page-specific limits: 1-500)")]
     pub limit: Option<usize>,
 }
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DecompFunctionParams {
+    #[schemars(description = "Handle returned by ura_open_binary")]
+    pub handle: String,
+    #[schemars(description = "Function start address, or any address inside the function")]
+    pub function: String,
+    #[schemars(description = "Zero-based line offset for line-oriented responses (default 0)")]
+    pub offset: Option<usize>,
+    #[schemars(description = "Maximum lines to return (1-2000, default 200)")]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct CallGraphParams {
+    #[schemars(description = "Handle returned by ura_open_binary")]
+    pub handle: String,
+    #[schemars(
+        description = "Optional function focus; omit for a bounded view of the whole graph"
+    )]
+    pub function: Option<String>,
+    #[schemars(description = "Callee expansion depth from the focus (1-16, default 1)")]
+    pub depth: Option<usize>,
+    #[schemars(description = "Maximum nodes to return (1-2000, default 200)")]
+    pub max_nodes: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SignatureParameterParams {
+    #[schemars(description = "Parameter name; an empty name becomes aN")]
+    pub name: String,
+    #[schemars(description = "Register location such as rcx or rdi")]
+    pub register: Option<String>,
+    #[schemars(
+        description = "Stack offset relative to the return address, used when register is absent"
+    )]
+    pub stack_offset: Option<i64>,
+    #[schemars(description = "C-like type, for example u64, const char* or u16[4]")]
+    #[serde(rename = "type")]
+    pub ty: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SetFunctionSignatureParams {
+    #[schemars(description = "Handle returned by ura_open_binary")]
+    pub handle: String,
+    #[schemars(description = "Existing .ura project file inside an allowed root")]
+    pub project: String,
+    #[schemars(description = "Function start address, or any address inside the function")]
+    pub address: String,
+    #[schemars(
+        description = "Calling convention: win64, sysv64, cdecl, stdcall, fastcall or thiscall"
+    )]
+    pub convention: String,
+    #[schemars(description = "C-like return type")]
+    pub return_type: String,
+    #[schemars(
+        description = "Ordered parameter list; location evidence remains visible in output"
+    )]
+    pub parameters: Vec<SignatureParameterParams>,
+    #[schemars(description = "Whether the function is variadic")]
+    pub variadic: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SetVariableTypeParams {
+    #[schemars(description = "Handle returned by ura_open_binary")]
+    pub handle: String,
+    #[schemars(description = "Existing .ura project file inside an allowed root")]
+    pub project: String,
+    #[schemars(description = "Function start address, or any address inside the function")]
+    pub function: String,
+    #[schemars(
+        description = "Exact entry-relative stack slot offset shown by ura_get_stack_variables"
+    )]
+    pub offset: i64,
+    #[schemars(
+        description = "Optional display name; omit together with type to clear the override"
+    )]
+    pub name: Option<String>,
+    #[schemars(
+        description = "Optional C-like type; omit together with name to clear the override"
+    )]
+    #[serde(rename = "type")]
+    pub ty: Option<String>,
+}

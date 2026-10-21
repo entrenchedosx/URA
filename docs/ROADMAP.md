@@ -1,5 +1,22 @@
 # Roadmap
 
+## v0.8 — decompiler foundations (development checkpoint)
+
+- [x] Evidence-based ABI and signature recovery for Win64, SysV64 and 32-bit x86 conventions.
+- [x] Physical stack frames: slots, overlaps, saved registers, alignment and bounds.
+- [x] Conservative type system, SSA constraint inference and 41 curated API prototypes.
+- [x] Guarded signature/stack overrides persisted in project schema v4.
+- [x] Bounded interprocedural call graph with cycles, roots, leaves and focused queries.
+- [x] Experimental high-level C-like rendering from verified SSA, explicitly not source.
+- [x] Native Function signature, Stack frame, Types, Call graph and Analysis inspector panels.
+- [x] Five new CLI commands and ten new MCP tools (29 total), all routed through the service.
+- [x] Existing v1-v3 projects migrate forward; no original test or UI feature removed.
+- [ ] Validate decompilation against additional compilers, PDB types and C++ constructs.
+- [ ] Explain/fix variable process CPU outside UI painting (carried from v0.7).
+
+See [decompiler design](DECOMPILER.md) and
+[verification](VERIFICATION-0.8.md).
+
 ## v0.7 — development checkpoint, release blocked
 
 - [x] Typed bit-vector IR and scalar x86/x64 lifting with explicit unknown effects.

@@ -1,10 +1,13 @@
 use std::str::FromStr;
 
 use serde::Serialize;
+use ura_core::decomp::signature::FunctionSignature;
+use ura_core::decomp::types::{TypeDatabase, TypeInference};
+use ura_core::decomp::{HighLevelLine, StackFrame};
 use ura_core::{
     AnalysisOptions, AnalysisReport, BinaryView, DisassemblyPage, ExtractedString, SectionView,
 };
-use ura_project::{Annotation, ExportSummary, ProjectInfo};
+use ura_project::{Annotation, ExportSummary, ProjectInfo, StackVariableOverride};
 
 use crate::error::ServiceError;
 
@@ -358,4 +361,127 @@ pub struct ExportResponse {
     pub schema_version: u32,
     pub project: String,
     pub export: ExportSummary,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SignatureResponse {
+    pub schema_version: u32,
+    pub handle: String,
+    pub binary_hash: String,
+    pub function: String,
+    pub name: String,
+    pub analysis_partial: bool,
+    pub signature: FunctionSignature,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackFrameResponse {
+    pub schema_version: u32,
+    pub handle: String,
+    pub binary_hash: String,
+    pub function: String,
+    pub name: String,
+    pub analysis_partial: bool,
+    pub frame: StackFrame,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TypesResponse {
+    pub schema_version: u32,
+    pub handle: String,
+    pub binary_hash: String,
+    pub function: String,
+    pub name: String,
+    pub analysis_partial: bool,
+    pub database: TypeDatabase,
+    pub database_errors: Vec<String>,
+    pub types: TypeInference,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HighLevelResponse {
+    pub schema_version: u32,
+    pub handle: String,
+    pub binary_hash: String,
+    pub function: String,
+    pub name: String,
+    pub analysis_partial: bool,
+    pub syntax: String,
+    pub status: String,
+    pub total: usize,
+    pub offset: usize,
+    pub limit: usize,
+    pub returned: usize,
+    pub lines: Vec<HighLevelLine>,
+    pub unresolved: usize,
+    pub truncated: bool,
+    pub notes: Vec<String>,
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallGraphNodeView {
+    pub address: String,
+    pub name: String,
+    pub origin: String,
+    pub external: bool,
+    pub callers: usize,
+    pub callees: usize,
+    pub recursive: bool,
+    pub component: Option<usize>,
+    pub depth: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallGraphEdgeView {
+    pub from: String,
+    pub to: String,
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instruction: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallGraphResponse {
+    pub schema_version: u32,
+    pub handle: String,
+    pub binary_hash: String,
+    pub analysis_partial: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub focus: Option<String>,
+    pub depth: usize,
+    pub total_nodes: usize,
+    pub total_edges: usize,
+    pub returned_nodes: usize,
+    pub returned_edges: usize,
+    pub truncated: bool,
+    pub unresolved_indirect: usize,
+    pub roots: Vec<String>,
+    pub leaves: Vec<String>,
+    pub cycles: Vec<Vec<String>>,
+    pub notes: Vec<String>,
+    pub nodes: Vec<CallGraphNodeView>,
+    pub edges: Vec<CallGraphEdgeView>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackVariableResponse {
+    pub schema_version: u32,
+    pub handle: String,
+    pub project: String,
+    pub function: String,
+    pub removed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variable: Option<StackVariableOverride>,
+    pub frame: StackFrame,
 }

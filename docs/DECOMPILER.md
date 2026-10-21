@@ -1,0 +1,152 @@
+# Decompiler foundations (v0.8)
+
+URA v0.8 recovers calling conventions, stack frames, conservative types, an
+interprocedural call graph and a C-like high-level view from the verified
+bit-vector IR introduced in v0.7. The status of the high-level view is
+`experimental-foundations`: it is a structural rendering of verified SSA, not
+reconstructed source, and it is never claimed to compile.
+
+Nothing in this layer guesses to fill a gap. Every recovered fact carries a
+confidence and evidence, and a missing or contradictory fact is reported as
+missing or conflicting. Sample code is never executed.
+
+## Pipeline
+
+`ura_core::decomp::analyze_function` runs the following bounded passes:
+
+1. Lift and verify the function's IR (`ir::inspect`). If verification fails,
+   decompilation fails with the verifier diagnostic.
+2. Recover stack accesses and slots, first without a signature.
+3. Recover the calling convention, register/stack parameters, return value and
+   caller-observed arguments from the lifted entry values and their taint roots.
+4. Apply a user signature override when one is supplied and valid.
+5. Recover the final stack frame using the recovered signature.
+6. Apply stack-slot name/type overrides.
+7. Infer conservative types from SSA constraints and merge ABI value
+   constraints.
+8. Render the recovered high-level IR from SSA, dataflow, the signature and the
+   frame.
+
+The call graph is a separate program-wide pass over the existing analysis.
+All passes accept `AnalysisControl`; cancellation aborts cleanly instead of
+returning partial typed output.
+
+The result (`FunctionDecompilation`) groups the signature, frame, type
+inference, high-level function and diagnostics. Addresses remain `u64` in the
+core; adapters serialize them as `0x`-prefixed strings.
+
+## Calling conventions and signatures
+
+Supported conventions are Win64, SysV64, cdecl, stdcall, fastcall, thiscall and
+unknown. The platform default is Win64 for PE x64, SysV64 for ELF/Mach-O x64 and
+cdecl for 32-bit x86. Observed argument-register and stack use can override the
+default; mixed evidence lowers confidence and is recorded as a conflict.
+
+Recovery records:
+
+- parameter index, name, location (register, stack offset or unknown), type,
+  width, confidence, use count and evidence;
+- return location and type;
+- stack parameter bytes, caller-observed argument count and variadic state when
+  known;
+- convention confidence, conflicts and evidence.
+
+Register arguments are recognized only from reads of the entry value in the
+lifted IR. Win64 shadow space and SysV red-zone rules are applied explicitly.
+Fastcall/stdcall/thiscall cleanup immediates are retained as evidence.
+x64 cleanup immediates are noted but do not change Win64/SysV64 conventions.
+
+`signature::describe_override` converts a saved override into a call-site hint
+for callees that have not themselves been decompiled. Overrides are stored
+separately from inference, are limited to 64 parameters, and are validated
+before use; invalid overrides are rejected rather than silently sanitized.
+
+A curated database of 41 documented C and Windows API prototypes supplies types
+for known imports. It is external knowledge and is labelled as such; unknown
+import names are not invented.
+
+## Stack frames
+
+`stack::recover` follows stack-pointer and frame-pointer deltas through the
+verified CFG and records physical slots, not fabricated variables. Slots expose
+offset, width, name, kind, type, user name/type, reads/writes, first/last
+instruction, saved register, overlaps and confidence. Saved registers, alignment,
+frame size, local bytes, incoming argument bytes and the return-address offset
+are reported. Overlapping slot accesses are preserved so callers can see the
+aliasing instead of receiving a clean but false layout.
+
+Limits: 20,000 stack accesses and 2,048 slots per function. Hitting either bound
+marks the frame truncated. Unresolved stack deltas remain unknown.
+
+## Types
+
+The type system covers void, bool, integers of 1-64 bits with signedness only
+when observed, floats (32/64/80), pointers, arrays, structs, unions and named
+aliases. Parsing accepts bounded C-style spellings; `char` aliases `u8` and
+therefore normalizes to `u8` in display.
+
+Inference derives constraints from SSA operations (loads/stores, pointer
+arithmetic, comparisons, calls, shifts and extension) rather than from source
+patterns. A type is widened only when the constraints justify it; conflicting
+constraints are counted and reported. User stack-slot type overrides take
+precedence for display while the recovered type remains available separately.
+
+Limits: 5,000 inferred variables per function, 512 fields per structure, and
+structure/typedef validation errors are surfaced. Truncation is explicit.
+
+## High-level view
+
+`hir::build` renders loops, conditionals, selections, comparisons, calls, loads
+and stores in C-like syntax with stable labels. Every line keeps its source
+address where one exists. Unsupported instructions, unresolved branches and
+calls without signatures are marked, not guessed. Output is bounded at 20,000
+lines and nesting depth 64. The view reports `experimental-foundations` and
+`unresolved` counts alongside its notes.
+
+## Call graph
+
+`callgraph::build` uses direct calls from the verified IR, preserves indirect
+calls as unresolved counts and computes roots, leaves and strongly connected
+components. Self-loops and cycles are reported explicitly. Focused subgraphs
+(depth 1-16) and bounded path queries are available; the complete graph is
+limited to 8,192 functions and marks truncation.
+
+Service/CLI/MCP queries additionally bound focused expansion to 2,000 nodes and
+20,000 edges. JSON pages use explicit node/edge totals so a client can tell a
+complete answer from a truncated one.
+
+## Persistence and adapters
+
+Project schema v4 adds `function_signatures(address, signature_json,
+updated_at)` and `stack_variables(function_address, slot_offset, name,
+type_json, updated_at)`. Existing schema v1-v3 projects migrate forward; newer
+schemas are rejected. Signature and stack overrides survive save/reopen and are
+reloaded into decompilation hints.
+
+Headless access is shared:
+
+- CLI: `signature`, `stack`, `types`, `callgraph`, `highlevel` (text or
+  `--json`).
+- MCP: eight read-only tools and two write tools
+  (`ura_set_function_signature`, `ura_set_variable_type`). Writes require
+  `--enable-writes` and an attached, matching project.
+- Native: Function signature, Stack frame, Types, Call graph and Analysis
+  inspector panels. Selection follows the function selected in the rest of the
+  workspace; recovered addresses navigate back to disassembly/IR.
+
+Service decompilations are cached per handle (four functions, LRU) and
+invalidated by reanalysis or override changes. Golden tests compare the native
+worker, service, CLI JSON and MCP responses with direct core calls.
+
+## Explicit limits
+
+- Only functions discovered by URA's analysis can be decompiled.
+- No debug symbols, PDB types, exception metadata, C++ reconstruction or
+  structure recovery from global data is implemented.
+- No claim of compilable output, original variable names or original source
+  fidelity.
+- Bounds above are hard stops with diagnostics; they are not tuned for
+  adversarial worst cases.
+- Samples remain read-only; nothing in this layer executes them.
+
+See [VERIFICATION-0.8.md](VERIFICATION-0.8.md) for the exact gates and tests.

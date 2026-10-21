@@ -32,6 +32,11 @@ impl egui_dock::TabViewer for Workspace {
             Panel::Messages => self.messages_view(ui),
             Panel::GraphOverview => self.graph_overview(ui),
             Panel::Ir => self.ir_view(ui),
+            Panel::Signature => self.signature_view(ui),
+            Panel::Stack => self.stack_view(ui),
+            Panel::Types => self.types_view(ui),
+            Panel::CallGraph => self.call_graph_view(ui),
+            Panel::HighLevel => self.high_level_view(ui),
         }
     }
     fn scroll_bars(&self, _tab: &Panel) -> [bool; 2] {
@@ -219,6 +224,609 @@ impl Workspace {
                 }
             });
         });
+    }
+    fn decomp_target(&mut self, ui: &mut egui::Ui, description: &str) -> Option<(u64, String)> {
+        if self.analysis.is_none() {
+            ui.label(format!(
+                "Analyze a binary to inspect the recovered {description}."
+            ));
+            return None;
+        }
+        let Some(function) = self.function() else {
+            ui.label(format!(
+                "Select an analyzed function to inspect its recovered {description}."
+            ));
+            return None;
+        };
+        Some((function.address, self.name(function)))
+    }
+    fn decomp_data(
+        &mut self,
+        ui: &mut egui::Ui,
+        function: u64,
+    ) -> Option<std::sync::Arc<ura_core::decomp::FunctionDecompilation>> {
+        self.ensure_decomp();
+        let key = (self.analysis_revision, self.project_revision, function);
+        if self.decomp_key == Some(key)
+            && let Some(data) = &self.decomp
+            && data.function == function
+        {
+            return Some(data.clone());
+        }
+        if self.decomp_key == Some(key)
+            && let Some(error) = &self.decomp_error
+        {
+            ui.colored_label(self.colors().error, error);
+            if ui.button("Retry decompilation").clicked() {
+                self.decomp_key = None;
+                self.decomp_error = None;
+            }
+            return None;
+        }
+        ui.horizontal(|ui| {
+            ui.spinner();
+            ui.label("Recovering signature, stack frame, types and high-level IR…");
+        });
+        None
+    }
+    fn call_graph_data(
+        &mut self,
+        ui: &mut egui::Ui,
+    ) -> Option<std::sync::Arc<ura_core::decomp::CallGraph>> {
+        self.ensure_call_graph();
+        if let Some(error) = &self.call_graph_error {
+            ui.colored_label(self.colors().error, error);
+            if ui.button("Retry call graph").clicked() {
+                self.call_graph_key = None;
+                self.call_graph_error = None;
+            }
+            return None;
+        }
+        if self.call_graph_key != Some(self.analysis_revision) {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Building call graph…");
+            });
+            return None;
+        }
+        self.call_graph.clone()
+    }
+    fn signature_view(&mut self, ui: &mut egui::Ui) {
+        let Some((function, name)) = self.decomp_target(ui, "function signature") else {
+            return;
+        };
+        let Some(data) = self.decomp_data(ui, function) else {
+            return;
+        };
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(name).strong());
+            ui.label(
+                RichText::new(format_address(function))
+                    .monospace()
+                    .color(self.colors().muted),
+            );
+            ui.separator();
+            ui.label(
+                RichText::new("Recovered, not original source")
+                    .small()
+                    .color(self.colors().muted),
+            );
+        });
+        let signature = &data.signature;
+        ui.add_space(4.0);
+        ui.label(
+            RichText::new(signature.declaration())
+                .monospace()
+                .size(self.settings.font_size + 1.0),
+        );
+        ui.add_space(4.0);
+        egui::Grid::new(("signature-meta", function))
+            .num_columns(2)
+            .spacing([18.0, 3.0])
+            .show(ui, |ui| {
+                ui.label("Convention");
+                ui.label(format!(
+                    "{} ({})",
+                    signature.convention.name(),
+                    signature.convention_confidence.name()
+                ));
+                ui.end_row();
+                ui.label("Return");
+                ui.label(format!(
+                    "{} ({})",
+                    signature.return_value.ty.display(),
+                    signature.return_value.confidence.name()
+                ));
+                ui.end_row();
+                ui.label("Parameters");
+                ui.label(format!(
+                    "{} recovered · {} stack bytes",
+                    signature.parameter_count(),
+                    signature.stack_parameter_bytes
+                ));
+                ui.end_row();
+                ui.label("Override");
+                ui.label(if signature.user_override {
+                    "user-authored signature applied"
+                } else {
+                    "none · inference only"
+                });
+                ui.end_row();
+            });
+        ui.separator();
+        if signature.parameters.is_empty() {
+            ui.label("No parameters were observed in the verified IR.");
+        } else {
+            egui::ScrollArea::vertical()
+                .id_salt(("signature-parameters", function))
+                .max_height(ui.available_height() * 0.55)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    egui::Grid::new(("signature-parameters-grid", function))
+                        .num_columns(6)
+                        .striped(true)
+                        .spacing([14.0, 3.0])
+                        .show(ui, |ui| {
+                            for header in ["#", "Name", "Location", "Type", "Uses", "Confidence"] {
+                                ui.label(RichText::new(header).strong());
+                            }
+                            ui.end_row();
+                            for parameter in &signature.parameters {
+                                ui.label(parameter.index.to_string());
+                                ui.label(
+                                    RichText::new(if parameter.name.is_empty() {
+                                        format!("a{}", parameter.index)
+                                    } else {
+                                        parameter.name.clone()
+                                    })
+                                    .monospace(),
+                                );
+                                ui.label(parameter.location.display());
+                                ui.label(parameter.ty.display());
+                                ui.label(parameter.uses.to_string());
+                                ui.label(parameter.confidence.name());
+                                ui.end_row();
+                            }
+                        });
+                });
+        }
+        if !signature.conflicts.is_empty() {
+            ui.separator();
+            for conflict in &signature.conflicts {
+                ui.colored_label(self.colors().gold, format!("Conflict: {conflict}"));
+            }
+        }
+        if !data.diagnostics.is_empty() {
+            ui.separator();
+            egui::CollapsingHeader::new(format!("Diagnostics ({})", data.diagnostics.len()))
+                .id_salt(("signature-diagnostics", function))
+                .show(ui, |ui| {
+                    for note in &data.diagnostics {
+                        ui.label(note);
+                    }
+                });
+        }
+        if !signature.evidence.is_empty() {
+            egui::CollapsingHeader::new(format!("Evidence ({})", signature.evidence.len()))
+                .id_salt(("signature-evidence", function))
+                .show(ui, |ui| {
+                    let mut navigate = None;
+                    for evidence in &signature.evidence {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(&evidence.kind).strong());
+                            match evidence.address {
+                                Some(address) => {
+                                    if ui
+                                        .selectable_label(
+                                            false,
+                                            RichText::new(format_address(address))
+                                                .monospace()
+                                                .color(self.colors().accent),
+                                        )
+                                        .clicked()
+                                    {
+                                        navigate = Some(address);
+                                    }
+                                }
+                                None => {
+                                    ui.label("-");
+                                }
+                            }
+                            ui.label(&evidence.detail);
+                        });
+                    }
+                    if let Some(address) = navigate {
+                        self.navigate_address(address);
+                    }
+                });
+        }
+    }
+    fn stack_view(&mut self, ui: &mut egui::Ui) {
+        let Some((function, name)) = self.decomp_target(ui, "stack frame") else {
+            return;
+        };
+        let Some(data) = self.decomp_data(ui, function) else {
+            return;
+        };
+        let frame = &data.frame;
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(name).strong());
+            ui.label(
+                RichText::new(format_address(function))
+                    .monospace()
+                    .color(self.colors().muted),
+            );
+        });
+        ui.label(format!(
+            "frame {} bytes · locals {} · incoming arguments {} · alignment {} · frame pointer {}",
+            frame.frame_size,
+            frame.local_bytes,
+            frame.incoming_argument_bytes,
+            frame.alignment,
+            frame.uses_frame_pointer
+        ));
+        ui.label(format!(
+            "return address at {:+} · saved registers: {} · {} slots{}",
+            frame.return_address_offset,
+            if frame.saved_registers.is_empty() {
+                "none".to_string()
+            } else {
+                frame.saved_registers.join(", ")
+            },
+            frame.slots.len(),
+            if frame.truncated { " · truncated" } else { "" }
+        ));
+        ui.separator();
+        let mut navigate = None;
+        egui::ScrollArea::vertical()
+            .id_salt(("stack-slots", function))
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                egui::Grid::new(("stack-slots-grid", function))
+                    .num_columns(8)
+                    .striped(true)
+                    .spacing([14.0, 3.0])
+                    .show(ui, |ui| {
+                        for header in [
+                            "Offset",
+                            "Name",
+                            "Kind",
+                            "Type",
+                            "R/W",
+                            "Lifetime",
+                            "Saved",
+                            "Confidence",
+                        ] {
+                            ui.label(RichText::new(header).strong());
+                        }
+                        ui.end_row();
+                        for slot in &frame.slots {
+                            ui.label(format!("{:+}", slot.offset));
+                            ui.label(
+                                RichText::new(slot.user_name.as_deref().unwrap_or(&slot.name))
+                                    .monospace(),
+                            );
+                            ui.label(&slot.kind);
+                            ui.label(slot.user_type.as_ref().unwrap_or(&slot.ty).display());
+                            ui.label(format!("{}/{}", slot.reads, slot.writes));
+                            ui.horizontal(|ui| {
+                                if ui
+                                    .selectable_label(
+                                        false,
+                                        RichText::new(format_address(slot.first_instruction))
+                                            .monospace()
+                                            .color(self.colors().accent),
+                                    )
+                                    .clicked()
+                                {
+                                    navigate = Some(slot.first_instruction);
+                                }
+                                ui.label("..");
+                                ui.label(
+                                    RichText::new(format_address(slot.last_instruction))
+                                        .monospace()
+                                        .color(self.colors().muted),
+                                );
+                            });
+                            ui.label(slot.saved_register.as_deref().unwrap_or("-"));
+                            ui.label(slot.confidence.name());
+                            ui.end_row();
+                        }
+                    });
+            });
+        if let Some(address) = navigate {
+            self.navigate_address(address);
+        }
+        if !frame.notes.is_empty() {
+            ui.separator();
+            for note in &frame.notes {
+                ui.colored_label(self.colors().muted, note);
+            }
+        }
+        if !data.diagnostics.is_empty() {
+            egui::CollapsingHeader::new(format!("Diagnostics ({})", data.diagnostics.len()))
+                .id_salt(("stack-diagnostics", function))
+                .show(ui, |ui| {
+                    for note in &data.diagnostics {
+                        ui.label(note);
+                    }
+                });
+        }
+    }
+    fn types_view(&mut self, ui: &mut egui::Ui) {
+        let Some((function, name)) = self.decomp_target(ui, "types") else {
+            return;
+        };
+        let Some(data) = self.decomp_data(ui, function) else {
+            return;
+        };
+        let inference = &data.types;
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(name).strong());
+            ui.label(
+                RichText::new(format_address(function))
+                    .monospace()
+                    .color(self.colors().muted),
+            );
+        });
+        ui.label(format!(
+            "{} variables · {} conflicts{} · conservative constraints only",
+            inference.variables.len(),
+            inference.conflicts,
+            if inference.truncated {
+                " · truncated"
+            } else {
+                ""
+            }
+        ));
+        ui.separator();
+        egui::ScrollArea::vertical()
+            .id_salt(("types-variables", function))
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                for variable in &inference.variables {
+                    egui::CollapsingHeader::new(format!(
+                        "{} : {}  ·  {}",
+                        variable.variable,
+                        variable.ty.display(),
+                        variable.confidence.name()
+                    ))
+                    .id_salt(("type-variable", function, variable.variable_id))
+                    .show(ui, |ui| {
+                        if variable.constraints.is_empty() {
+                            ui.label("No constraints recorded.");
+                        }
+                        for constraint in &variable.constraints {
+                            ui.label(format!(
+                                "{} at {}{}",
+                                constraint.kind,
+                                constraint
+                                    .source
+                                    .map(format_address)
+                                    .unwrap_or_else(|| "-".into()),
+                                if constraint.detail.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!(" · {}", constraint.detail)
+                                }
+                            ));
+                        }
+                        for conflict in &variable.conflicts {
+                            ui.colored_label(self.colors().gold, format!("Conflict: {conflict}"));
+                        }
+                    });
+                }
+            });
+        if !inference.notes.is_empty() {
+            ui.separator();
+            for note in &inference.notes {
+                ui.colored_label(self.colors().muted, note);
+            }
+        }
+    }
+    fn high_level_view(&mut self, ui: &mut egui::Ui) {
+        let Some((function, name)) = self.decomp_target(ui, "high-level IR") else {
+            return;
+        };
+        let Some(data) = self.decomp_data(ui, function) else {
+            return;
+        };
+        let high_level = &data.high_level;
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(name).strong());
+            ui.label(
+                RichText::new(format_address(function))
+                    .monospace()
+                    .color(self.colors().muted),
+            );
+            ui.separator();
+            ui.label(high_level.syntax.clone());
+            ui.colored_label(self.colors().gold, high_level.status.clone());
+            if ui.button("Copy").clicked() {
+                ui.ctx().copy_text(high_level.text());
+            }
+        });
+        ui.label(
+            RichText::new(
+                "Structural rendering of verified SSA. It is not source code and is not claimed to compile.",
+            )
+            .small()
+            .color(self.colors().muted),
+        );
+        if high_level.unresolved > 0 {
+            ui.colored_label(
+                self.colors().gold,
+                format!(
+                    "{} unresolved call(s) or construct(s) are marked instead of guessed",
+                    high_level.unresolved
+                ),
+            );
+        }
+        ui.separator();
+        let mut navigate = None;
+        egui::ScrollArea::both()
+            .id_salt(("high-level-lines", function))
+            .auto_shrink([false, false])
+            .show_rows(
+                ui,
+                self.settings.row_height,
+                high_level.lines.len(),
+                |ui, range| {
+                    for line in &high_level.lines[range] {
+                        ui.horizontal(|ui| {
+                            match line.address {
+                                Some(address) => {
+                                    if ui
+                                        .selectable_label(
+                                            self.location.address == Some(address),
+                                            RichText::new(format_address(address))
+                                                .monospace()
+                                                .color(self.colors().accent),
+                                        )
+                                        .clicked()
+                                    {
+                                        navigate = Some(address);
+                                    }
+                                }
+                                None => {
+                                    ui.label(
+                                        RichText::new("            ")
+                                            .monospace()
+                                            .color(self.colors().muted),
+                                    );
+                                }
+                            }
+                            ui.label(
+                                RichText::new(format!("{}{}", "  ".repeat(line.indent), line.text))
+                                    .monospace(),
+                            );
+                        });
+                    }
+                },
+            );
+        if let Some(address) = navigate {
+            self.navigate_address(address);
+        }
+        if !high_level.notes.is_empty() {
+            ui.separator();
+            for note in &high_level.notes {
+                ui.colored_label(self.colors().muted, note);
+            }
+        }
+    }
+    fn call_graph_view(&mut self, ui: &mut egui::Ui) {
+        if self.analysis.is_none() {
+            ui.label("Analyze a binary to inspect the call graph.");
+            return;
+        }
+        let Some(graph) = self.call_graph_data(ui) else {
+            return;
+        };
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Recovered call graph").strong());
+            ui.label(format!(
+                "{} nodes · {} edges · {} cycles · {} unresolved indirect",
+                graph.nodes.len(),
+                graph.edges.len(),
+                graph.cycles.len(),
+                graph.unresolved_indirect
+            ));
+            if graph.truncated {
+                ui.colored_label(self.colors().gold, "truncated");
+            }
+        });
+        ui.label(format!(
+            "{} roots · {} leaves{}",
+            graph.roots.len(),
+            graph.leaves.len(),
+            if graph.notes.is_empty() {
+                String::new()
+            } else {
+                format!(" · {}", graph.notes.join(" · "))
+            }
+        ));
+        if !graph.cycles.is_empty() {
+            egui::CollapsingHeader::new(format!("Cycles ({})", graph.cycles.len()))
+                .id_salt("call-graph-cycles")
+                .show(ui, |ui| {
+                    for cycle in &graph.cycles {
+                        ui.label(
+                            RichText::new(
+                                cycle
+                                    .iter()
+                                    .map(|address| format_address(*address))
+                                    .collect::<Vec<_>>()
+                                    .join(" -> "),
+                            )
+                            .monospace(),
+                        );
+                    }
+                });
+        }
+        ui.separator();
+        let mut navigate = None;
+        egui::ScrollArea::vertical()
+            .id_salt("call-graph-nodes")
+            .auto_shrink([false, false])
+            .show_rows(
+                ui,
+                self.settings.row_height,
+                graph.nodes.len(),
+                |ui, range| {
+                    for node in &graph.nodes[range] {
+                        ui.horizontal(|ui| {
+                            if ui
+                                .selectable_label(
+                                    self.location.address == Some(node.address),
+                                    RichText::new(format_address(node.address))
+                                        .monospace()
+                                        .color(self.colors().accent),
+                                )
+                                .clicked()
+                            {
+                                navigate = Some(node.address);
+                            }
+                            ui.label(RichText::new(&node.name).strong());
+                            if node.external {
+                                ui.colored_label(self.colors().gold, "external");
+                            }
+                            if node.recursive {
+                                ui.colored_label(self.colors().gold, "recursive");
+                            }
+                            ui.label(format!(
+                                "in {} · out {}{}",
+                                node.callers,
+                                node.callees,
+                                node.component
+                                    .map(|component| format!(" · component {component}"))
+                                    .unwrap_or_default()
+                            ));
+                        });
+                    }
+                },
+            );
+        if let Some(address) = navigate {
+            self.actions
+                .push(Action::Navigate(self.address_location(address), true));
+        }
+        egui::CollapsingHeader::new(format!("Edges ({})", graph.edges.len()))
+            .id_salt("call-graph-edges")
+            .show(ui, |ui| {
+                for edge in &graph.edges {
+                    ui.label(
+                        RichText::new(format!(
+                            "{} -> {} [{}]{}",
+                            format_address(edge.from),
+                            format_address(edge.to),
+                            edge.kind,
+                            edge.instruction
+                                .map(|instruction| format!(" at {}", format_address(instruction)))
+                                .unwrap_or_default()
+                        ))
+                        .monospace(),
+                    );
+                }
+            });
     }
     fn empty(&mut self, ui: &mut egui::Ui) -> bool {
         if self.binary.is_some() {

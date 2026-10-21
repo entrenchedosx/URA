@@ -1,6 +1,7 @@
 pub mod address;
 pub mod analysis;
 pub mod binary;
+pub mod decomp;
 pub mod disasm;
 pub mod error;
 pub mod hex;

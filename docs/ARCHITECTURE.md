@@ -1,10 +1,10 @@
 # Architecture
 
-## Native desktop (v0.7 development)
+## Native desktop (v0.8 development)
 
 `crates/ura-native` is the default workspace member. Its eframe entry point
 renders egui directly through OpenGL and winit; no browser engine or IPC is
-involved. It depends on `ura-core` and `ura-project` directly. Schema v3 and its v1/v2 migrations remain compatible. A separate read-only
+involved. It depends on `ura-core` and `ura-project` directly. Schema v4 and its v1/v2/v3 migrations remain compatible. A separate read-only
 snapshot API supports headless attachment without migration or binary-path IO.
 
 - `app.rs`: shared workspace, navigation/selection, project actions, settings,
@@ -16,6 +16,10 @@ snapshot API supports headless attachment without migration or binary-path IO.
   decoding, analysis, string scanning and graph layout stay off the paint path.
   IR lifting, SSA/dataflow and IR row formatting also run here. Revision-tagged
   replies cannot replace newer analysis. Raw/SSA views reuse one verified bundle.
+  ABI/stack/type recovery and high-level rendering run here as revision- and
+  project-tagged jobs; call-graph construction is a separate revision-tagged job.
+  The Function signature, Stack frame, Types, Call graph and Analysis inspector
+  panels follow the workspace's selected function.
 - `navigation.rs`: u64 address/offset mapping and bounded history.
 - `graph.rs`: deterministic, cycle-safe layered graph geometry with height-aware
   spacing; at most 240 blocks and 32 displayed instructions per block.
@@ -41,7 +45,7 @@ worker drains them on shutdown. Samples remain read-only.
 `ura-service` owns sessions, normalized analysis options, schema-versioned DTOs,
 path restrictions and explicit write permissions. It invokes the same core
 analysis and project functions used by the desktop. `ura-cli` is a synchronous
-text/JSON adapter; `ura-mcp` routes 19 stdio tools to the service. Neither starts
+text/JSON adapter; `ura-mcp` routes 29 stdio tools to the service. Neither starts
 the desktop. MCP uses rmcp and stderr logging; there is no network listener.
 Query pages and byte reads have explicit limits. Address-based byte reads must
 fit one file-backed section. Read-only project snapshots support v1-v3 and
@@ -50,7 +54,7 @@ Service calls are serialized per process; cancellation/progress notifications an
 persisted analysis caches are not implemented in MCP. Verified IR bundles are
 cached in memory, at most two per handle and eight handles. Normalized options
 and binary identity accompany IR pages; reanalysis invalidates the cache. SQLite
-remains schema v3 and no IR migration is needed. Strings are rescanned per
+remains schema v4; decompiler overrides use the v3-to-v4 migration. Strings are rescanned per
 query; future caching should be keyed by binary identity and scan options.
 
 ## Semantic analysis
@@ -61,6 +65,15 @@ scalar SSA, propagation and side-effect-aware dead-definition reports. `inspect`
 is the shared orchestration and row projection boundary. Each pass is bounded;
 core and native calls support cancellation. There is one lifter for all adapters.
 See [IR-DESIGN.md](IR-DESIGN.md) for exact semantics and limits.
+
+`ura-core/src/decomp` builds only on that verified IR. Signature recovery
+combines platform defaults, observed argument registers, stack accesses and
+taint-rooted uses; stack recovery records physical slots and overlaps; type
+inference merges SSA constraints with ABI value constraints; the high-level view
+is a bounded structural rendering labelled experimental. A user override is kept
+separate from inference and applied only after validation. The call graph uses
+direct calls and marks indirect calls unresolved. See
+[DECOMPILER.md](DECOMPILER.md).
 
 `jumptable.rs` recognizes two narrow guarded switch patterns using a separate
 read-only file-backed data image. Targets are validated before CFG recovery.
@@ -108,6 +121,7 @@ Pure analysis library with no Tauri or UI dependencies.
 | `hex.rs` | Bounded file-offset reads with section/address annotation |
 | `strings.rs` | ASCII and UTF-16LE scanning with length/encoding/max-result controls |
 | `ir/` | Typed raw/SSA IR, verified lifting and conservative dataflow reports |
+| `decomp/` | ABI/signature recovery, stack frames, conservative types, bounded call graph and experimental high-level rendering |
 | `jumptable.rs` | Guarded absolute/relative switch candidates, bounded table validation |
 | `error.rs` | `UraError` variants used by every fallible operation |
 
@@ -119,8 +133,9 @@ read-only, hashed once, and never modified.
 Persistence for `.ura` files using bundled SQLite (`rusqlite`). It knows nothing about the UI or
 the analysis engine beyond the `BinaryIdentity` it stores.
 
-- Schema version 3 is enforced through `PRAGMA user_version`; version 1 and 2 projects are
-  migrated in place by adding the `function_names`, `manual_functions` and `view_state` tables.
+- Schema version 4 is enforced through `PRAGMA user_version`; version 1-3 projects are
+  migrated in place by adding `function_names`, `manual_functions`, `view_state`,
+  `function_signatures` and `stack_variables` as needed.
 - Creating a project refuses to overwrite an existing file.
 - Annotations are upserted per normalized address; timestamps are UTC ISO-8601 strings.
 - Custom function names are stored per function address and override imported symbols. They

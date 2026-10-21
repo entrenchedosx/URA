@@ -8,13 +8,18 @@ use rmcp::model::{CallToolResult, Implementation, ServerCapabilities, ServerConf
 use rmcp::{tool, tool_handler, tool_router, ErrorData, ServerHandler};
 use serde::Serialize;
 use serde_json::Value;
+use ura_core::decomp::signature::{
+    CallingConvention, Location, SignatureOverride, SignatureParameterInput,
+};
+use ura_core::decomp::types::TypeRef;
 use ura_core::{AnalysisOptions, StringScanOptions, MAX_STRINGS};
 use ura_service::{ErrorView, FunctionSort, Service, ServiceError, XrefDirection};
 
 use crate::params::{
-    AddCommentParams, AnalyzeParams, BinaryHandleParams, CfgParams, DisassemblyParams,
-    ExportAnalysisParams, FunctionParams, GetFunctionsParams, OpenBinaryParams, ReadBytesParams,
-    RenameFunctionParams, SaveProjectParams, SearchStringsParams, XrefsParams,
+    AddCommentParams, AnalyzeParams, BinaryHandleParams, CallGraphParams, CfgParams,
+    DecompFunctionParams, DisassemblyParams, ExportAnalysisParams, FunctionParams,
+    GetFunctionsParams, OpenBinaryParams, ReadBytesParams, RenameFunctionParams, SaveProjectParams,
+    SearchStringsParams, SetFunctionSignatureParams, SetVariableTypeParams, XrefsParams,
 };
 
 const INSTRUCTIONS: &str = "URA performs local static analysis of PE, ELF and Mach-O binaries. \
@@ -113,6 +118,153 @@ impl UraServer {
             p.offset.unwrap_or(0),
             p.limit.unwrap_or(100),
         ))
+    }
+    #[tool(
+        name = "ura_get_function_signature",
+        annotations(title = "Get function signature", read_only_hint = true),
+        description = "Recover the effective signature of a function from verified lifted IR: calling convention, parameter locations, types, return value, confidence and evidence. Requires ura_analyze."
+    )]
+    fn ura_get_function_signature(
+        &self,
+        Parameters(p): Parameters<DecompFunctionParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        respond(self.service().function_signature(&p.handle, &p.function))
+    }
+    #[tool(
+        name = "ura_get_calling_convention",
+        annotations(title = "Get calling convention", read_only_hint = true),
+        description = "Return the recovered calling convention together with its evidence and any conflicts. This is an evidence-based estimate, not a proof of the original source ABI."
+    )]
+    fn ura_get_calling_convention(
+        &self,
+        Parameters(p): Parameters<DecompFunctionParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        respond(self.service().function_signature(&p.handle, &p.function))
+    }
+    #[tool(
+        name = "ura_get_stack_variables",
+        annotations(title = "Get stack variables", read_only_hint = true),
+        description = "Recover physical stack slots, incoming argument and local offsets, access widths and per-instruction evidence. User overrides are included when the project is attached."
+    )]
+    fn ura_get_stack_variables(
+        &self,
+        Parameters(p): Parameters<DecompFunctionParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        respond(self.service().stack_frame(&p.handle, &p.function))
+    }
+    #[tool(
+        name = "ura_get_types",
+        annotations(title = "Get inferred types", read_only_hint = true),
+        description = "Return conservative type constraints and inferred variable widths from verified IR. Signedness, pointee types and floating-point use are never guessed."
+    )]
+    fn ura_get_types(
+        &self,
+        Parameters(p): Parameters<DecompFunctionParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        respond(self.service().inferred_types(&p.handle, &p.function))
+    }
+    #[tool(
+        name = "ura_get_structure",
+        annotations(title = "Get recovered structure", read_only_hint = true),
+        description = "Return a bounded page of the recovered high-level control structure. The view is an experimental structural rendering, not decompiled source."
+    )]
+    fn ura_get_structure(
+        &self,
+        Parameters(p): Parameters<DecompFunctionParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        respond(self.service().high_level(
+            &p.handle,
+            &p.function,
+            p.offset.unwrap_or(0),
+            p.limit.unwrap_or(200),
+        ))
+    }
+    #[tool(
+        name = "ura_get_call_graph",
+        annotations(title = "Get call graph", read_only_hint = true),
+        description = "Return a bounded directed call graph of direct calls and direct tail calls. Unresolved indirect transfers are counted, never invented. Optionally focus on one function and expand by depth."
+    )]
+    fn ura_get_call_graph(
+        &self,
+        Parameters(p): Parameters<CallGraphParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        respond(self.service().call_graph(
+            &p.handle,
+            p.function.as_deref(),
+            p.depth.unwrap_or(1),
+            p.max_nodes.unwrap_or(200),
+        ))
+    }
+    #[tool(
+        name = "ura_get_type_constraints",
+        annotations(title = "Get type constraints", read_only_hint = true),
+        description = "Return per-variable type constraints, conflicts and confidence derived from loads, stores, calls and comparisons. Constraints are evidence, not proof."
+    )]
+    fn ura_get_type_constraints(
+        &self,
+        Parameters(p): Parameters<DecompFunctionParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        respond(self.service().inferred_types(&p.handle, &p.function))
+    }
+    #[tool(
+        name = "ura_get_high_level_ir",
+        annotations(title = "Get high-level IR", read_only_hint = true),
+        description = "Return a bounded page of recovered high-level IR rendered as non-compilable C-like lines with source addresses and explicit unresolved markers."
+    )]
+    fn ura_get_high_level_ir(
+        &self,
+        Parameters(p): Parameters<DecompFunctionParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        respond(self.service().high_level(
+            &p.handle,
+            &p.function,
+            p.offset.unwrap_or(0),
+            p.limit.unwrap_or(200),
+        ))
+    }
+    #[tool(
+        name = "ura_set_function_signature",
+        annotations(title = "Set function signature", read_only_hint = false),
+        description = "Persist a user-authored signature override in an existing .ura project. The inferred evidence is retained and the effective signature is reported. Requires --enable-writes."
+    )]
+    fn ura_set_function_signature(
+        &self,
+        Parameters(p): Parameters<SetFunctionSignatureParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let result = signature_override(&p).and_then(|signature| {
+            self.service().set_function_signature(
+                &p.handle,
+                Path::new(&p.project),
+                &p.address,
+                &signature,
+            )
+        });
+        respond(result)
+    }
+    #[tool(
+        name = "ura_set_variable_type",
+        annotations(title = "Set stack variable name or type", read_only_hint = false),
+        description = "Persist a display name and/or C-like type for one recovered stack slot. Omit both to clear the override. Requires --enable-writes."
+    )]
+    fn ura_set_variable_type(
+        &self,
+        Parameters(p): Parameters<SetVariableTypeParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let result = (|| {
+            let ty =
+                p.ty.as_deref()
+                    .map(|text| TypeRef::parse(text, 64).map_err(ServiceError::InvalidArgument))
+                    .transpose()?;
+            self.service().set_stack_variable(
+                &p.handle,
+                Path::new(&p.project),
+                &p.function,
+                p.offset,
+                p.name.as_deref(),
+                ty.as_ref(),
+            )
+        })();
+        respond(result)
     }
     #[tool(
         name = "ura_open_binary",
@@ -385,6 +537,43 @@ impl ServerHandler for UraServer {
             .with_server_info(Implementation::new("ura-mcp", env!("CARGO_PKG_VERSION")))
             .with_instructions(INSTRUCTIONS)
     }
+}
+
+fn signature_override(p: &SetFunctionSignatureParams) -> Result<SignatureOverride, ServiceError> {
+    let convention = CallingConvention::parse(&p.convention).ok_or_else(|| {
+        ServiceError::InvalidArgument(format!(
+            "unknown calling convention '{}'; expected win64, sysv64, cdecl, stdcall, fastcall or thiscall",
+            p.convention
+        ))
+    })?;
+    let return_type = TypeRef::parse(&p.return_type, 64).map_err(ServiceError::InvalidArgument)?;
+    let mut parameters = Vec::with_capacity(p.parameters.len());
+    for (index, parameter) in p.parameters.iter().enumerate() {
+        let name = if parameter.name.trim().is_empty() {
+            format!("a{index}")
+        } else {
+            parameter.name.trim().to_string()
+        };
+        let ty = TypeRef::parse(&parameter.ty, 64).map_err(ServiceError::InvalidArgument)?;
+        let location = match (parameter.register.as_deref(), parameter.stack_offset) {
+            (Some(register), _) if !register.trim().is_empty() => Location::Register {
+                name: register.trim().to_string(),
+            },
+            (_, Some(offset)) => Location::Stack { offset, width: 64 },
+            _ => {
+                return Err(ServiceError::InvalidArgument(format!(
+                    "parameter '{name}' needs a register or a stack offset"
+                )))
+            }
+        };
+        parameters.push(SignatureParameterInput { name, location, ty });
+    }
+    Ok(SignatureOverride {
+        convention,
+        return_type,
+        parameters,
+        variadic: p.variadic,
+    })
 }
 
 fn respond<T: Serialize>(result: Result<T, ServiceError>) -> Result<CallToolResult, ErrorData> {

@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use ura_core::binary::{ExportView, ImportView};
+use ura_core::decomp::signature::SignatureOverride;
+use ura_core::decomp::types::TypeRef;
 use ura_core::{
     analyze_binary_with_seeds, analyze_path, format_address, parse_address, AnalysisOptions,
     AnalysisSeed, BinaryView, Function, FunctionOrigin, LoadedBinary, ProgramAnalysis, SectionView,
@@ -24,11 +26,13 @@ use crate::RESPONSE_SCHEMA_VERSION;
 const MAX_FUNCTION_REFS: usize = 1_000;
 
 pub struct Service {
-    policy: PathPolicy,
+    pub(crate) policy: PathPolicy,
     writes_enabled: bool,
     next_handle: u64,
     pub(crate) sessions: BTreeMap<String, Session>,
 }
+
+pub(crate) type StackOverrides = BTreeMap<u64, BTreeMap<String, (Option<String>, Option<TypeRef>)>>;
 
 pub(crate) struct Session {
     pub(crate) binary: LoadedBinary,
@@ -36,13 +40,17 @@ pub(crate) struct Session {
     sections: Vec<SectionView>,
     imports: Vec<ImportView>,
     exports: Vec<ExportView>,
-    project: Option<PathBuf>,
-    names: BTreeMap<u64, String>,
+    pub(crate) project: Option<PathBuf>,
+    pub(crate) names: BTreeMap<u64, String>,
     manual: Vec<u64>,
     pub(crate) analysis: Option<ProgramAnalysis>,
     pub(crate) analysis_options: Option<AnalysisOptions>,
     pub(crate) ir_cache: BTreeMap<u64, Arc<ura_core::ir::inspect::Bundle>>,
     pub(crate) ir_cache_order: VecDeque<u64>,
+    pub(crate) signature_overrides: BTreeMap<u64, SignatureOverride>,
+    pub(crate) stack_overrides: StackOverrides,
+    pub(crate) decomp_cache: BTreeMap<u64, Arc<ura_core::decomp::FunctionDecompilation>>,
+    pub(crate) decomp_cache_order: VecDeque<u64>,
 }
 
 impl Service {
@@ -71,6 +79,8 @@ impl Service {
         let mut open = binary.open_result();
         let mut names = BTreeMap::new();
         let mut manual = Vec::new();
+        let mut signature_overrides = BTreeMap::new();
+        let mut stack_overrides = BTreeMap::new();
         let mut attached_project = None;
 
         if let Some(project_path) = project {
@@ -86,6 +96,8 @@ impl Service {
             }
             names = names_from_snapshot(&snapshot);
             manual = manual_from_snapshot(&snapshot);
+            signature_overrides = signature_overrides_from_snapshot(&snapshot);
+            stack_overrides = stack_overrides_from_snapshot(&snapshot);
             attached_project = Some(display_path(&project_resolved));
         }
 
@@ -118,6 +130,10 @@ impl Service {
                 analysis_options: None,
                 ir_cache: BTreeMap::new(),
                 ir_cache_order: VecDeque::new(),
+                signature_overrides,
+                stack_overrides,
+                decomp_cache: BTreeMap::new(),
+                decomp_cache_order: VecDeque::new(),
             },
         );
 
@@ -179,6 +195,8 @@ impl Service {
         session.analysis_options = Some(normalized.clone());
         session.ir_cache.clear();
         session.ir_cache_order.clear();
+        session.decomp_cache.clear();
+        session.decomp_cache_order.clear();
         Ok(AnalyzeResponse {
             schema_version: RESPONSE_SCHEMA_VERSION,
             handle: handle.to_string(),
@@ -609,7 +627,7 @@ impl Service {
             session.info.clone()
         };
         let resolved = self.policy.allow_write(project_path)?;
-        let (project, names, manual, created) = if resolved.exists() {
+        let (project, names, manual, signatures, stack, created) = if resolved.exists() {
             let snapshot = ura_project::read_project(&resolved)?;
             if !snapshot
                 .project
@@ -620,7 +638,9 @@ impl Service {
             }
             let names = names_from_snapshot(&snapshot);
             let manual = manual_from_snapshot(&snapshot);
-            (snapshot.project, names, manual, false)
+            let signatures = signature_overrides_from_snapshot(&snapshot);
+            let stack = stack_overrides_from_snapshot(&snapshot);
+            (snapshot.project, names, manual, signatures, stack, false)
         } else {
             let identity = BinaryIdentity {
                 binary_path: info.path.clone(),
@@ -630,7 +650,14 @@ impl Service {
                 architecture: info.architecture.clone(),
             };
             let project = ura_project::create_project(&resolved, name.unwrap_or(""), &identity)?;
-            (project, BTreeMap::new(), Vec::new(), true)
+            (
+                project,
+                BTreeMap::new(),
+                Vec::new(),
+                BTreeMap::new(),
+                BTreeMap::new(),
+                true,
+            )
         };
 
         let session = self
@@ -640,6 +667,10 @@ impl Service {
         session.project = Some(resolved.clone());
         session.names = names;
         session.manual = manual;
+        session.signature_overrides = signatures;
+        session.stack_overrides = stack;
+        session.decomp_cache.clear();
+        session.decomp_cache_order.clear();
 
         Ok(SaveProjectResponse {
             schema_version: RESPONSE_SCHEMA_VERSION,
@@ -741,13 +772,13 @@ impl Service {
         })
     }
 
-    fn session(&self, handle: &str) -> ServiceResult<&Session> {
+    pub(crate) fn session(&self, handle: &str) -> ServiceResult<&Session> {
         self.sessions
             .get(handle)
             .ok_or_else(|| ServiceError::UnknownHandle(handle.to_string()))
     }
 
-    fn require_writes(&self) -> ServiceResult<()> {
+    pub(crate) fn require_writes(&self) -> ServiceResult<()> {
         if self.writes_enabled {
             Ok(())
         } else {
@@ -882,4 +913,35 @@ fn manual_from_snapshot(snapshot: &ProjectSnapshot) -> Vec<u64> {
         .iter()
         .filter_map(|entry| parse_address(&entry.address).ok())
         .collect()
+}
+
+fn signature_overrides_from_snapshot(
+    snapshot: &ProjectSnapshot,
+) -> BTreeMap<u64, SignatureOverride> {
+    snapshot
+        .function_signatures
+        .iter()
+        .filter_map(|entry| {
+            parse_address(&entry.address)
+                .ok()
+                .map(|address| (address, entry.signature.clone()))
+        })
+        .collect()
+}
+
+fn stack_overrides_from_snapshot(snapshot: &ProjectSnapshot) -> StackOverrides {
+    let mut overrides: StackOverrides = BTreeMap::new();
+    for entry in &snapshot.stack_variables {
+        let Ok(function) = parse_address(&entry.function) else {
+            continue;
+        };
+        if entry.name.is_none() && entry.ty.is_none() {
+            continue;
+        }
+        overrides.entry(function).or_default().insert(
+            entry.offset.to_string(),
+            (entry.name.clone(), entry.ty.clone()),
+        );
+    }
+    overrides
 }

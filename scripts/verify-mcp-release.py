@@ -1,5 +1,5 @@
 """Exercise the built Release MCP transport and prepare a disposable project.
-Samples are parsed statically. Only target/v07-profile/fixture.ura is written.
+Samples are parsed statically. Only target/v08-profile/fixture.ura is written.
 """
 import json
 from pathlib import Path
@@ -32,7 +32,7 @@ def tool(name,args):
 try:
     request('initialize',{'protocolVersion':'2025-03-26','capabilities':{},'clientInfo':{'name':'ura-release-check','version':'1'}})
     child.stdin.write(json.dumps({'jsonrpc':'2.0','method':'notifications/initialized'})+'\n');child.stdin.flush()
-    assert len(request('tools/list',{})['tools']) == 19
+    assert len(request('tools/list',{})['tools']) == 29
     opened = tool('ura_open_binary',{'binary':str(root/'tests/fixtures/ura64.exe')})
     handle = opened['handle'];tool('ura_analyze',{'handle':handle})
     timings = {}
@@ -41,10 +41,16 @@ try:
         data = tool(name,{'handle':handle,'function':'140001020','limit':50})
         timings[name] = (time.perf_counter()-start)*1000
         assert data['irVersion'] == 1
-    project = root/'target/v07-profile/fixture.ura'
+    decompiler = {}
+    for name in ['ura_get_function_signature','ura_get_calling_convention','ura_get_stack_variables','ura_get_types','ura_get_structure','ura_get_type_constraints','ura_get_high_level_ir']:
+        decompiler[name] = tool(name,{'handle':handle,'function':'140001020','limit':20})['schemaVersion']
+    graph = tool('ura_get_call_graph',{'handle':handle,'function':'140001000','depth':1,'maxNodes':50})
+    assert graph['schemaVersion'] == 1
+    project = root/'target/v08-profile/fixture.ura'
+    project.parent.mkdir(parents=True,exist_ok=True)
     if not project.exists():
         tool('ura_save_project',{'handle':handle,'project':str(project)})
-    result = {'tools':19,'irSchema':1,'fixtureQueryMs':timings,'projectPrepared':project.name}
+    result = {'tools':29,'irSchema':1,'decompilerSchema':decompiler,'callGraphNodes':graph['returnedNodes'],'fixtureQueryMs':timings,'projectPrepared':project.name}
     (project.parent/'mcp-release.json').write_text(json.dumps(result,indent=2),encoding='utf-8')
     print(json.dumps(result,indent=2))
 finally:

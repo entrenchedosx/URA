@@ -356,3 +356,107 @@ fn project_function_names_reach_the_cli() {
         .to_string();
     assert!(attached.ends_with("fixture.ura"), "{attached}");
 }
+
+#[test]
+fn decompiler_commands_match_the_shared_service_and_render_text() {
+    let binary = fixture("ura64.exe");
+    let mut service = Service::new(PathPolicy::allow_all(), false);
+    let handle = service.open_binary(&binary, None).unwrap().handle;
+    service.analyze(&handle, &Default::default()).unwrap();
+
+    let output = run([
+        "signature",
+        text(&binary),
+        "--function",
+        "140001020",
+        "--json",
+    ]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(
+        json(&output),
+        serde_json::to_value(service.function_signature(&handle, "140001020").unwrap()).unwrap()
+    );
+    let rendered = stdout(&run([
+        "signature",
+        text(&binary),
+        "--function",
+        "140001020",
+    ]));
+    assert!(rendered.contains("int64"));
+    assert!(rendered.contains("Convention: win64"));
+
+    let output = run(["stack", text(&binary), "--function", "140001020", "--json"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(
+        json(&output),
+        serde_json::to_value(service.stack_frame(&handle, "140001020").unwrap()).unwrap()
+    );
+
+    let output = run(["types", text(&binary), "--function", "140001020", "--json"]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(
+        json(&output),
+        serde_json::to_value(service.inferred_types(&handle, "140001020").unwrap()).unwrap()
+    );
+
+    let output = run([
+        "highlevel",
+        text(&binary),
+        "--function",
+        "140001020",
+        "--offset",
+        "0",
+        "--limit",
+        "9",
+        "--json",
+    ]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(
+        json(&output),
+        serde_json::to_value(service.high_level(&handle, "140001020", 0, 9).unwrap()).unwrap()
+    );
+    let rendered = stdout(&run([
+        "highlevel",
+        text(&binary),
+        "--function",
+        "140001020",
+        "--limit",
+        "9",
+    ]));
+    assert!(rendered.contains("experimental-foundations"));
+    assert!(rendered.contains("recovered high-level IR"));
+
+    let output = run([
+        "callgraph",
+        text(&binary),
+        "--function",
+        "140001000",
+        "--depth",
+        "1",
+        "--max-nodes",
+        "50",
+        "--json",
+    ]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(
+        json(&output),
+        serde_json::to_value(
+            service
+                .call_graph(&handle, Some("140001000"), 1, 50)
+                .unwrap()
+        )
+        .unwrap()
+    );
+    let rendered = stdout(&run([
+        "callgraph",
+        text(&binary),
+        "--function",
+        "140001000",
+        "--depth",
+        "1",
+        "--max-nodes",
+        "50",
+    ]));
+    assert!(rendered.contains("Call graph:"));
+    assert!(rendered.contains("0x140001020"));
+}

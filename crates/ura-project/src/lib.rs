@@ -1,10 +1,12 @@
 use rusqlite::{params, Connection, OptionalExtension};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use thiserror::Error;
+use ura_core::decomp::signature::SignatureOverride;
+use ura_core::decomp::types::TypeRef;
 use ura_core::{format_address, parse_address, sha256_hex};
 
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
 pub const MAX_VIEW_STATE_BYTES: usize = 512 * 1024;
 
 #[derive(Debug, Error)]
@@ -96,6 +98,24 @@ pub struct ManualFunction {
     pub created_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FunctionSignatureEntry {
+    pub address: String,
+    pub signature: SignatureOverride,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackVariableOverride {
+    pub function: String,
+    pub offset: i64,
+    pub name: Option<String>,
+    pub ty: Option<TypeRef>,
+    pub updated_at: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectSnapshot {
@@ -103,6 +123,8 @@ pub struct ProjectSnapshot {
     pub annotations: Vec<Annotation>,
     pub function_names: Vec<FunctionNameEntry>,
     pub manual_functions: Vec<ManualFunction>,
+    pub function_signatures: Vec<FunctionSignatureEntry>,
+    pub stack_variables: Vec<StackVariableOverride>,
     pub view_state: Option<String>,
     pub binary_status: String,
 }
@@ -127,6 +149,8 @@ struct AnnotationExport {
     annotations: Vec<Annotation>,
     function_names: Vec<FunctionNameEntry>,
     manual_functions: Vec<ManualFunction>,
+    function_signatures: Vec<FunctionSignatureEntry>,
+    stack_variables: Vec<StackVariableOverride>,
 }
 
 #[derive(Debug, Serialize)]
@@ -195,6 +219,8 @@ pub fn open_project(project_path: &Path) -> ProjectResult<ProjectSnapshot> {
     let annotations = load_annotations(&connection)?;
     let function_names = load_function_names(&connection)?;
     let manual_functions = load_manual_functions(&connection)?;
+    let function_signatures = load_function_signatures(&connection)?;
+    let stack_variables = load_stack_variables(&connection)?;
     let view_state = load_view_state(&connection)?;
     let binary_status = binary_status(&project);
     Ok(ProjectSnapshot {
@@ -202,6 +228,8 @@ pub fn open_project(project_path: &Path) -> ProjectResult<ProjectSnapshot> {
         annotations,
         function_names,
         manual_functions,
+        function_signatures,
+        stack_variables,
         view_state,
         binary_status,
     })
@@ -242,6 +270,16 @@ pub fn read_project(project_path: &Path) -> ProjectResult<ProjectSnapshot> {
         },
         manual_functions: if version >= 3 {
             load_manual_functions(&connection)?
+        } else {
+            vec![]
+        },
+        function_signatures: if version >= 4 {
+            load_function_signatures(&connection)?
+        } else {
+            vec![]
+        },
+        stack_variables: if version >= 4 {
+            load_stack_variables(&connection)?
         } else {
             vec![]
         },
@@ -408,6 +446,137 @@ pub fn load_manual_functions_for_path(project_path: &Path) -> ProjectResult<Vec<
     load_manual_functions(&connection)
 }
 
+pub fn save_function_signature(
+    project_path: &Path,
+    address: &str,
+    signature: &SignatureOverride,
+) -> ProjectResult<FunctionSignatureEntry> {
+    let normalized = normalize_address(address)?;
+    let errors = signature.validate();
+    if !errors.is_empty() {
+        return Err(ProjectError::InvalidName(format!(
+            "function signature is invalid: {}",
+            errors.join("; ")
+        )));
+    }
+    let json = serde_json::to_string(signature)
+        .map_err(|error| ProjectError::InvalidProject(error.to_string()))?;
+    let connection = open_existing(project_path)?;
+    let transaction = connection.unchecked_transaction()?;
+    transaction.execute(
+        "INSERT INTO function_signatures (address, signature_json, updated_at) \
+         VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%fZ','now')) \
+         ON CONFLICT(address) DO UPDATE SET signature_json = excluded.signature_json, \
+         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')",
+        params![normalized, json],
+    )?;
+    transaction.execute(
+        "UPDATE project SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = 1",
+        [],
+    )?;
+    transaction.commit()?;
+    connection
+        .query_row(
+            "SELECT address, signature_json, updated_at FROM function_signatures WHERE address = ?1",
+            params![normalized],
+            map_function_signature,
+        )
+        .map_err(ProjectError::from)
+}
+
+pub fn delete_function_signature(project_path: &Path, address: &str) -> ProjectResult<bool> {
+    let normalized = normalize_address(address)?;
+    let connection = open_existing(project_path)?;
+    let removed = connection.execute(
+        "DELETE FROM function_signatures WHERE address = ?1",
+        params![normalized],
+    )?;
+    Ok(removed > 0)
+}
+
+pub fn load_function_signatures_for_path(
+    project_path: &Path,
+) -> ProjectResult<Vec<FunctionSignatureEntry>> {
+    let connection = open_existing(project_path)?;
+    load_function_signatures(&connection)
+}
+
+pub fn save_stack_variable(
+    project_path: &Path,
+    function: &str,
+    offset: i64,
+    name: Option<&str>,
+    ty: Option<&TypeRef>,
+) -> ProjectResult<StackVariableOverride> {
+    let function = normalize_address(function)?;
+    let name = name
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    if name.is_none() && ty.is_none() {
+        return Err(ProjectError::InvalidName(
+            "a stack variable override needs a name or a type".to_string(),
+        ));
+    }
+    if name.as_ref().is_some_and(|name| name.chars().count() > 256) {
+        return Err(ProjectError::InvalidName(
+            "stack variable names are limited to 256 characters".to_string(),
+        ));
+    }
+    if ty.is_some_and(|ty| !ty.valid()) {
+        return Err(ProjectError::InvalidName(
+            "stack variable type is invalid".to_string(),
+        ));
+    }
+    let type_json = ty
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|error| ProjectError::InvalidProject(error.to_string()))?;
+    let connection = open_existing(project_path)?;
+    let transaction = connection.unchecked_transaction()?;
+    transaction.execute(
+        "INSERT INTO stack_variables (function_address, slot_offset, name, type_json, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, strftime('%Y-%m-%dT%H:%M:%fZ','now')) \
+         ON CONFLICT(function_address, slot_offset) DO UPDATE SET name = excluded.name, \
+         type_json = excluded.type_json, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')",
+        params![function, offset, name, type_json],
+    )?;
+    transaction.execute(
+        "UPDATE project SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = 1",
+        [],
+    )?;
+    transaction.commit()?;
+    connection
+        .query_row(
+            "SELECT function_address, slot_offset, name, type_json, updated_at \
+             FROM stack_variables WHERE function_address = ?1 AND slot_offset = ?2",
+            params![function, offset],
+            map_stack_variable,
+        )
+        .map_err(ProjectError::from)
+}
+
+pub fn delete_stack_variable(
+    project_path: &Path,
+    function: &str,
+    offset: i64,
+) -> ProjectResult<bool> {
+    let function = normalize_address(function)?;
+    let connection = open_existing(project_path)?;
+    let removed = connection.execute(
+        "DELETE FROM stack_variables WHERE function_address = ?1 AND slot_offset = ?2",
+        params![function, offset],
+    )?;
+    Ok(removed > 0)
+}
+
+pub fn load_stack_variables_for_path(
+    project_path: &Path,
+) -> ProjectResult<Vec<StackVariableOverride>> {
+    let connection = open_existing(project_path)?;
+    load_stack_variables(&connection)
+}
+
 pub fn save_view_state(project_path: &Path, state: &str) -> ProjectResult<()> {
     if state.len() > MAX_VIEW_STATE_BYTES {
         return Err(ProjectError::InvalidViewState(
@@ -445,6 +614,8 @@ pub fn export_annotations(project_path: &Path, destination: &Path) -> ProjectRes
     let annotations = load_annotations(&connection)?;
     let function_names = load_function_names(&connection)?;
     let manual_functions = load_manual_functions(&connection)?;
+    let function_signatures = load_function_signatures(&connection)?;
+    let stack_variables = load_stack_variables(&connection)?;
     let project_resolved = resolve_path(project_path);
     let binary_resolved = resolve_path(Path::new(&project.binary_path));
     let destination_resolved = resolve_path(destination);
@@ -479,6 +650,8 @@ pub fn export_annotations(project_path: &Path, destination: &Path) -> ProjectRes
         annotations: annotations.clone(),
         function_names: function_names.clone(),
         manual_functions: manual_functions.clone(),
+        function_signatures: function_signatures.clone(),
+        stack_variables: stack_variables.clone(),
     };
     let json = serde_json::to_string_pretty(&document)
         .map_err(|error| ProjectError::InvalidExport(error.to_string()))?;
@@ -577,8 +750,29 @@ fn migrate_schema(connection: &Connection) -> ProjectResult<()> {
              PRAGMA user_version = 3;
              COMMIT;",
         )?;
-        return Ok(());
     }
+    let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    if version == 3 {
+        connection.execute_batch(
+            "BEGIN;
+             CREATE TABLE IF NOT EXISTS function_signatures (
+                 address TEXT PRIMARY KEY NOT NULL,
+                 signature_json TEXT NOT NULL,
+                 updated_at TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS stack_variables (
+                 function_address TEXT NOT NULL,
+                 slot_offset INTEGER NOT NULL,
+                 name TEXT,
+                 type_json TEXT,
+                 updated_at TEXT NOT NULL,
+                 PRIMARY KEY (function_address, slot_offset)
+             );
+             PRAGMA user_version = 4;
+             COMMIT;",
+        )?;
+    }
+    let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     if version != SCHEMA_VERSION {
         return Err(ProjectError::InvalidProject(format!(
             "expected schema version {}, found {}",
@@ -625,7 +819,20 @@ fn initialize_schema(connection: &Connection) -> ProjectResult<()> {
              state TEXT NOT NULL,
              updated_at TEXT NOT NULL
          );
-         PRAGMA user_version = 3;
+         CREATE TABLE function_signatures (
+             address TEXT PRIMARY KEY NOT NULL,
+             signature_json TEXT NOT NULL,
+             updated_at TEXT NOT NULL
+         );
+         CREATE TABLE stack_variables (
+             function_address TEXT NOT NULL,
+             slot_offset INTEGER NOT NULL,
+             name TEXT,
+             type_json TEXT,
+             updated_at TEXT NOT NULL,
+             PRIMARY KEY (function_address, slot_offset)
+         );
+         PRAGMA user_version = 4;
          COMMIT;",
     )?;
     Ok(())
@@ -696,6 +903,70 @@ fn map_manual_function(row: &rusqlite::Row<'_>) -> rusqlite::Result<ManualFuncti
     Ok(ManualFunction {
         address: row.get(0)?,
         created_at: row.get(1)?,
+    })
+}
+
+fn load_function_signatures(connection: &Connection) -> ProjectResult<Vec<FunctionSignatureEntry>> {
+    let mut statement = connection
+        .prepare("SELECT address, signature_json, updated_at FROM function_signatures")?;
+    let rows = statement.query_map([], map_function_signature)?;
+    let mut signatures = Vec::new();
+    for row in rows {
+        signatures.push(row?);
+    }
+    signatures.sort_by_key(|entry| parse_address(&entry.address).unwrap_or(u64::MAX));
+    Ok(signatures)
+}
+
+fn load_stack_variables(connection: &Connection) -> ProjectResult<Vec<StackVariableOverride>> {
+    let mut statement = connection.prepare(
+        "SELECT function_address, slot_offset, name, type_json, updated_at FROM stack_variables",
+    )?;
+    let rows = statement.query_map([], map_stack_variable)?;
+    let mut variables = Vec::new();
+    for row in rows {
+        variables.push(row?);
+    }
+    variables.sort_by_key(|variable| {
+        (
+            parse_address(&variable.function).unwrap_or(u64::MAX),
+            variable.offset,
+        )
+    });
+    Ok(variables)
+}
+
+fn map_function_signature(row: &rusqlite::Row<'_>) -> rusqlite::Result<FunctionSignatureEntry> {
+    let json: String = row.get(1)?;
+    let signature = serde_json::from_str(&json).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(error))
+    })?;
+    Ok(FunctionSignatureEntry {
+        address: row.get(0)?,
+        signature,
+        updated_at: row.get(2)?,
+    })
+}
+
+fn map_stack_variable(row: &rusqlite::Row<'_>) -> rusqlite::Result<StackVariableOverride> {
+    let type_json: Option<String> = row.get(3)?;
+    let ty = type_json
+        .map(|json| {
+            serde_json::from_str(&json).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    3,
+                    rusqlite::types::Type::Text,
+                    Box::new(error),
+                )
+            })
+        })
+        .transpose()?;
+    Ok(StackVariableOverride {
+        function: row.get(0)?,
+        offset: row.get(1)?,
+        name: row.get(2)?,
+        ty,
+        updated_at: row.get(4)?,
     })
 }
 

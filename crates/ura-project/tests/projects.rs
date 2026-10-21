@@ -292,3 +292,125 @@ fn migrates_version_one_projects_to_function_names() {
     assert_eq!(snapshot.function_names.len(), 1);
     assert_eq!(snapshot.function_names[0].address, "0x401020");
 }
+
+#[test]
+fn persists_function_signatures_and_stack_variable_overrides() {
+    use ura_core::decomp::signature::{
+        CallingConvention, Location, SignatureOverride, SignatureParameterInput,
+    };
+    use ura_core::decomp::types::TypeRef;
+
+    let (_directory, project_path) = setup();
+    let binary_path = fixture("ura64.exe");
+    create_project(&project_path, "Signature", &identity(&binary_path)).unwrap();
+
+    let signature = SignatureOverride {
+        convention: CallingConvention::Win64,
+        return_type: TypeRef::uint(64),
+        parameters: vec![SignatureParameterInput {
+            name: "count".into(),
+            location: Location::Register { name: "rcx".into() },
+            ty: TypeRef::uint(64),
+        }],
+        variadic: Some(false),
+    };
+    let saved =
+        ura_project::save_function_signature(&project_path, "0x140001020", &signature).unwrap();
+    assert_eq!(saved.address, "0x140001020");
+    assert_eq!(saved.signature.parameters.len(), 1);
+
+    let variable = ura_project::save_stack_variable(
+        &project_path,
+        "0x140001020",
+        -8,
+        Some("counter"),
+        Some(&TypeRef::uint(32)),
+    )
+    .unwrap();
+    assert_eq!(variable.offset, -8);
+    assert_eq!(variable.name.as_deref(), Some("counter"));
+    assert_eq!(
+        variable.ty.as_ref().map(TypeRef::display),
+        Some("u32".into())
+    );
+
+    ura_project::save_function_signature(&project_path, "0x140001020", &signature).unwrap();
+    ura_project::save_stack_variable(&project_path, "0x140001020", -8, Some("renamed"), None)
+        .unwrap();
+    let snapshot = open_project(&project_path).unwrap();
+    assert_eq!(snapshot.function_signatures.len(), 1);
+    assert_eq!(snapshot.stack_variables.len(), 1);
+    assert_eq!(snapshot.stack_variables[0].name.as_deref(), Some("renamed"));
+    assert!(snapshot.stack_variables[0].ty.is_none());
+
+    let invalid = SignatureOverride {
+        parameters: vec![SignatureParameterInput {
+            name: "bad name".into(),
+            location: Location::Unknown {
+                reason: "test".into(),
+            },
+            ty: TypeRef::uint(8),
+        }],
+        ..signature.clone()
+    };
+    assert!(ura_project::save_function_signature(&project_path, "0x140001020", &invalid).is_err());
+    assert!(
+        ura_project::save_stack_variable(&project_path, "0x140001020", -16, None, None).is_err()
+    );
+    assert!(ura_project::save_stack_variable(
+        &project_path,
+        "0x140001020",
+        -16,
+        Some(""),
+        Some(&TypeRef::Named {
+            name: String::new()
+        })
+    )
+    .is_err());
+
+    assert!(ura_project::delete_function_signature(&project_path, "0x140001020").unwrap());
+    assert!(ura_project::delete_stack_variable(&project_path, "0x140001020", -8).unwrap());
+    let snapshot = open_project(&project_path).unwrap();
+    assert!(snapshot.function_signatures.is_empty());
+    assert!(snapshot.stack_variables.is_empty());
+}
+
+#[test]
+fn migrates_version_three_projects_to_decompiler_overrides() {
+    use ura_core::decomp::signature::CallingConvention;
+    use ura_core::decomp::signature::SignatureOverride;
+    use ura_core::decomp::types::TypeRef;
+
+    let (_directory, project_path) = setup();
+    let binary_path = fixture("ura64.elf");
+    create_project(&project_path, "Legacy v3", &identity(&binary_path)).unwrap();
+
+    let connection = rusqlite::Connection::open(&project_path).unwrap();
+    connection
+        .execute_batch(
+            "DROP TABLE function_signatures; \
+             DROP TABLE stack_variables; \
+             PRAGMA user_version = 3;",
+        )
+        .unwrap();
+    drop(connection);
+
+    let snapshot = open_project(&project_path).unwrap();
+    assert_eq!(snapshot.project.schema_version, SCHEMA_VERSION);
+    assert!(snapshot.function_signatures.is_empty());
+    assert!(snapshot.stack_variables.is_empty());
+
+    ura_project::save_function_signature(
+        &project_path,
+        "0x401020",
+        &SignatureOverride {
+            convention: CallingConvention::SysV64,
+            return_type: TypeRef::uint(64),
+            parameters: vec![],
+            variadic: None,
+        },
+    )
+    .unwrap();
+    let snapshot = open_project(&project_path).unwrap();
+    assert_eq!(snapshot.function_signatures.len(), 1);
+}

@@ -110,7 +110,7 @@ fn stdio_queries_errors_and_read_only_permissions() {
     let mut client = Client::start(directory.path(), false);
     let tools = client.request("tools/list", json!({}));
     let listed = tools["result"]["tools"].as_array().unwrap();
-    assert_eq!(listed.len(), 19);
+    assert_eq!(listed.len(), 29);
     for tool in listed {
         let expected = !matches!(
             tool["name"].as_str().unwrap(),
@@ -119,6 +119,8 @@ fn stdio_queries_errors_and_read_only_permissions() {
                 | "ura_save_project"
                 | "ura_export_analysis"
                 | "ura_close_binary"
+                | "ura_set_function_signature"
+                | "ura_set_variable_type"
         );
         assert_eq!(tool["annotations"]["readOnlyHint"], expected, "{tool}");
     }
@@ -157,6 +159,48 @@ fn stdio_queries_errors_and_read_only_permissions() {
     ] {
         client.tool(name, arguments);
     }
+    for name in [
+        "ura_get_function_signature",
+        "ura_get_calling_convention",
+        "ura_get_stack_variables",
+        "ura_get_types",
+        "ura_get_structure",
+        "ura_get_high_level_ir",
+        "ura_get_type_constraints",
+    ] {
+        let result = client.tool(
+            name,
+            json!({"handle":handle,"function":"140001020","limit":40}),
+        );
+        assert_eq!(result["function"], "0x140001020", "{name}");
+        assert_eq!(result["analysisPartial"], false, "{name}");
+    }
+    let signature = client.tool(
+        "ura_get_function_signature",
+        json!({"handle":handle,"function":"140001020"}),
+    );
+    assert_eq!(signature["signature"]["convention"], "win64");
+    assert!(signature["signature"]["name"].is_string());
+    assert_eq!(
+        signature,
+        serde_json::to_value(
+            shared
+                .function_signature(&shared_handle, "140001020")
+                .unwrap()
+        )
+        .unwrap()
+    );
+    let call_graph = client.tool(
+        "ura_get_call_graph",
+        json!({"handle":handle,"function":"140001000","depth":1,"maxNodes":100}),
+    );
+    assert_eq!(call_graph["focus"], "0x140001000");
+    assert!(call_graph["nodes"].as_array().unwrap().len() <= 100);
+    assert!(call_graph["edges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|edge| edge["from"] == "0x140001000" && edge["to"] == "0x140001020"));
     for name in [
         "ura_get_ir",
         "ura_get_ssa",
@@ -248,12 +292,35 @@ fn stdio_writes_survive_a_fresh_server() {
         );
         client.tool("ura_add_comment", json!({"handle":handle,"project":project,"address":"140001000","note":"persistent comment"}));
         client.tool(
+            "ura_set_function_signature",
+            json!({"handle":handle,"project":project,"address":"140001020","convention":"win64","returnType":"u64","parameters":[{"name":"count","register":"rcx","type":"u64"}],"variadic":false}),
+        );
+        let stack = client.tool(
+            "ura_get_stack_variables",
+            json!({"handle":handle,"function":"140001020"}),
+        );
+        let offset = stack["frame"]["slots"][0]["offset"].as_i64().unwrap();
+        client.tool(
+            "ura_set_variable_type",
+            json!({"handle":handle,"project":project,"function":"140001020","offset":offset,"name":"saved_counter","type":"u32"}),
+        );
+        client.tool(
             "ura_export_analysis",
             json!({"project":project,"export":export}),
         );
     }
     let snapshot = ura_project::read_project(&project).unwrap();
     assert_eq!(snapshot.annotations[0].note, "persistent comment");
+    assert_eq!(snapshot.function_signatures.len(), 1);
+    assert_eq!(
+        snapshot.function_signatures[0].signature.parameters[0].name,
+        "count"
+    );
+    assert_eq!(snapshot.stack_variables.len(), 1);
+    assert_eq!(
+        snapshot.stack_variables[0].name.as_deref(),
+        Some("saved_counter")
+    );
     assert!(export.exists());
     let before = std::fs::read(&project).unwrap();
     let mut client = Client::start(directory.path(), false);
@@ -268,5 +335,19 @@ fn stdio_writes_survive_a_fresh_server() {
         json!({"handle":handle,"query":"entry_renamed"}),
     );
     assert_eq!(functions["total"], 1);
+    let signature = client.tool(
+        "ura_get_function_signature",
+        json!({"handle":handle,"function":"140001020"}),
+    );
+    assert_eq!(signature["signature"]["parameters"][0]["name"], "count");
+    let stack = client.tool(
+        "ura_get_stack_variables",
+        json!({"handle":handle,"function":"140001020"}),
+    );
+    assert!(stack["frame"]["slots"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|slot| slot["userName"] == "saved_counter" && slot["userType"]["kind"] == "int"));
     assert_eq!(std::fs::read(&project).unwrap(), before);
 }

@@ -4,10 +4,11 @@
 
 Ultimate Reverse Engineer
 
-Public prerelease: [`v0.7.0-dev`](https://github.com/entrenchedosx/URA/releases/tag/v0.7.0-dev)
-from `v0.7-advanced-analysis`. The previous public prerelease is v0.6.0.
-Variable idle CPU remains an unexplained known limitation; see
-[v0.7 verification](docs/VERIFICATION-0.7.md) and [IR design](docs/IR-DESIGN.md).
+Public prerelease: [`v0.8.0-dev`](https://github.com/entrenchedosx/URA/releases/tag/v0.8.0-dev)
+from `v0.8-decompiler-foundations`. The previous public prerelease is v0.7.0-dev.
+High-level output is experimental and variable idle CPU remains an unexplained
+known limitation; see [v0.8 verification](docs/VERIFICATION-0.8.md) and
+[decompiler design](docs/DECOMPILER.md).
 
 ## Overview
 
@@ -29,11 +30,15 @@ analysis limits; it is not a replacement for the full feature sets of IDA or Ghi
 - Typed raw/SSA IR for a tested scalar x86/x64 subset, with explicit unknown effects.
 - Dominators/frontiers, phi nodes, def-use counts, conservative constants and dead definitions.
 - Narrow guarded absolute/relative jump-table patterns and tail/thunk candidates.
-- Native CLI with text/JSON output and a local stdio MCP server with 19 tools.
+- Evidence-based ABI/signature recovery, physical stack frames and conservative types.
+- Bounded interprocedural call graph and experimental C-like high-level rendering.
+- Native CLI with text/JSON output and a local stdio MCP server with 29 tools.
 
-There is no decompiler, debugger, type recovery, PDB loader or public plugin API.
-Indirect transfers remain open, including transfers with heuristic recovered edges. Discovery
-is conservative and can miss code, reject ambiguous seeds or stop at limits.
+High-level output is a structural view of verified SSA, not reconstructed source,
+and is not claimed to compile. There is no debugger, PDB/C++ loader or public
+plugin API. Indirect transfers remain open, including transfers with heuristic
+recovered edges. Discovery is conservative and can miss code, reject ambiguous
+seeds or stop at limits.
 
 ## Supported architectures and executable formats
 
@@ -51,9 +56,17 @@ size is 512 MiB; resources are also bounded during analysis and string scanning.
 
 The default application uses eframe, egui and OpenGL. It has no WebView dependency.
 Compact native menus and docking provide Functions, Project structure,
-Disassembly, Graph, Hex View, Strings, Xrefs, Overview, Inspector, Output and
-Graph overview panels. Project structure includes sections, symbols, imports and
-exports. Imports without mapped addresses are informational.
+Disassembly, Graph, Hex View, Strings, Xrefs, Overview, Inspector, Output,
+Graph overview, Function signature, Stack frame, Types, Call graph and
+Analysis inspector panels. Project structure includes sections, symbols, imports
+and exports. Imports without mapped addresses are informational.
+
+The Function signature, Stack frame, Types, Call graph and Analysis inspector
+panels follow the selected function. They show evidence, confidence, conflicts
+and hard-bound truncation, and addresses navigate back to disassembly.
+Decompiler panels are read-only in the desktop; overrides are edited through the
+MCP write tools and persisted in the project. Recovered high-level text is
+explicitly labelled experimental and is not source code.
 
 Open the optional **IR** panel from Windows or search `IR` in Ctrl+K. It follows
 the selected function, offers Raw IR / SSA IR, and links operation addresses back
@@ -86,7 +99,7 @@ python scripts/generate_icons.py
 ```
 
 Create the portable Windows archive after the Release build with
-`./scripts/package-windows.ps1 -Version 0.7.0-dev`. It checks all three executable
+`./scripts/package-windows.ps1 -Version 0.8.0-dev`. It checks all three executable
 version/product resources, writes per-file checksums, collects dependency license
 texts (including bundled font notices) and emits a SHA-256 sidecar for the ZIP.
 Publishing the archive is a separate release step.
@@ -118,7 +131,8 @@ accepts `@200` file offsets, relative deltas and expressions such as `.text+10`.
 The CLI does not start a GUI. Paths must resolve inside `--allow` roots; the
 default root is the current directory. Use repeatable `--allow DIR` for samples
 elsewhere. Commands are `info`, `analyze`, `functions`, `disasm`, `strings`,
-`xrefs`, `cfg`, `ir`, `dominators`, `diagnostics` and `hex`.
+`xrefs`, `cfg`, `ir`, `dominators`, `diagnostics`, `signature`, `stack`, `types`,
+`callgraph`, `highlevel` and `hex`.
 
 ```powershell
 ura-cli info sample.exe --json
@@ -129,6 +143,11 @@ ura-cli ir sample.exe --function 140001020 --limit 50 --json
 ura-cli ir sample.exe --function 140001020 --ssa --offset 50 --limit 50 --json
 ura-cli dominators sample.exe --function 140001020 --json
 ura-cli diagnostics sample.exe --function 140001020 --json
+ura-cli signature sample.exe --function 140001020
+ura-cli stack sample.exe --function 140001020 --json
+ura-cli types sample.exe --function 140001020
+ura-cli callgraph sample.exe --function 140001000 --depth 1 --json
+ura-cli highlevel sample.exe --function 140001020 --limit 50
 ura-cli hex sample.exe --offset 200 --length 32 --json
 ura-cli functions sample.exe --project analysis.ura --json
 ```
@@ -142,6 +161,8 @@ Analysis commands accept instruction/function/block limits, `--no-follow-calls`
 and `--no-symbol-seeds`. IR pages include `irVersion:1`, binary identity, normalized
 analysis options, source operations and the variable definitions referenced by the
 page. Requests exceeding a function's IR budget return an explicit error.
+Decompiler commands report evidence, conflicts, confidence and truncation; the
+high-level command is explicitly labelled experimental.
 
 ## MCP integration
 
@@ -166,16 +187,23 @@ Call `ura_open_binary`, retain the returned handle, call `ura_analyze`, then que
 After analysis, `ura_get_ir`, `ura_get_ssa`, `ura_get_dominators` and
 `ura_get_analysis_diagnostics` take `handle`, `function`, optional `offset` and
 `limit`. IR/diagnostic pages allow 1–500 rows; dominator pages allow 1–200.
+Decompiler queries are `ura_get_function_signature`,
+`ura_get_calling_convention`, `ura_get_stack_variables`, `ura_get_types`,
+`ura_get_structure`, `ura_get_call_graph`, `ura_get_type_constraints` and
+`ura_get_high_level_ir`. Overrides use `ura_set_function_signature` and
+`ura_set_variable_type`.
 `ura_get_function` returns at most 500 blocks per call (`maxBlocks`, default 200)
 plus at most 1000 callers/callees, and reports `blocksTruncated`,
 `callersTruncated` and `calleesTruncated` when more exist. Requests reuse a
 verified least-recently-used function cache, invalidated by reanalysis. At most
 eight binary handles and eight IR bundles per handle are retained.
 
-`ura_save_project`, `ura_rename_function`, `ura_add_comment` and
-`ura_export_analysis` require the explicit `--enable-writes` process option.
+`ura_save_project`, `ura_rename_function`, `ura_add_comment`,
+`ura_export_analysis`, `ura_set_function_signature` and `ura_set_variable_type`
+require the explicit `--enable-writes` process option. Signature/stack overrides
+also require an attached project.
 No network listener is started. Stdout contains MCP JSON only; logs go to stderr.
-Read-only project attachments support schema v1-v3 without migration or following
+Read-only project attachments support schema v1-v4 without migration or following
 the database's recorded binary path. The opened binary's SHA-256 must match.
 Allowed roots constrain resolved paths, but are not an operating-system sandbox
 against a concurrent local attacker changing files or links.
@@ -195,7 +223,7 @@ The development IR view below was captured at Windows OS 150% scale:
 
 ![Professional dark graph](docs/screenshots/dark-graph.png)
 
-See [verification](docs/VERIFICATION-0.6.md) for sizes, scaling and remaining
+See [verification](docs/VERIFICATION-0.8.md) for sizes, scaling and remaining
 manual checks. The small fixture verifies known instructions and loop edges;
 real Windows binaries were inspected separately.
 
@@ -203,7 +231,7 @@ real Windows binaries were inspected separately.
 
 | Path | Responsibility |
 |---|---|
-| `crates/ura-core` | Loading, decoding, functions, CFGs, references, strings |
+| `crates/ura-core` | Loading, decoding, functions, CFGs, references, strings, IR, decompiler foundations |
 | `crates/ura-project` | SQLite persistence and compatible migrations |
 | `crates/ura-native` | Native desktop and background worker |
 | `crates/ura-service` | Shared headless sessions, DTOs and path/write policy |
@@ -227,10 +255,11 @@ cargo build --workspace --release
 ```
 
 Tests cover deterministic PE/ELF decoding, malformed input, CFG/reference
-behavior, database migrations and annotation persistence, service restrictions,
-CLI processes, actual MCP handshakes/tool calls, and native-panel tessellation.
-Renderer checks are opt-in; see [development verification](docs/VERIFICATION-0.7.md)
-and the [v0.6 historical measurements](docs/VERIFICATION-0.6.md).
+behavior, verified IR/SSA, ABI/stack/type/call-graph recovery, database
+migrations and annotation persistence, service restrictions, CLI processes,
+actual MCP handshakes/tool calls, and native-panel tessellation. Renderer checks
+are opt-in; see [v0.8 verification](docs/VERIFICATION-0.8.md) and the
+[v0.6 historical measurements](docs/VERIFICATION-0.6.md).
 
 ## Roadmap
 

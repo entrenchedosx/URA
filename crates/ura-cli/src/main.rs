@@ -7,9 +7,10 @@ use serde::Serialize;
 use ura_core::analysis::{DEFAULT_MAX_BLOCKS, DEFAULT_MAX_FUNCTIONS, DEFAULT_MAX_INSTRUCTIONS};
 use ura_core::{parse_address, AnalysisOptions, AnalysisReport, StringScanOptions};
 use ura_service::{
-    BytesResponse, CfgResponse, DisassemblyResponse, ErrorView, FunctionListResponse, FunctionSort,
-    OpenBinaryResponse, PathPolicy, Service, ServiceError, StringsResponse, XrefDirection,
-    XrefsResponse,
+    BytesResponse, CallGraphResponse, CfgResponse, DisassemblyResponse, ErrorView,
+    FunctionListResponse, FunctionSort, HighLevelResponse, OpenBinaryResponse, PathPolicy, Service,
+    ServiceError, SignatureResponse, StackFrameResponse, StringsResponse, TypesResponse,
+    XrefDirection, XrefsResponse,
 };
 
 #[derive(Parser)]
@@ -165,6 +166,66 @@ enum Command {
         #[arg(long, default_value_t = 100)]
         limit: usize,
     },
+    /// Recover a function's calling convention, parameters and return value
+    Signature {
+        #[command(flatten)]
+        common: CommonArgs,
+        #[command(flatten)]
+        analysis: AnalysisArgs,
+        /// Function start address (or any address inside the function)
+        #[arg(long)]
+        function: String,
+    },
+    /// Recover physical stack slots and access evidence for a function
+    Stack {
+        #[command(flatten)]
+        common: CommonArgs,
+        #[command(flatten)]
+        analysis: AnalysisArgs,
+        /// Function start address (or any address inside the function)
+        #[arg(long)]
+        function: String,
+    },
+    /// Show conservative type constraints inferred for a function
+    Types {
+        #[command(flatten)]
+        common: CommonArgs,
+        #[command(flatten)]
+        analysis: AnalysisArgs,
+        /// Function start address (or any address inside the function)
+        #[arg(long)]
+        function: String,
+    },
+    /// Inspect the bounded direct-call graph, optionally around one function
+    Callgraph {
+        #[command(flatten)]
+        common: CommonArgs,
+        #[command(flatten)]
+        analysis: AnalysisArgs,
+        /// Optional function focus address
+        #[arg(long)]
+        function: Option<String>,
+        /// Callee expansion depth from the focus (1-16)
+        #[arg(long, default_value_t = 1)]
+        depth: usize,
+        /// Maximum nodes to return (1-2000)
+        #[arg(long, default_value_t = 200)]
+        max_nodes: usize,
+    },
+    /// Render recovered high-level control structure as C-like lines
+    Highlevel {
+        #[command(flatten)]
+        common: CommonArgs,
+        #[command(flatten)]
+        analysis: AnalysisArgs,
+        /// Function start address (or any address inside the function)
+        #[arg(long)]
+        function: String,
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+        #[arg(long, default_value_t = 200)]
+        limit: usize,
+    },
     /// Read raw file bytes by virtual address or file offset
     Hex {
         #[command(flatten)]
@@ -194,6 +255,11 @@ impl Command {
             | Command::Ir { common, .. }
             | Command::Dominators { common, .. }
             | Command::Diagnostics { common, .. }
+            | Command::Signature { common, .. }
+            | Command::Stack { common, .. }
+            | Command::Types { common, .. }
+            | Command::Callgraph { common, .. }
+            | Command::Highlevel { common, .. }
             | Command::Hex { common, .. } => common.json,
         }
     }
@@ -446,6 +512,85 @@ fn run(cli: Cli) -> Result<(), ServiceError> {
                 for d in page.diagnostics {
                     println!("{}  {}", d.source, d.message);
                 }
+                Ok(())
+            }
+        }
+        Command::Signature {
+            common,
+            analysis,
+            function,
+        } => {
+            let handle = open(&mut service, &common)?.handle;
+            service.analyze(&handle, &analysis.options())?;
+            let response = service.function_signature(&handle, &function)?;
+            if common.json {
+                print_json(&response)
+            } else {
+                render_signature(&response);
+                Ok(())
+            }
+        }
+        Command::Stack {
+            common,
+            analysis,
+            function,
+        } => {
+            let handle = open(&mut service, &common)?.handle;
+            service.analyze(&handle, &analysis.options())?;
+            let response = service.stack_frame(&handle, &function)?;
+            if common.json {
+                print_json(&response)
+            } else {
+                render_stack(&response);
+                Ok(())
+            }
+        }
+        Command::Types {
+            common,
+            analysis,
+            function,
+        } => {
+            let handle = open(&mut service, &common)?.handle;
+            service.analyze(&handle, &analysis.options())?;
+            let response = service.inferred_types(&handle, &function)?;
+            if common.json {
+                print_json(&response)
+            } else {
+                render_types(&response);
+                Ok(())
+            }
+        }
+        Command::Callgraph {
+            common,
+            analysis,
+            function,
+            depth,
+            max_nodes,
+        } => {
+            let handle = open(&mut service, &common)?.handle;
+            service.analyze(&handle, &analysis.options())?;
+            let response = service.call_graph(&handle, function.as_deref(), depth, max_nodes)?;
+            if common.json {
+                print_json(&response)
+            } else {
+                render_call_graph(&response);
+                Ok(())
+            }
+        }
+        Command::Highlevel {
+            common,
+            analysis,
+            function,
+            offset,
+            limit,
+        } => {
+            let handle = open(&mut service, &common)?.handle;
+            service.analyze(&handle, &analysis.options())?;
+            let response = service.high_level(&handle, &function, offset, limit)?;
+            if common.json {
+                print_json(&response)
+            } else {
+                render_high_level(&response);
                 Ok(())
             }
         }
@@ -743,6 +888,190 @@ fn render_cfg(response: &CfgResponse) {
             block.instructions.len(),
             successors
         );
+    }
+}
+
+fn render_signature(response: &SignatureResponse) {
+    let signature = &response.signature;
+    println!("{}  {}", response.function, signature.declaration());
+    println!(
+        "Convention: {} ({}){}",
+        signature.convention.name(),
+        signature.convention_confidence.name(),
+        if signature.user_override {
+            ", user override"
+        } else {
+            ""
+        }
+    );
+    println!(
+        "Return:     {} ({})",
+        signature.return_value.ty.display(),
+        signature.return_value.confidence.name()
+    );
+    if signature.parameters.is_empty() {
+        println!("Parameters: none observed");
+    } else {
+        println!(
+            "{:<4} {:<24} {:<20} {:<10} {:>5}",
+            "IDX", "NAME", "LOCATION", "TYPE", "USES"
+        );
+        for parameter in &signature.parameters {
+            println!(
+                "{:<4} {:<24} {:<20} {:<10} {:>5}",
+                parameter.index,
+                truncate(&parameter.name, 24),
+                parameter.location.display(),
+                parameter.ty.display(),
+                parameter.uses
+            );
+        }
+    }
+    if signature.variadic == Some(true) {
+        println!("Variadic:   yes");
+    }
+    for conflict in &signature.conflicts {
+        println!("Conflict:   {conflict}");
+    }
+    for note in &response.diagnostics {
+        println!("Note:       {note}");
+    }
+}
+
+fn render_stack(response: &StackFrameResponse) {
+    let frame = &response.frame;
+    println!(
+        "{}  {}  frame {} bytes, locals {}, incoming args {}",
+        response.function,
+        response.name,
+        frame.frame_size,
+        frame.local_bytes,
+        frame.incoming_argument_bytes
+    );
+    println!(
+        "Frame pointer: {}  return offset: {:+}  alignment: {}  slots: {}{}",
+        frame.uses_frame_pointer,
+        frame.return_address_offset,
+        frame.alignment,
+        frame.slots.len(),
+        if frame.truncated { " (truncated)" } else { "" }
+    );
+    for slot in &frame.slots {
+        let name = slot.user_name.as_deref().unwrap_or(slot.name.as_str());
+        let ty = slot.user_type.as_ref().unwrap_or(&slot.ty).display();
+        println!(
+            "{:+6}  {:<18} {:<20} {:<12} r{} w{}  {}/{}",
+            slot.offset,
+            slot.kind,
+            truncate(name, 20),
+            ty,
+            slot.reads,
+            slot.writes,
+            slot.first_instruction,
+            slot.last_instruction
+        );
+    }
+    for note in &frame.notes {
+        println!("Note:       {note}");
+    }
+}
+
+fn render_types(response: &TypesResponse) {
+    let types = &response.types;
+    println!(
+        "{}  {} variables, {} conflicts{}",
+        response.function,
+        types.variables.len(),
+        types.conflicts,
+        if types.truncated { " (truncated)" } else { "" }
+    );
+    for error in &response.database_errors {
+        println!("Database:   {error}");
+    }
+    for variable in &types.variables {
+        println!(
+            "{:<24} {:<20} {:<10} {} constraint(s)",
+            truncate(&variable.variable, 24),
+            variable.ty.display(),
+            variable.confidence.name(),
+            variable.constraints.len()
+        );
+        for conflict in &variable.conflicts {
+            println!("  conflict: {conflict}");
+        }
+    }
+    for note in &types.notes {
+        println!("Note:       {note}");
+    }
+}
+
+fn render_call_graph(response: &CallGraphResponse) {
+    println!(
+        "Call graph: {} of {} nodes, {} of {} edges{}{}",
+        response.returned_nodes,
+        response.total_nodes,
+        response.returned_edges,
+        response.total_edges,
+        response
+            .focus
+            .as_deref()
+            .map(|focus| format!(", focus {focus}"))
+            .unwrap_or_default(),
+        if response.truncated {
+            ", truncated"
+        } else {
+            ""
+        }
+    );
+    println!(
+        "Roots: {}  Leaves: {}  Cycles: {}  Unresolved indirect: {}",
+        response.roots.len(),
+        response.leaves.len(),
+        response.cycles.len(),
+        response.unresolved_indirect
+    );
+    for node in &response.nodes {
+        println!(
+            "{:<14} {:<32} in {:>3} out {:>3}{}{}",
+            node.address,
+            truncate(&node.name, 32),
+            node.callers,
+            node.callees,
+            if node.recursive { " recursive" } else { "" },
+            if node.depth > 0 {
+                format!(" depth {}", node.depth)
+            } else {
+                String::new()
+            }
+        );
+    }
+    for edge in &response.edges {
+        println!("{} -> {} [{}]", edge.from, edge.to, edge.kind);
+    }
+    for note in &response.notes {
+        println!("Note:       {note}");
+    }
+}
+
+fn render_high_level(response: &HighLevelResponse) {
+    println!(
+        "{}  {}  lines {}-{} of {} ({}){}",
+        response.function,
+        response.name,
+        response.offset,
+        response.offset + response.returned,
+        response.total,
+        response.status,
+        if response.truncated { " truncated" } else { "" }
+    );
+    for line in &response.lines {
+        match line.address {
+            Some(address) => println!("{:#x}  {}{}", address, "  ".repeat(line.indent), line.text),
+            None => println!("{}{}", "  ".repeat(line.indent), line.text),
+        }
+    }
+    for note in &response.notes {
+        println!("Note:       {note}");
     }
 }
 

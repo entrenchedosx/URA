@@ -2,7 +2,7 @@ use crate::design::{self, Palette, Theme};
 use crate::{
     graph::GraphLayout,
     navigation::{History, Location},
-    worker::{Control, Event, TaskKind, Worker},
+    worker::{Control, DecompKey, Event, TaskKind, Worker},
 };
 use eframe::egui::{self, Key, Modifiers, RichText};
 use egui_dock::{DockArea, DockState, NodeIndex};
@@ -18,7 +18,9 @@ use std::{
 };
 use ura_core::{
     BinaryView, DisassemblyPage, Function, LoadedBinary, ProgramAnalysis, StringScanOptions,
-    StringScanResult, format_address, parse_address,
+    StringScanResult,
+    decomp::{CallGraph, DecompContext, FunctionDecompilation, SignatureHints, signature},
+    format_address, parse_address,
 };
 use ura_project::ProjectSnapshot;
 
@@ -36,9 +38,14 @@ pub enum Panel {
     Messages,
     GraphOverview,
     Ir,
+    Signature,
+    Stack,
+    Types,
+    CallGraph,
+    HighLevel,
 }
 impl Panel {
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 17] = [
         Self::Explorer,
         Self::Disassembly,
         Self::Functions,
@@ -51,6 +58,11 @@ impl Panel {
         Self::Messages,
         Self::GraphOverview,
         Self::Ir,
+        Self::Signature,
+        Self::Stack,
+        Self::Types,
+        Self::CallGraph,
+        Self::HighLevel,
     ];
     pub fn title(self) -> &'static str {
         match self {
@@ -66,6 +78,11 @@ impl Panel {
             Self::Messages => "Output",
             Self::GraphOverview => "Graph overview",
             Self::Ir => "IR",
+            Self::Signature => "Function signature",
+            Self::Stack => "Stack frame",
+            Self::Types => "Types",
+            Self::CallGraph => "Call graph",
+            Self::HighLevel => "Analysis inspector",
         }
     }
     fn legacy(self) -> &'static str {
@@ -82,6 +99,11 @@ impl Panel {
             Self::Messages => "messages",
             Self::GraphOverview => "graphOverview",
             Self::Ir => "ir",
+            Self::Signature => "signature",
+            Self::Stack => "stack",
+            Self::Types => "types",
+            Self::CallGraph => "callgraph",
+            Self::HighLevel => "highlevel",
         }
     }
     fn from_legacy(s: &str) -> Option<Self> {
@@ -105,6 +127,17 @@ pub fn default_dock() -> DockState<Panel> {
     );
     dock.main_surface_mut()
         .split_below(left, 0.72, vec![Panel::GraphOverview]);
+    let [center, _right] = dock.main_surface_mut().split_right(
+        center,
+        0.72,
+        vec![
+            Panel::Signature,
+            Panel::Stack,
+            Panel::Types,
+            Panel::CallGraph,
+            Panel::HighLevel,
+        ],
+    );
     dock.main_surface_mut()
         .split_below(center, 0.85, vec![Panel::Messages]);
     dock
@@ -236,6 +269,15 @@ pub struct Workspace {
     pub ir_bundle: Option<Arc<ura_core::ir::inspect::Bundle>>,
     pub ir_rows: Vec<crate::worker::IrRow>,
     pub ir_error: Option<String>,
+    pub decomp: Option<Arc<FunctionDecompilation>>,
+    pub decomp_key: Option<DecompKey>,
+    pub decomp_loading: Option<DecompKey>,
+    pub decomp_error: Option<String>,
+    pub call_graph: Option<Arc<CallGraph>>,
+    pub call_graph_key: Option<u64>,
+    pub call_graph_loading: bool,
+    pub call_graph_error: Option<String>,
+    pub project_revision: u64,
     pub cancel: Arc<AtomicBool>,
     pub progress: Arc<Mutex<Option<ura_core::AnalysisProgress>>>,
     pub analyzing: bool,
@@ -317,6 +359,15 @@ impl Workspace {
             ir_bundle: None,
             ir_rows: vec![],
             ir_error: None,
+            decomp: None,
+            decomp_key: None,
+            decomp_loading: None,
+            decomp_error: None,
+            call_graph: None,
+            call_graph_key: None,
+            call_graph_loading: false,
+            call_graph_error: None,
+            project_revision: 0,
             cancel: Arc::new(AtomicBool::new(false)),
             progress: Arc::new(Mutex::new(None)),
             analyzing: false,
@@ -415,6 +466,7 @@ impl Workspace {
         self.graph_loading = None;
         self.graph_function = None;
         self.reset_ir();
+        self.reset_decomp();
         self.names.clear();
         self.annotation_indices.clear();
         self.history = History::default();
@@ -444,6 +496,8 @@ impl Workspace {
             .filter_map(|n| Some((parse_address(&n.address).ok()?, n.name.clone())))
             .collect();
         self.project = Some((path, snapshot));
+        self.project_revision += 1;
+        self.reset_decomp();
         self.function_filter.dirty = true;
         self.load_annotation();
     }
@@ -596,6 +650,112 @@ impl Workspace {
                 Ok(Event::Ir(key, bundle, rows))
             });
     }
+    fn reset_decomp(&mut self) {
+        self.decomp_key = None;
+        self.decomp_loading = None;
+        self.decomp = None;
+        self.decomp_error = None;
+        self.call_graph_key = None;
+        self.call_graph_loading = false;
+        self.call_graph = None;
+        self.call_graph_error = None;
+    }
+    pub fn ensure_decomp(&mut self) {
+        if self.analyzing || self.opening {
+            return;
+        }
+        let Some(function) = self.function().map(|f| f.address) else {
+            return;
+        };
+        let key = (self.analysis_revision, self.project_revision, function);
+        if self.decomp_key == Some(key) || self.decomp_loading.is_some() {
+            return;
+        }
+        let (Some(binary), Some(analysis)) = (self.binary.clone(), self.analysis.clone()) else {
+            return;
+        };
+        let context = self.decomp_context(function);
+        self.decomp_loading = Some(key);
+        self.decomp_error = None;
+        self.worker
+            .submit_typed(self.generation, TaskKind::Decomp(key), move || {
+                ura_core::decomp::analyze_function(&binary, &analysis, function, &context, &()).map(
+                    |data| Event::Decomp {
+                        key,
+                        data: Arc::new(data),
+                    },
+                )
+            });
+    }
+    fn decomp_context(&self, function: u64) -> DecompContext {
+        let address_bits = self
+            .binary
+            .as_ref()
+            .map(|binary| binary.analysis().bitness as u16)
+            .unwrap_or(0);
+        let mut context = DecompContext::new(address_bits);
+        let Some((_, snapshot)) = &self.project else {
+            return context;
+        };
+        let mut hints = SignatureHints::default();
+        for entry in &snapshot.function_signatures {
+            let Ok(address) = parse_address(&entry.address) else {
+                continue;
+            };
+            let hint_name = self
+                .analysis
+                .as_ref()
+                .and_then(|analysis| analysis.function_by_start(address))
+                .map(|function| self.name(function))
+                .or_else(|| self.names.get(&address).cloned())
+                .unwrap_or_else(|| format!("sub_{address:x}"));
+            hints.insert(signature::describe_override(
+                address,
+                &hint_name,
+                &entry.signature,
+            ));
+        }
+        context.hints = hints;
+        context.override_signature = snapshot
+            .function_signatures
+            .iter()
+            .find(|entry| parse_address(&entry.address).ok() == Some(function))
+            .map(|entry| entry.signature.clone());
+        for entry in &snapshot.stack_variables {
+            if parse_address(&entry.function).ok() != Some(function) {
+                continue;
+            }
+            if entry.name.is_none() && entry.ty.is_none() {
+                continue;
+            }
+            context.stack_overrides.insert(
+                entry.offset.to_string(),
+                (entry.name.clone(), entry.ty.clone()),
+            );
+        }
+        context
+    }
+    pub fn ensure_call_graph(&mut self) {
+        if self.analyzing || self.opening {
+            return;
+        }
+        let revision = self.analysis_revision;
+        if self.call_graph_key == Some(revision) || self.call_graph_loading {
+            return;
+        }
+        let Some(analysis) = self.analysis.clone() else {
+            return;
+        };
+        self.call_graph_loading = true;
+        self.call_graph_error = None;
+        self.worker
+            .submit_typed(self.generation, TaskKind::CallGraph(revision), move || {
+                Ok(Event::CallGraph {
+                    key: revision,
+                    graph: Arc::new(ura_core::decomp::build_call_graph(&analysis)),
+                })
+            });
+    }
     fn analyze(&mut self) {
         if self.analyzing || self.opening {
             return;
@@ -691,6 +851,18 @@ impl Workspace {
                             self.ir_rows.clear();
                             self.ir_error = Some(error.clone());
                         }
+                        TaskKind::Decomp(key) if self.decomp_loading == Some(key) => {
+                            self.decomp_loading = None;
+                            self.decomp_key = Some(key);
+                            self.decomp = None;
+                            self.decomp_error = Some(error.clone());
+                        }
+                        TaskKind::CallGraph(revision) if revision == self.analysis_revision => {
+                            self.call_graph_loading = false;
+                            self.call_graph_key = Some(revision);
+                            self.call_graph = None;
+                            self.call_graph_error = Some(error.clone());
+                        }
                         _ => {}
                     }
                     self.log(true, error);
@@ -779,6 +951,7 @@ impl Workspace {
                     self.analysis = Some(analysis);
                     self.analysis_revision += 1;
                     self.reset_ir();
+                    self.reset_decomp();
                     self.graph.clear();
                     self.graph_loading = None;
                     self.function_filter.dirty = true;
@@ -836,6 +1009,24 @@ impl Workspace {
                     self.ir_bundle = Some(bundle);
                     self.ir_rows = rows;
                 }
+                Ok(Event::Decomp { key, data }) => {
+                    if self.decomp_loading != Some(key) {
+                        continue;
+                    }
+                    self.decomp_loading = None;
+                    self.decomp_key = Some(key);
+                    self.decomp_error = None;
+                    self.decomp = Some(data);
+                }
+                Ok(Event::CallGraph { key, graph }) => {
+                    if key != self.analysis_revision || !self.call_graph_loading {
+                        continue;
+                    }
+                    self.call_graph_loading = false;
+                    self.call_graph_key = Some(key);
+                    self.call_graph_error = None;
+                    self.call_graph = Some(graph);
+                }
                 Ok(Event::Project(path, snapshot, reanalyze)) => {
                     self.update_project(path, *snapshot);
                     self.log(false, "Project updated");
@@ -886,6 +1077,10 @@ impl Workspace {
                 function_names: ura_project::load_function_names_for_path(&path)
                     .map_err(|e| e.to_string())?,
                 manual_functions: ura_project::load_manual_functions_for_path(&path)
+                    .map_err(|e| e.to_string())?,
+                function_signatures: ura_project::load_function_signatures_for_path(&path)
+                    .map_err(|e| e.to_string())?,
+                stack_variables: ura_project::load_stack_variables_for_path(&path)
                     .map_err(|e| e.to_string())?,
                 view_state: ura_project::load_view_state_for_path(&path)
                     .map_err(|e| e.to_string())?,
@@ -1676,6 +1871,43 @@ mod tests {
         );
     }
     #[test]
+    fn native_decompiler_worker_matches_core_and_call_graph() {
+        let mut app = test_app();
+        let function = 0x140001000;
+        app.workspace.ensure_decomp();
+        pump(&mut app, |a| {
+            a.workspace.decomp_loading.is_none()
+                && a.workspace
+                    .decomp
+                    .as_ref()
+                    .is_some_and(|data| data.function == function)
+        });
+        let actual = app.workspace.decomp.clone().unwrap();
+        let expected = ura_core::decomp::analyze_function(
+            app.workspace.binary.as_ref().unwrap(),
+            app.workspace.analysis.as_ref().unwrap(),
+            function,
+            &ura_core::decomp::DecompContext::new(64),
+            &(),
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(actual).unwrap(),
+            serde_json::to_value(expected).unwrap()
+        );
+        app.workspace.ensure_call_graph();
+        pump(&mut app, |a| {
+            !a.workspace.call_graph_loading
+                && a.workspace.call_graph_key == Some(a.workspace.analysis_revision)
+        });
+        let expected = ura_core::decomp::build_call_graph(app.workspace.analysis.as_ref().unwrap());
+        let actual = app.workspace.call_graph.clone().unwrap();
+        assert_eq!(
+            serde_json::to_value(actual).unwrap(),
+            serde_json::to_value(expected).unwrap()
+        );
+    }
+    #[test]
     fn project_edits_manual_seeds_and_native_state_survive_reopen() {
         let mut app = test_app();
         let dir = tempfile::tempdir().unwrap();
@@ -1738,7 +1970,7 @@ mod tests {
         reopened.restore_project();
         assert_eq!(reopened.workspace.location.address, Some(manual));
         assert_eq!(reopened.workspace.active, Panel::Graph);
-        assert_eq!(reopened.dock.iter_all_tabs().count(), 11);
+        assert_eq!(reopened.dock.iter_all_tabs().count(), 16);
         assert!(reopened.dock.find_tab(&Panel::Ir).is_none());
         assert!(reopened.workspace.history.entries.len() >= 2);
         let destination = dir.path().join("annotations.json");
@@ -1793,7 +2025,7 @@ mod tests {
             app.workspace.history.step(-1).unwrap().address,
             Some(0x140001000)
         );
-        assert_eq!(ura_project::SCHEMA_VERSION, 3);
+        assert_eq!(ura_project::SCHEMA_VERSION, 4);
     }
     #[test]
     fn stale_open_results_do_not_replace_current_binary() {
