@@ -103,7 +103,8 @@ pub fn recover_with_control(
     if evidence.truncated {
         notes.push("Register-root recovery reached a depth or value budget; parameter evidence is incomplete.".into());
     }
-    let hints_constraints = call_site_constraints(ssa, hints, control)?;
+    let constants = bundle.dataflow.constants.iter().copied().collect();
+    let hints_constraints = call_site_constraints(ssa, hints, &constants, control)?;
     let mut parameters: BTreeMap<usize, Parameter> = BTreeMap::new();
     let argument_registers = convention.argument_registers(bits);
 
@@ -788,6 +789,7 @@ struct HintConstraints {
 fn call_site_constraints(
     ssa: &SsaFunction,
     hints: &SignatureHints,
+    constants: &BTreeMap<Value, crate::ir::Constant>,
     control: &dyn crate::AnalysisControl,
 ) -> Result<HintConstraints, String> {
     let mut result = HintConstraints::default();
@@ -798,10 +800,11 @@ fn call_site_constraints(
             if statement.op != Operation::Call {
                 continue;
             }
-            let Some(Use::Constant(target)) = statement.args.first() else {
-                continue;
+            let target = match statement.args.first() {
+                Some(Use::Constant(target)) => Some(target.value.0),
+                _ => super::imports::slot_for_call(block, statement, constants),
             };
-            let Some(signature) = hints.get(target.value.0) else {
+            let Some(signature) = target.and_then(|target| hints.get(target)) else {
                 continue;
             };
             for parameter in &signature.parameters {

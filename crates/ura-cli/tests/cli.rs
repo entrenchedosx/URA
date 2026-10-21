@@ -483,6 +483,27 @@ fn decompiler_commands_match_the_shared_service_and_render_text() {
     assert!(rendered.contains("experimental-foundations"));
     assert!(rendered.contains("recovered high-level IR"));
 
+    let typed = run([
+        "highlevel",
+        text(&binary),
+        "--function",
+        "140001020",
+        "--limit",
+        "9",
+        "--ast",
+        "--json",
+    ]);
+    assert!(typed.status.success(), "{}", stderr(&typed));
+    assert_eq!(
+        json(&typed),
+        serde_json::to_value(
+            service
+                .high_level_with_ast(&handle, "140001020", 0, 9, true)
+                .unwrap()
+        )
+        .unwrap()
+    );
+
     let output = run([
         "callgraph",
         text(&binary),

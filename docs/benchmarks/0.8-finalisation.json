@@ -1,0 +1,1121 @@
+{
+  "method": "Release, warm file cache, three repetitions per isolated pass and full pipeline for up to 16 largest functions. Pipeline includes lifting/SSA, import hydration, bounded program demand solver, final ABI/stack/types/HIR. AST serialization is measured for size outside pipeline timing. Five fresh CLI processes per command, startup included; outliers retained. OS peak working set observed at 5 ms intervals. Program counts show whether there were supplied seeds and any propagated claims; a converged empty demand set is not recovered type coverage. No GUI or idle CPU measurement.",
+  "core": [
+    {
+      "sample": "ura64.exe",
+      "sha256": "b3af30012bbcd6fc3186ef5b65d3c8460bc09cade3870a614fbf2bd3d41eb92d",
+      "observedPeakWorkingSetMiB": 4.546875,
+      "rows": [
+        {
+          "callGraphMs": 0.0223,
+          "discoveryMs": 1.2845,
+          "functions": 2,
+          "graphNodes": 2,
+          "graphSites": 1,
+          "instructions": 15,
+          "partial": false,
+          "sample": "ura64.exe",
+          "sha256": "b3af30012bbcd6fc3186ef5b65d3c8460bc09cade3870a614fbf2bd3d41eb92d"
+        },
+        {
+          "abiMs": 0.0507,
+          "function": "0x140001020",
+          "highLevelMs": 0.0547,
+          "importMs": 0.0018333333333333333,
+          "instructions": 8,
+          "lines": 55,
+          "pipelineMs": 0.2492,
+          "programMs": 0.0012,
+          "repetitions": 3,
+          "stackMs": 0.017933333333333332,
+          "typedAstBytes": 32193,
+          "typesMs": 0.011566666666666668,
+          "unresolved": 1,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        },
+        {
+          "abiMs": 0.025833333333333333,
+          "function": "0x140001000",
+          "highLevelMs": 0.04203333333333333,
+          "importMs": 0.0002666666666666666,
+          "instructions": 7,
+          "lines": 69,
+          "pipelineMs": 0.16133333333333333,
+          "programMs": 0.0003333333333333333,
+          "repetitions": 3,
+          "stackMs": 0.0069,
+          "typedAstBytes": 29499,
+          "typesMs": 0.013566666666666664,
+          "unresolved": 26,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        }
+      ]
+    },
+    {
+      "sample": "switch-O0.exe",
+      "sha256": "2e8292cf3853c8a7627242d2851d203742290bdc85874fe4b0590212281b9aa2",
+      "observedPeakWorkingSetMiB": 8.05859375,
+      "rows": [
+        {
+          "callGraphMs": 0.0241,
+          "discoveryMs": 1.3175999999999999,
+          "functions": 7,
+          "graphNodes": 7,
+          "graphSites": 0,
+          "instructions": 79,
+          "partial": false,
+          "sample": "switch-O0.exe",
+          "sha256": "2e8292cf3853c8a7627242d2851d203742290bdc85874fe4b0590212281b9aa2"
+        },
+        {
+          "abiMs": 0.09086666666666667,
+          "function": "0x140001120",
+          "highLevelMs": 0.0922,
+          "importMs": 0.0019,
+          "instructions": 16,
+          "lines": 111,
+          "pipelineMs": 0.42250000000000004,
+          "programMs": 0.0012,
+          "repetitions": 3,
+          "stackMs": 0.023333333333333334,
+          "typedAstBytes": 59675,
+          "typesMs": 0.031433333333333334,
+          "unresolved": 1,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        },
+        {
+          "abiMs": 0.047566666666666674,
+          "function": "0x1400010F0",
+          "highLevelMs": 0.0814,
+          "importMs": 0.0003666666666666666,
+          "instructions": 12,
+          "lines": 99,
+          "pipelineMs": 0.28109999999999996,
+          "programMs": 0.00046666666666666666,
+          "repetitions": 3,
+          "stackMs": 0.011866666666666664,
+          "typedAstBytes": 45088,
+          "typesMs": 0.010966666666666666,
+          "unresolved": 26,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        },
+        {
+          "abiMs": 0.028266666666666666,
+          "function": "0x140001000",
+          "highLevelMs": 0.035366666666666664,
+          "importMs": 0.00019999999999999998,
+          "instructions": 11,
+          "lines": 56,
+          "pipelineMs": 0.15423333333333333,
+          "programMs": 0.0003666666666666666,
+          "repetitions": 3,
+          "stackMs": 0.009200000000000002,
+          "typedAstBytes": 27191,
+          "typesMs": 0.0048000000000000004,
+          "unresolved": 0,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        },
+        {
+          "abiMs": 0.03933333333333333,
+          "function": "0x140001030",
+          "highLevelMs": 0.0413,
+          "importMs": 0.0003,
+          "instructions": 10,
+          "lines": 61,
+          "pipelineMs": 0.23746666666666663,
+          "programMs": 0.00033333333333333327,
+          "repetitions": 3,
+          "stackMs": 0.010166666666666668,
+          "typedAstBytes": 32673,
+          "typesMs": 0.0189,
+          "unresolved": 1,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        },
+        {
+          "abiMs": 0.04083333333333333,
+          "function": "0x140001060",
+          "highLevelMs": 0.06373333333333332,
+          "importMs": 0.0003,
+          "instructions": 10,
+          "lines": 69,
+          "pipelineMs": 0.256,
+          "programMs": 0.0002666666666666666,
+          "repetitions": 3,
+          "stackMs": 0.008333333333333333,
+          "typedAstBytes": 36208,
+          "typesMs": 0.0171,
+          "unresolved": 0,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        },
+        {
+          "abiMs": 0.037066666666666664,
+          "function": "0x140001090",
+          "highLevelMs": 0.058166666666666665,
+          "importMs": 0.00023333333333333333,
+          "instructions": 10,
+          "lines": 61,
+          "pipelineMs": 0.2134666666666667,
+          "programMs": 0.0002666666666666666,
+          "repetitions": 3,
+          "stackMs": 0.008499999999999999,
+          "typedAstBytes": 32675,
+          "typesMs": 0.016033333333333333,
+          "unresolved": 1,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        },
+        {
+          "abiMs": 0.0373,
+          "function": "0x1400010C0",
+          "highLevelMs": 0.03933333333333333,
+          "importMs": 0.0003333333333333333,
+          "instructions": 10,
+          "lines": 61,
+          "pipelineMs": 0.2288,
+          "programMs": 0.00023333333333333333,
+          "repetitions": 3,
+          "stackMs": 0.008599999999999998,
+          "typedAstBytes": 32677,
+          "typesMs": 0.013466666666666667,
+          "unresolved": 1,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        }
+      ]
+    },
+    {
+      "sample": "switch-O2.exe",
+      "sha256": "d68269093ec1ec4319eaf03624d60a79284a26847ee0407739a6e3515f635375",
+      "observedPeakWorkingSetMiB": 7.5859375,
+      "rows": [
+        {
+          "callGraphMs": 0.0352,
+          "discoveryMs": 1.6102,
+          "functions": 7,
+          "graphNodes": 7,
+          "graphSites": 6,
+          "instructions": 51,
+          "partial": false,
+          "sample": "switch-O2.exe",
+          "sha256": "d68269093ec1ec4319eaf03624d60a79284a26847ee0407739a6e3515f635375"
+        },
+        {
+          "abiMs": 0.0507,
+          "function": "0x140001090",
+          "highLevelMs": 0.09923333333333333,
+          "importMs": 0.0017999999999999997,
+          "instructions": 21,
+          "lines": 109,
+          "pipelineMs": 0.3387,
+          "programMs": 0.0012,
+          "repetitions": 3,
+          "stackMs": 0.022900000000000004,
+          "typedAstBytes": 59035,
+          "typesMs": 0.011766666666666667,
+          "unresolved": 7,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        },
+        {
+          "abiMs": 0.03166666666666667,
+          "function": "0x140001000",
+          "highLevelMs": 0.04543333333333333,
+          "importMs": 0.0002666666666666666,
+          "instructions": 6,
+          "lines": 48,
+          "pipelineMs": 0.16219999999999998,
+          "programMs": 0.0003,
+          "repetitions": 3,
+          "stackMs": 0.005866666666666667,
+          "typedAstBytes": 27331,
+          "typesMs": 0.007966666666666667,
+          "unresolved": 0,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        },
+        {
+          "abiMs": 0.029200000000000004,
+          "function": "0x140001030",
+          "highLevelMs": 0.03256666666666666,
+          "importMs": 0.0002,
+          "instructions": 6,
+          "lines": 48,
+          "pipelineMs": 0.15196666666666667,
+          "programMs": 0.0003,
+          "repetitions": 3,
+          "stackMs": 0.004633333333333333,
+          "typedAstBytes": 27163,
+          "typesMs": 0.0070999999999999995,
+          "unresolved": 0,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        },
+        {
+          "abiMs": 0.030266666666666664,
+          "function": "0x140001070",
+          "highLevelMs": 0.04733333333333334,
+          "importMs": 0.00033333333333333327,
+          "instructions": 6,
+          "lines": 72,
+          "pipelineMs": 0.21193333333333333,
+          "programMs": 0.0004333333333333333,
+          "repetitions": 3,
+          "stackMs": 0.004533333333333334,
+          "typedAstBytes": 33943,
+          "typesMs": 0.007566666666666666,
+          "unresolved": 26,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        },
+        {
+          "abiMs": 0.02463333333333333,
+          "function": "0x140001020",
+          "highLevelMs": 0.03666666666666666,
+          "importMs": 0.0002666666666666666,
+          "instructions": 4,
+          "lines": 34,
+          "pipelineMs": 0.138,
+          "programMs": 0.0002666666666666666,
+          "repetitions": 3,
+          "stackMs": 0.003766666666666667,
+          "typedAstBytes": 21412,
+          "typesMs": 0.0056,
+          "unresolved": 1,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        },
+        {
+          "abiMs": 0.02136666666666667,
+          "function": "0x140001050",
+          "highLevelMs": 0.023166666666666665,
+          "importMs": 0.0002333333333333333,
+          "instructions": 4,
+          "lines": 34,
+          "pipelineMs": 0.1309,
+          "programMs": 0.0003,
+          "repetitions": 3,
+          "stackMs": 0.0038,
+          "typedAstBytes": 21414,
+          "typesMs": 0.005,
+          "unresolved": 1,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        },
+        {
+          "abiMs": 0.021333333333333333,
+          "function": "0x140001060",
+          "highLevelMs": 0.023966666666666667,
+          "importMs": 0.0002333333333333333,
+          "instructions": 4,
+          "lines": 34,
+          "pipelineMs": 0.11566666666666665,
+          "programMs": 0.0002666666666666666,
+          "repetitions": 3,
+          "stackMs": 0.0036333333333333335,
+          "typedAstBytes": 21416,
+          "typesMs": 0.004966666666666667,
+          "unresolved": 1,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        }
+      ]
+    },
+    {
+      "sample": "switch-O2.elf",
+      "sha256": "39d362e3e0176ef1ddca0c9d242db515ac866d21fdfb6cb0d080f808a7993165",
+      "observedPeakWorkingSetMiB": 7.51953125,
+      "rows": [
+        {
+          "callGraphMs": 0.0323,
+          "discoveryMs": 1.5836,
+          "functions": 7,
+          "graphNodes": 7,
+          "graphSites": 6,
+          "instructions": 51,
+          "partial": false,
+          "sample": "switch-O2.elf",
+          "sha256": "39d362e3e0176ef1ddca0c9d242db515ac866d21fdfb6cb0d080f808a7993165"
+        },
+        {
+          "abiMs": 0.05910000000000001,
+          "function": "0x201380",
+          "highLevelMs": 0.10846666666666667,
+          "importMs": 0.0028,
+          "instructions": 21,
+          "lines": 109,
+          "pipelineMs": 0.37966666666666665,
+          "programMs": 0.0014,
+          "repetitions": 3,
+          "stackMs": 0.021533333333333335,
+          "typedAstBytes": 58224,
+          "typesMs": 0.012666666666666666,
+          "unresolved": 7,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        },
+        {
+          "abiMs": 0.0319,
+          "function": "0x2012F0",
+          "highLevelMs": 0.05533333333333334,
+          "importMs": 0.0008333333333333334,
+          "instructions": 6,
+          "lines": 48,
+          "pipelineMs": 0.22006666666666666,
+          "programMs": 0.0004666666666666666,
+          "repetitions": 3,
+          "stackMs": 0.005666666666666667,
+          "typedAstBytes": 26961,
+          "typesMs": 0.009233333333333333,
+          "unresolved": 0,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        },
+        {
+          "abiMs": 0.03403333333333334,
+          "function": "0x201320",
+          "highLevelMs": 0.043633333333333336,
+          "importMs": 0.0007000000000000001,
+          "instructions": 6,
+          "lines": 48,
+          "pipelineMs": 0.16416666666666666,
+          "programMs": 0.0004333333333333333,
+          "repetitions": 3,
+          "stackMs": 0.0046,
+          "typedAstBytes": 26796,
+          "typesMs": 0.007633333333333333,
+          "unresolved": 0,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        },
+        {
+          "abiMs": 0.030266666666666667,
+          "function": "0x201360",
+          "highLevelMs": 0.043500000000000004,
+          "importMs": 0.0007666666666666667,
+          "instructions": 6,
+          "lines": 72,
+          "pipelineMs": 0.2093,
+          "programMs": 0.00033333333333333327,
+          "repetitions": 3,
+          "stackMs": 0.0047666666666666664,
+          "typedAstBytes": 33432,
+          "typesMs": 0.007966666666666667,
+          "unresolved": 26,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        },
+        {
+          "abiMs": 0.023499999999999997,
+          "function": "0x201310",
+          "highLevelMs": 0.0255,
+          "importMs": 0.0006666666666666666,
+          "instructions": 4,
+          "lines": 34,
+          "pipelineMs": 0.1465,
+          "programMs": 0.0002666666666666666,
+          "repetitions": 3,
+          "stackMs": 0.0035666666666666663,
+          "typedAstBytes": 21126,
+          "typesMs": 0.005466666666666666,
+          "unresolved": 1,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        },
+        {
+          "abiMs": 0.022266666666666667,
+          "function": "0x201340",
+          "highLevelMs": 0.03,
+          "importMs": 0.0006666666666666666,
+          "instructions": 4,
+          "lines": 34,
+          "pipelineMs": 0.1394,
+          "programMs": 0.00033333333333333327,
+          "repetitions": 3,
+          "stackMs": 0.0037999999999999996,
+          "typedAstBytes": 21128,
+          "typesMs": 0.0051,
+          "unresolved": 1,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        },
+        {
+          "abiMs": 0.021266666666666666,
+          "function": "0x201350",
+          "highLevelMs": 0.022866666666666664,
+          "importMs": 0.0006333333333333333,
+          "instructions": 4,
+          "lines": 34,
+          "pipelineMs": 0.11253333333333333,
+          "programMs": 0.0002666666666666666,
+          "repetitions": 3,
+          "stackMs": 0.0036999999999999997,
+          "typedAstBytes": 21130,
+          "typesMs": 0.004900000000000001,
+          "unresolved": 1,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        }
+      ]
+    },
+    {
+      "sample": "ntdll.dll",
+      "sha256": "651ac9041af8e6b5ebd331d53163244c0a27d36d1433f0f15cac1f28c5f2e82c",
+      "observedPeakWorkingSetMiB": 118.23828125,
+      "rows": [
+        {
+          "callGraphMs": 31.3256,
+          "discoveryMs": 241.9801,
+          "functions": 2742,
+          "graphNodes": 2742,
+          "graphSites": 8728,
+          "instructions": 200000,
+          "partial": true,
+          "sample": "ntdll.dll",
+          "sha256": "651ac9041af8e6b5ebd331d53163244c0a27d36d1433f0f15cac1f28c5f2e82c"
+        },
+        {
+          "abiMs": 11.465100000000001,
+          "function": "0x1800AA290",
+          "highLevelMs": 30.43343333333333,
+          "importMs": 0.003866666666666667,
+          "instructions": 1768,
+          "lines": 12567,
+          "pipelineMs": 61.8308,
+          "programMs": 0.0018666666666666664,
+          "repetitions": 3,
+          "stackMs": 1.5583333333333333,
+          "typedAstBytes": 5828592,
+          "typesMs": 2.0351,
+          "unresolved": 3243,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        },
+        {
+          "abiMs": 8.243833333333333,
+          "function": "0x180084610",
+          "highLevelMs": 15.619633333333333,
+          "importMs": 0.0024000000000000002,
+          "instructions": 1477,
+          "lines": 14768,
+          "pipelineMs": 50.21923333333333,
+          "programMs": 0.0013666666666666669,
+          "repetitions": 3,
+          "stackMs": 1.0887,
+          "typedAstBytes": 6107400,
+          "typesMs": 1.0581000000000003,
+          "unresolved": 6019,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        },
+        {
+          "abiMs": 5.878866666666667,
+          "function": "0x1800A7F20",
+          "highLevelMs": 14.3696,
+          "importMs": 0.0038999999999999994,
+          "instructions": 1316,
+          "lines": 10039,
+          "pipelineMs": 40.3204,
+          "programMs": 0.0023,
+          "repetitions": 3,
+          "stackMs": 0.8041999999999999,
+          "typedAstBytes": 4682494,
+          "typesMs": 0.9639666666666665,
+          "unresolved": 2951,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        },
+        {
+          "abiMs": 8.064833333333333,
+          "function": "0x1801392E0",
+          "highLevelMs": 16.8497,
+          "importMs": 0.002733333333333333,
+          "instructions": 1197,
+          "lines": 14150,
+          "pipelineMs": 47.28130000000001,
+          "programMs": 0.0011666666666666665,
+          "repetitions": 3,
+          "stackMs": 0.7302333333333334,
+          "typedAstBytes": 5625843,
+          "typesMs": 0.7093666666666666,
+          "unresolved": 7796,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        },
+        {
+          "abiMs": 4.889766666666667,
+          "function": "0x18004F1F0",
+          "highLevelMs": 9.5899,
+          "importMs": 0.0026333333333333334,
+          "instructions": 1108,
+          "lines": 9549,
+          "pipelineMs": 29.864333333333335,
+          "programMs": 0.0011666666666666665,
+          "repetitions": 3,
+          "stackMs": 0.7211666666666666,
+          "typedAstBytes": 4060803,
+          "typesMs": 0.7896333333333333,
+          "unresolved": 3204,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        },
+        {
+          "abiMs": 4.442433333333333,
+          "function": "0x1800512B0",
+          "highLevelMs": 8.8679,
+          "importMs": 0.0019666666666666665,
+          "instructions": 1071,
+          "lines": 7760,
+          "pipelineMs": 28.420666666666666,
+          "programMs": 0.0008666666666666666,
+          "repetitions": 3,
+          "stackMs": 0.6664333333333333,
+          "typedAstBytes": 3576358,
+          "typesMs": 0.7636,
+          "unresolved": 2084,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        },
+        {
+          "abiMs": 5.681633333333333,
+          "function": "0x18003BCB0",
+          "highLevelMs": 8.4762,
+          "importMs": 0.002033333333333333,
+          "instructions": 974,
+          "lines": 10347,
+          "pipelineMs": 29.0023,
+          "programMs": 0.0012333333333333332,
+          "repetitions": 3,
+          "stackMs": 0.6581666666666668,
+          "typedAstBytes": 4103909,
+          "typesMs": 0.6917,
+          "unresolved": 4741,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        },
+        {
+          "abiMs": 4.341666666666666,
+          "function": "0x18005F570",
+          "highLevelMs": 8.513633333333333,
+          "importMs": 0.0018666666666666666,
+          "instructions": 939,
+          "lines": 7942,
+          "pipelineMs": 26.208466666666666,
+          "programMs": 0.001,
+          "repetitions": 3,
+          "stackMs": 0.5663999999999999,
+          "typedAstBytes": 3455287,
+          "typesMs": 0.6590999999999999,
+          "unresolved": 3081,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        },
+        {
+          "abiMs": 4.611933333333333,
+          "function": "0x180040F60",
+          "highLevelMs": 8.277566666666667,
+          "importMs": 0.0016333333333333332,
+          "instructions": 932,
+          "lines": 4466,
+          "pipelineMs": 24.615266666666667,
+          "programMs": 0.0012,
+          "repetitions": 3,
+          "stackMs": 0.4754,
+          "typedAstBytes": 2470175,
+          "typesMs": 0.5438999999999999,
+          "unresolved": 618,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        },
+        {
+          "abiMs": 3.522933333333333,
+          "function": "0x18000E5D0",
+          "highLevelMs": 11.5456,
+          "importMs": 0.0019,
+          "instructions": 886,
+          "lines": 5422,
+          "pipelineMs": 27.6717,
+          "programMs": 0.0009000000000000001,
+          "repetitions": 3,
+          "stackMs": 0.5453333333333333,
+          "typedAstBytes": 2772641,
+          "typesMs": 0.6608,
+          "unresolved": 993,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        },
+        {
+          "abiMs": 3.968033333333333,
+          "function": "0x1800982E0",
+          "highLevelMs": 7.38,
+          "importMs": 0.002033333333333333,
+          "instructions": 825,
+          "lines": 7241,
+          "pipelineMs": 22.74106666666667,
+          "programMs": 0.0012333333333333335,
+          "repetitions": 3,
+          "stackMs": 0.5335666666666666,
+          "typedAstBytes": 3047230,
+          "typesMs": 0.5805666666666666,
+          "unresolved": 2577,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        },
+        {
+          "abiMs": 4.686,
+          "function": "0x18003CC80",
+          "highLevelMs": 7.3558666666666666,
+          "importMs": 0.0032,
+          "instructions": 819,
+          "lines": 8207,
+          "pipelineMs": 25.1109,
+          "programMs": 0.0017666666666666666,
+          "repetitions": 3,
+          "stackMs": 0.5542666666666667,
+          "typedAstBytes": 3394454,
+          "typesMs": 0.6516333333333333,
+          "unresolved": 3538,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        },
+        {
+          "abiMs": 3.682033333333333,
+          "function": "0x1800019A0",
+          "highLevelMs": 9.874533333333332,
+          "importMs": 0.0018000000000000002,
+          "instructions": 804,
+          "lines": 6237,
+          "pipelineMs": 25.539533333333328,
+          "programMs": 0.0007999999999999999,
+          "repetitions": 3,
+          "stackMs": 0.4188,
+          "typedAstBytes": 2880818,
+          "typesMs": 0.5484666666666667,
+          "unresolved": 2206,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        },
+        {
+          "abiMs": 3.9555666666666673,
+          "function": "0x180142F00",
+          "highLevelMs": 8.084166666666667,
+          "importMs": 0.0017666666666666666,
+          "instructions": 794,
+          "lines": 7624,
+          "pipelineMs": 24.489333333333335,
+          "programMs": 0.0009333333333333332,
+          "repetitions": 3,
+          "stackMs": 0.5794333333333334,
+          "typedAstBytes": 3248619,
+          "typesMs": 0.5711333333333333,
+          "unresolved": 2715,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        },
+        {
+          "abiMs": 3.4380333333333333,
+          "function": "0x18009BD80",
+          "highLevelMs": 8.4203,
+          "importMs": 0.0020666666666666663,
+          "instructions": 773,
+          "lines": 6467,
+          "pipelineMs": 23.507900000000003,
+          "programMs": 0.0012333333333333335,
+          "repetitions": 3,
+          "stackMs": 0.45156666666666667,
+          "typedAstBytes": 2871379,
+          "typesMs": 0.5639333333333334,
+          "unresolved": 1715,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        },
+        {
+          "abiMs": 3.964233333333334,
+          "function": "0x180027D60",
+          "highLevelMs": 6.134666666666665,
+          "importMs": 0.0020333333333333336,
+          "instructions": 744,
+          "lines": 6941,
+          "pipelineMs": 21.826333333333334,
+          "programMs": 0.0009333333333333333,
+          "repetitions": 3,
+          "stackMs": 0.43596666666666667,
+          "typedAstBytes": 2935987,
+          "typesMs": 0.5161000000000001,
+          "unresolved": 2815,
+          "program": {
+            "functions": 1,
+            "edges": 0,
+            "parameters": 0,
+            "updates": 0,
+            "converged": true,
+            "truncated": false
+          }
+        }
+      ]
+    }
+  ],
+  "cli": [
+    {
+      "version": "d85b7cd-audit-local",
+      "executableSha256": "d36f4881e1edfca4f2b6b79a8d762ba5d5502de75bb8e799d9a0edd621276d0e",
+      "command": "analyze",
+      "startupAndQueryMs": [
+        28.939500043634325,
+        23.469000007025898,
+        20.907199999783188,
+        22.306300001218915,
+        23.369999951682985
+      ],
+      "medianMs": 23.369999951682985
+    },
+    {
+      "version": "d85b7cd-audit-local",
+      "executableSha256": "d36f4881e1edfca4f2b6b79a8d762ba5d5502de75bb8e799d9a0edd621276d0e",
+      "command": "signature",
+      "startupAndQueryMs": [
+        28.772199992090464,
+        22.304899990558624,
+        24.385299999266863,
+        22.70540001336485,
+        22.287399973720312
+      ],
+      "medianMs": 22.70540001336485
+    },
+    {
+      "version": "d85b7cd-audit-local",
+      "executableSha256": "d36f4881e1edfca4f2b6b79a8d762ba5d5502de75bb8e799d9a0edd621276d0e",
+      "command": "highlevel",
+      "startupAndQueryMs": [
+        23.9471000386402,
+        21.68350003194064,
+        22.109499957878143,
+        24.502200016286224,
+        22.441299981437624
+      ],
+      "medianMs": 22.441299981437624
+    },
+    {
+      "version": "finalisation-checkpoint",
+      "executableSha256": "dab2e7e0a439593f8748de36b21a1cdb737d572bcdbc70666ec1baf557644081",
+      "command": "analyze",
+      "startupAndQueryMs": [
+        222.31669997563586,
+        20.944699994288385,
+        21.986500010825694,
+        24.077899986878037,
+        21.073999989312142
+      ],
+      "medianMs": 21.986500010825694
+    },
+    {
+      "version": "finalisation-checkpoint",
+      "executableSha256": "dab2e7e0a439593f8748de36b21a1cdb737d572bcdbc70666ec1baf557644081",
+      "command": "signature",
+      "startupAndQueryMs": [
+        23.318000021390617,
+        21.771200001239777,
+        22.50550000462681,
+        21.588800009340048,
+        23.747899977024645
+      ],
+      "medianMs": 22.50550000462681
+    },
+    {
+      "version": "finalisation-checkpoint",
+      "executableSha256": "dab2e7e0a439593f8748de36b21a1cdb737d572bcdbc70666ec1baf557644081",
+      "command": "highlevel",
+      "startupAndQueryMs": [
+        23.719899996649474,
+        21.926699962932616,
+        21.984299994073808,
+        21.7928999918513,
+        24.644099990837276
+      ],
+      "medianMs": 21.984299994073808
+    }
+  ],
+  "seededDemand": {
+    "converged": true,
+    "edges": 8,
+    "fixture": "two Win64 wrappers and a supplied pointer prototype at the leaf",
+    "functions": 3,
+    "partial": false,
+    "pipelineMs": 0.377814,
+    "programMs": 0.178478,
+    "repetitions": 100,
+    "updates": 2
+  },
+  "mcp": {
+    "tools": 30,
+    "irSchema": 1,
+    "decompilerSchema": {
+      "ura_get_function_signature": 1,
+      "ura_get_calling_convention": 1,
+      "ura_get_stack_variables": 1,
+      "ura_get_types": 1,
+      "ura_get_type_constraints": 1,
+      "ura_get_high_level_ir": 1
+    },
+    "callGraphNodes": 2,
+    "fixtureQueryMs": {
+      "ura_get_ir": 1.3872000272385776,
+      "ura_get_ssa": 0.820100016426295,
+      "ura_get_dominators": 0.1618000096641481,
+      "ura_get_analysis_diagnostics": 0.1294999965466559,
+      "ura_get_function_signature": 0.6070999661460519,
+      "ura_get_calling_convention": 0.13050000416114926,
+      "ura_get_stack_variables": 0.16389996744692326,
+      "ura_get_types": 0.25069998810067773,
+      "ura_get_type_constraints": 0.202000024728477,
+      "ura_get_high_level_ir": 0.15490001533180475
+    },
+    "projectPrepared": "fixture.ura",
+    "typeLibraryRoundTrip": true,
+    "typedAstRoundTrip": true,
+    "programConverged": true
+  },
+  "astLimitCheck": {
+    "pagedLinesPass": true,
+    "returned": 5,
+    "oversizeAstRejected": true,
+    "error": {
+      "code": "limit_exceeded",
+      "message": "typed HIR exceeds the 2 MiB response limit; use paged lines or IR"
+    }
+  }
+}

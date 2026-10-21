@@ -1,8 +1,9 @@
 //! Post-dominator analysis over verified SSA block graphs.
 //!
 //! The decompiler only structures control flow that it can prove. A block's
-//! post-dominator lies on every path from that block to a function exit, so
-//! if/else joins recovered through post-dominators are never a heuristic. The
+//! post-dominator lies on every finite path from that block to a function exit.
+//! Infinite paths require the additional `first_common_on_all_paths` proof;
+//! ignoring them would allow a returning arm to hide a diverging arm. The
 //! tree is computed with the same Cooper-Harvey-Kennedy iteration used for the
 //! SSA dominators, but over the reversed block graph rooted at a synthetic
 //! sink that every exit-style terminator feeds into.
@@ -33,22 +34,28 @@ pub struct PostDominators {
 
 /// Successor edges for one block graph keyed by block address. The map holds
 /// reachable and unreachable blocks; empty vectors are exit-style blocks.
-/// Edges that point outside the analyzed function are dropped and the block
-/// behaves as a partial exit for the post-dominator analysis.
+/// External destinations are retained, so partial exits cannot disappear.
 pub fn graph_for(ssa: &SsaFunction) -> BTreeMap<u64, Vec<u64>> {
     let mut successors = BTreeMap::new();
     for block in &ssa.blocks {
         let taken = match block.terminator.flow.kind {
-            FlowKind::Return | FlowKind::Indirect | FlowKind::Unresolved => Vec::new(),
+            FlowKind::Return => Vec::new(),
             _ => block
                 .terminator
                 .flow
                 .successors
                 .iter()
+                .chain(&block.terminator.flow.exits)
                 .map(|address| address.0)
-                .filter(|target| ssa.blocks.iter().any(|known| known.address.0 == *target))
                 .collect(),
         };
+        let mut taken = taken;
+        if matches!(
+            block.terminator.flow.kind,
+            FlowKind::Indirect | FlowKind::Unresolved
+        ) {
+            taken.push(SINK);
+        }
         successors.insert(block.address.0, taken);
     }
     successors
@@ -83,12 +90,23 @@ pub fn over_graph_with_control(
     if control.is_cancelled() {
         return Err("post-dominator analysis cancelled".into());
     }
+    if successors.len() > crate::ir::MAX_IR_BLOCKS
+        || successors.values().map(Vec::len).sum::<usize>() > crate::ir::MAX_IR_EDGES
+    {
+        return Err("post-dominator graph exceeds block or edge budget".into());
+    }
+    if successors.contains_key(&SINK) {
+        return Err("post-dominator synthetic sink collides with a block address".into());
+    }
     if !successors.contains_key(&entry) {
         return Err("post-dominator entry is not present in the block graph".into());
     }
     let mut reachable = BTreeSet::new();
     let mut queue = VecDeque::from([entry]);
     while let Some(current) = queue.pop_front() {
+        if control.is_cancelled() {
+            return Err("post-dominator analysis cancelled".into());
+        }
         if !reachable.insert(current) {
             continue;
         }
@@ -150,6 +168,9 @@ pub fn over_graph_with_control(
     let mut seen = BTreeSet::new();
     let mut todo = vec![(SINK, false)];
     while let Some((block, finish)) = todo.pop() {
+        if control.is_cancelled() {
+            return Err("post-dominator analysis cancelled".into());
+        }
         if finish {
             postorder.push(block);
             continue;
@@ -191,10 +212,14 @@ pub fn over_graph_with_control(
     };
     let intersect = |mut a: u64, mut b: u64, parents: &BTreeMap<u64, u64>| -> u64 {
         while a != b {
-            while order.get(&a).copied().unwrap_or(usize::MAX) > order.get(&b).copied().unwrap_or(usize::MAX) {
+            while order.get(&a).copied().unwrap_or(usize::MAX)
+                > order.get(&b).copied().unwrap_or(usize::MAX)
+            {
                 a = parents[&a];
             }
-            while order.get(&b).copied().unwrap_or(usize::MAX) > order.get(&a).copied().unwrap_or(usize::MAX) {
+            while order.get(&b).copied().unwrap_or(usize::MAX)
+                > order.get(&a).copied().unwrap_or(usize::MAX)
+            {
                 b = parents[&b];
             }
         }
@@ -251,18 +276,13 @@ pub fn over_graph_with_control(
     let mut children: BTreeMap<u64, Vec<u64>> =
         reachable.iter().map(|block| (*block, Vec::new())).collect();
     for (block, parent) in &idom {
-        if *block != *parent
-            && *parent != SINK
-            && reachable.contains(block)
-        {
+        if *block != *parent && *parent != SINK && reachable.contains(block) {
             children.entry(*parent).or_default().push(*block);
         }
     }
     let immediate: BTreeMap<u64, u64> = idom
         .into_iter()
-        .filter(|(block, parent)| {
-            *block != *parent && *parent != SINK && reachable.contains(block)
-        })
+        .filter(|(block, parent)| *block != *parent && *parent != SINK && reachable.contains(block))
         .collect();
     Ok(PostDominators {
         entry,
@@ -274,7 +294,7 @@ pub fn over_graph_with_control(
 }
 
 impl PostDominators {
-    /// True when `a` lies on every path from `b` to a function exit. Strict:
+    /// True when `a` lies on every finite exiting path from `b`. Strict:
     /// a block never post-dominates itself.
     pub fn postdominates(&self, a: u64, b: u64) -> bool {
         if a == b {
@@ -318,6 +338,53 @@ impl PostDominators {
         }
         None
     }
+
+    /// A join is usable for structuring only when every maximal path from
+    /// both arms reaches it, including infinite and unknown/external paths.
+    pub fn first_common_on_all_paths(
+        &self,
+        a: u64,
+        b: u64,
+        graph: &BTreeMap<u64, Vec<u64>>,
+    ) -> Option<u64> {
+        let join = self.first_common(a, b)?;
+        let reaches = must_reach(join, graph);
+        (reaches.contains(&a) && reaches.contains(&b)).then_some(join)
+    }
+}
+
+/// Least fixed point of blocks whose *every* successor already must reach
+/// target. Cycles avoiding target never enter this set. Empty or external
+/// successor paths do not count as reaching it. O(V + E) queue operations.
+pub fn must_reach(target: u64, graph: &BTreeMap<u64, Vec<u64>>) -> BTreeSet<u64> {
+    if !graph.contains_key(&target) {
+        return BTreeSet::new();
+    }
+    let mut reverse: BTreeMap<u64, Vec<u64>> = BTreeMap::new();
+    let mut remaining = BTreeMap::new();
+    for (&block, edges) in graph {
+        let unique: BTreeSet<_> = edges.iter().copied().collect();
+        remaining.insert(block, unique.len());
+        for successor in unique {
+            reverse.entry(successor).or_default().push(block);
+        }
+    }
+    let mut proven = BTreeSet::from([target]);
+    let mut queue = VecDeque::from([target]);
+    while let Some(block) = queue.pop_front() {
+        for predecessor in reverse.get(&block).into_iter().flatten() {
+            if proven.contains(predecessor) {
+                continue;
+            }
+            let count = remaining.get_mut(predecessor).expect("known predecessor");
+            *count -= 1;
+            if *count == 0 {
+                proven.insert(*predecessor);
+                queue.push_back(*predecessor);
+            }
+        }
+    }
+    proven
 }
 
 #[cfg(test)]

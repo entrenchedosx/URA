@@ -10,9 +10,12 @@
 - [x] Shared CLI/MCP queries and explicit writes; 30 MCP tools.
 - [x] Independent adversarial review and regressions for the repaired subset.
 - [ ] Complete vector/aggregate ABI models and caller return-consumer evidence.
-- [ ] Bind trustworthy imported signatures and imported call-graph nodes.
-- [ ] Solve interprocedural type/signature constraints to a bounded fixed point.
-- [ ] Add a typed high-level AST, postdominators and validated control structuring.
+- [x] Bind a narrow DLL/symbol-checked PE prototype subset; recover bounded PE/ELF slot identities.
+- [ ] Integrate imported call-graph nodes, sites and complete thunk/PLT identity.
+- [x] Solve supplied native-width register parameter demands with a bounded monotone worklist.
+- [ ] Add forward, stack and return-consumer propagation with SSA-specific type conflicts.
+- [x] Retain a typed presentation AST with self-contained SSA types/operations and independently checked postdominator join proofs.
+- [ ] Complete high-level semantic types/provenance and interpreter-based region equivalence tests.
 - [ ] Implement verified IR rewriting/alias refinements and semantic comparisons.
 - [ ] Broaden compiler/optimization/debug-metadata and malformed-input validation.
 - [ ] Resolve idle CPU and collect OS wakeup/GPU/presentation/latency measurements.
@@ -21,6 +24,9 @@
 The earlier `v0.8.0-dev` public archive predates the audit repairs. See
 [checklist audit](AUDIT-0.8.md), [independent review](REVIEW-0.8.md),
 [decompiler design](DECOMPILER.md) and [verification](VERIFICATION-0.8.md).
+The later [finalisation checkpoint](FINALISATION-0.8.md) records the partial
+implementations, 213 tests and outstanding acceptance gates without rewriting
+historical audit results.
 
 ## v0.7 — development checkpoint, release blocked
 

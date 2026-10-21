@@ -224,17 +224,18 @@ impl UraServer {
     #[tool(
         name = "ura_get_high_level_ir",
         annotations(title = "Get high-level IR", read_only_hint = true),
-        description = "Return a bounded page of recovered high-level IR rendered as non-compilable C-like lines with source addresses and explicit unresolved markers."
+        description = "Return a bounded page of recovered high-level IR with source addresses, unresolved markers and interprocedural parameter demands. Set ast=true for the self-contained typed tree and original SSA semantics (2 MiB maximum; addresses are hex strings)."
     )]
     fn ura_get_high_level_ir(
         &self,
         Parameters(p): Parameters<DecompFunctionParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        respond(self.service().high_level(
+        respond(self.service().high_level_with_ast(
             &p.handle,
             &p.function,
             p.offset.unwrap_or(0),
             p.limit.unwrap_or(200),
+            p.ast.unwrap_or(false),
         ))
     }
     #[tool(

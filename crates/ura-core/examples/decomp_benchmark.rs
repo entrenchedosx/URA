@@ -46,6 +46,11 @@ fn main() {
         let mut abi_ms = 0.0;
         let mut types_ms = 0.0;
         let mut hir_ms = 0.0;
+        let mut import_ms = 0.0;
+        let mut program_ms = 0.0;
+        let mut pipeline_ms = 0.0;
+        let mut program_result = None;
+        let mut ast_bytes = 0;
         let mut lines = 0;
         let mut unresolved = 0;
         for _ in 0..repeats {
@@ -71,10 +76,27 @@ fn main() {
             lines = high.lines.len();
             unresolved = high.unresolved;
             black_box(high);
+            let mut hints = context.hints.clone();
+            let timer = Instant::now();
+            black_box(decomp::imports::hydrate(&binary, &mut hints));
+            import_ms += timer.elapsed().as_secs_f64() * 1000.0;
+            let timer = Instant::now();
+            program_result = Some(
+                decomp::program::enrich(&binary, &analysis, &bundle, &mut hints, &())
+                    .expect("program types"),
+            );
+            program_ms += timer.elapsed().as_secs_f64() * 1000.0;
+            let timer = Instant::now();
+            let pipeline =
+                decomp::analyze_function(&binary, &analysis, function.address, &context, &())
+                    .expect("full pipeline");
+            pipeline_ms += timer.elapsed().as_secs_f64() * 1000.0;
+            ast_bytes = serde_json::to_vec(&pipeline.ast).expect("typed AST").len();
+            black_box(pipeline);
         }
         println!(
             "{}",
-            serde_json::json!({"function":ura_core::format_address(function.address),"instructions":function.instruction_count,"repetitions":repeats,"stackMs":stack_ms/repeats as f64,"abiMs":abi_ms/repeats as f64,"typesMs":types_ms/repeats as f64,"highLevelMs":hir_ms/repeats as f64,"lines":lines,"unresolved":unresolved})
+            serde_json::json!({"function":ura_core::format_address(function.address),"instructions":function.instruction_count,"repetitions":repeats,"stackMs":stack_ms/repeats as f64,"abiMs":abi_ms/repeats as f64,"typesMs":types_ms/repeats as f64,"highLevelMs":hir_ms/repeats as f64,"importMs":import_ms/repeats as f64,"programMs":program_ms/repeats as f64,"pipelineMs":pipeline_ms/repeats as f64,"program":program_result,"typedAstBytes":ast_bytes,"lines":lines,"unresolved":unresolved})
         );
     }
 }

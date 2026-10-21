@@ -53,6 +53,11 @@ try:
         start = time.perf_counter()
         decompiler[name] = tool(name,{'handle':handle,'function':'140001020','limit':20})['schemaVersion']
         timings[name] = (time.perf_counter()-start)*1000
+    typed = tool('ura_get_high_level_ir', {'handle':handle,'function':'140001020','limit':20,'ast':True})
+    assert typed['ast']['function'] == '0x140001020'
+    assert typed['ast']['source']['variables']
+    assert typed['ast']['source']['blocks']
+    assert typed['program']['converged']
     graph = tool('ura_get_call_graph',{'handle':handle,'function':'140001000','depth':1,'maxNodes':50})
     assert graph['schemaVersion'] == 1
     project = folder/'fixture.ura'
@@ -62,7 +67,7 @@ try:
     tool('ura_set_type_library',{'handle':handle,'project':str(project),'database':library})
     assert tool('ura_get_structure',{'handle':handle,'name':'Header'})['structure']['fields'][0]['name'] == 'length'
     assert tool('ura_get_types',{'handle':handle})['database'] == library
-    result = {'tools':30,'irSchema':1,'decompilerSchema':decompiler,'callGraphNodes':graph['returnedNodes'],'fixtureQueryMs':timings,'projectPrepared':project.name,'typeLibraryRoundTrip':True}
+    result = {'tools':30,'irSchema':1,'decompilerSchema':decompiler,'callGraphNodes':graph['returnedNodes'],'fixtureQueryMs':timings,'projectPrepared':project.name,'typeLibraryRoundTrip':True,'typedAstRoundTrip':True,'programConverged':typed['program']['converged']}
     (project.parent/'mcp-release.json').write_text(json.dumps(result,indent=2),encoding='utf-8')
     print(json.dumps(result,indent=2))
 finally:

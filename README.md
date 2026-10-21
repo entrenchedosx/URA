@@ -10,6 +10,12 @@ High-level output is experimental and variable idle CPU remains an unexplained
 known limitation; see [v0.8 verification](docs/VERIFICATION-0.8.md) and
 [decompiler design](docs/DECOMPILER.md).
 
+The latest [v0.8 finalisation checkpoint](docs/FINALISATION-0.8.md) adds a
+self-contained typed tree, conservative postdominator joins, bounded parameter
+type demands and trusted PE import binding. CLI `highlevel --json --ast` and MCP
+`ura_get_high_level_ir` with `ast: true` expose the tree. Full release acceptance
+remains pending; the existing public ZIP has not been replaced.
+
 ## Overview
 
 URA is a native Rust static-analysis workbench for executable files. The desktop,

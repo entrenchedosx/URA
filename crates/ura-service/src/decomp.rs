@@ -19,6 +19,34 @@ const MAX_CACHED_DECOMPILATIONS: usize = 4;
 const MAX_CALL_GRAPH_EDGES: usize = 20_000;
 const MAX_STACK_OFFSET: i64 = 1 << 30;
 
+/// The typed AST retains the core's legacy u64 addresses in memory. Project
+/// its address fields to hex strings at the protocol boundary, including
+/// nested statements, signatures and evidence, before a JS client sees them.
+fn lossless_hir_addresses(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(fields) => {
+            for (key, value) in fields {
+                if matches!(
+                    key.as_str(),
+                    "function" | "address" | "predecessor" | "target" | "taken" | "fall" | "header"
+                ) {
+                    if let Some(address) = value.as_u64() {
+                        *value = serde_json::Value::String(format_address(address));
+                        continue;
+                    }
+                }
+                lossless_hir_addresses(value);
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                lossless_hir_addresses(value);
+            }
+        }
+        _ => {}
+    }
+}
+
 impl Service {
     fn require_override_project(&self, handle: &str, resolved: &Path) -> ServiceResult<()> {
         let attached = self.session(handle)?.project.as_deref().ok_or_else(|| {
@@ -208,12 +236,38 @@ impl Service {
         offset: usize,
         limit: usize,
     ) -> ServiceResult<HighLevelResponse> {
+        self.high_level_with_ast(handle, address, offset, limit, false)
+    }
+
+    pub fn high_level_with_ast(
+        &mut self,
+        handle: &str,
+        address: &str,
+        offset: usize,
+        limit: usize,
+        include_ast: bool,
+    ) -> ServiceResult<HighLevelResponse> {
         if !(1..=2_000).contains(&limit) {
             return Err(ServiceError::LimitExceeded(
                 "high-level line limit must be 1..2000".into(),
             ));
         }
         let decompilation = self.decompiled(handle, address)?;
+        let ast = if include_ast {
+            let mut value = serde_json::to_value(&decompilation.ast)
+                .map_err(|error| ServiceError::InvalidArgument(error.to_string()))?;
+            lossless_hir_addresses(&mut value);
+            let bytes = serde_json::to_vec(&value)
+                .map_err(|error| ServiceError::InvalidArgument(error.to_string()))?;
+            if bytes.len() > 2 * 1024 * 1024 {
+                return Err(ServiceError::LimitExceeded(
+                    "typed HIR exceeds the 2 MiB response limit; use paged lines or IR".into(),
+                ));
+            }
+            Some(value)
+        } else {
+            None
+        };
         let session = self.session(handle)?;
         let total = decompilation.high_level.lines.len();
         let offset = offset.min(total);
@@ -243,6 +297,8 @@ impl Service {
             truncated: decompilation.high_level.truncated,
             notes: decompilation.high_level.notes.clone(),
             diagnostics: decompilation.diagnostics.clone(),
+            program: decompilation.program.clone(),
+            ast,
         })
     }
 
@@ -602,4 +658,25 @@ fn display_name(session: &Session, function: &ura_core::Function) -> String {
         .cloned()
         .or_else(|| function.symbol.clone())
         .unwrap_or_else(|| function.fallback_name())
+}
+
+#[cfg(test)]
+mod hir_address_tests {
+    #[test]
+    fn addresses_above_javascript_integer_precision_keep_every_bit() {
+        let address = 0xffff_ffff_ffff_fffeu64;
+        let mut value = serde_json::json!({"function":address,"source":{"signature":{"function":address,"parameters":[{"width":64,"evidence":[{"address":address}]}]}},"statements":[{"type":"ifExit","target":{"type":"goto","target":address}},{"predecessor":address,"header":address,"taken":address,"fall":address}]});
+        super::lossless_hir_addresses(&mut value);
+        let expected = ura_core::format_address(address);
+        assert_eq!(value["function"], expected);
+        assert_eq!(
+            value["source"]["signature"]["parameters"][0]["evidence"][0]["address"],
+            expected
+        );
+        assert_eq!(value["statements"][0]["target"]["target"], expected);
+        assert_eq!(value["source"]["signature"]["parameters"][0]["width"], 64);
+        for key in ["predecessor", "header", "taken", "fall"] {
+            assert_eq!(value["statements"][1][key], expected);
+        }
+    }
 }

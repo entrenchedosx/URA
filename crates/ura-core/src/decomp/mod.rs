@@ -8,7 +8,9 @@ pub mod abi;
 pub mod api;
 pub mod callgraph;
 pub mod hir;
+pub mod imports;
 pub mod postdom;
+pub mod program;
 pub mod signature;
 pub mod stack;
 pub mod types;
@@ -16,8 +18,8 @@ pub mod types;
 pub use abi::{SignatureHints, SignatureRecovery};
 pub use callgraph::{CallGraph, CallGraphEdge, CallGraphNode};
 pub use hir::{
-    HirArgument, HirBinaryOp, HirCastKind, HirExpr, HirFunction, HirIncoming, HirInvocation,
-    HirReturnShape, HirStatement, HirValueDisplay, HighLevelFunction, HighLevelLine, IfExitTarget,
+    HighLevelFunction, HighLevelLine, HirArgument, HirBinaryOp, HirCastKind, HirExpr, HirFunction,
+    HirIncoming, HirInvocation, HirReturnShape, HirStatement, HirValueDisplay, IfExitTarget,
     UnsupportedCase,
 };
 pub use postdom::{PostDominators, SINK};
@@ -68,6 +70,7 @@ pub struct FunctionDecompilation {
     /// serialised through string rendering. Old project files omit it.
     #[serde(default)]
     pub ast: Option<hir::HirFunction>,
+    pub program: program::ProgramTypes,
     pub diagnostics: Vec<String>,
 }
 
@@ -89,10 +92,40 @@ pub fn analyze_function(
     if control.is_cancelled() {
         return Err("decompiler analysis cancelled".into());
     }
+    let mut hints = context.hints.clone();
+    let import_notes = match imports::hydrate_with_control(binary, &mut hints, control) {
+        Ok((notes, _)) => notes,
+        Err(error) if control.is_cancelled() => return Err(error),
+        Err(error) => vec![format!("import recovery unavailable: {error}")],
+    };
+    // The current function's explicit signature must also be a solver seed.
+    if let Some(override_signature) = &context.override_signature {
+        let errors = override_signature.validate_for_width(binary.analysis().bitness as u16);
+        if !errors.is_empty() {
+            return Err(format!(
+                "signature override rejected: {}",
+                errors.join("; ")
+            ));
+        }
+        let name = analysis
+            .functions
+            .iter()
+            .find(|f| f.address == address)
+            .and_then(|f| f.symbol.as_deref())
+            .unwrap_or("function");
+        hints.insert(signature::describe_override(
+            address,
+            name,
+            override_signature,
+        ));
+    }
+    let program = program::enrich(binary, analysis, &bundle, &mut hints, control)?;
     let mut frame = stack::recover_with_control(binary, analysis, address, None, control)?;
-    let recovery =
-        abi::recover_with_control(binary, analysis, &bundle, &frame, &context.hints, control)?;
+    let recovery = abi::recover_with_control(binary, analysis, &bundle, &frame, &hints, control)?;
     let mut signature = recovery.signature;
+    if context.override_signature.is_none() && context.hints.get(address).is_none() {
+        program::apply_to_signature(&mut signature, &program);
+    }
     if let Some(override_signature) = &context.override_signature {
         let errors = override_signature.validate_for_width(binary.analysis().bitness as u16);
         if !errors.is_empty() {
@@ -117,17 +150,19 @@ pub fn analyze_function(
     stack::apply_overrides(&mut frame, &context.stack_overrides);
     let mut inferred = types::infer_types(&bundle);
     abi::merge_value_constraints(&mut inferred, &recovery.value_constraints);
+    let mut diagnostics = recovery.notes;
+    diagnostics.extend(import_notes);
+    diagnostics.push(format!("interprocedural parameter demands: {} function(s), {} register-copy edge(s), {} update(s), converged={}, partial={}", program.functions.len(), program.edges.len(), program.updates, program.converged, program.truncated));
     let (high_level, ast) = hir::build_with_ast(
         &bundle.ssa,
         &bundle.dataflow,
         &signature,
-        &context.hints,
+        &hints,
         Some(&frame),
     );
     if control.is_cancelled() {
         return Err("decompiler analysis cancelled".into());
     }
-    let mut diagnostics = recovery.notes;
     let mut seen = std::collections::BTreeSet::new();
     for diagnostic in &bundle.raw.diagnostics {
         if diagnostics.len() >= 64 {
@@ -155,6 +190,7 @@ pub fn analyze_function(
         types: inferred,
         high_level,
         ast: Some(ast),
+        program,
         diagnostics,
     })
 }

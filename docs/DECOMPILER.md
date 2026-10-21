@@ -1,5 +1,10 @@
 # Decompiler foundations (v0.8)
 
+The later [finalisation checkpoint](FINALISATION-0.8.md) describes the new typed
+tree/source metadata, postdominator join proof, bounded parameter-demand solver,
+import binding and AST protocol option. It supersedes the corresponding missing
+capabilities below for its documented subset; remaining broad items stay open.
+
 URA v0.8 recovers calling conventions, stack frames, conservative types, an
 interprocedural call graph and a C-like high-level view from the verified
 bit-vector IR introduced in v0.7. The status of the high-level view is

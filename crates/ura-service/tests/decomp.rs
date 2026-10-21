@@ -20,6 +20,27 @@ fn analyzed(service: &mut Service) -> String {
 }
 
 #[test]
+fn typed_hir_is_opt_in_self_contained_and_uses_lossless_addresses() {
+    let mut service = Service::new(PathPolicy::allow_all(), false);
+    let handle = analyzed(&mut service);
+    let plain = service.high_level(&handle, "140001020", 0, 20).unwrap();
+    assert!(plain.ast.is_none());
+    let response = service
+        .high_level_with_ast(&handle, "140001020", 0, 20, true)
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(&plain.lines).unwrap(),
+        serde_json::to_value(&response.lines).unwrap()
+    );
+    let ast = response.ast.unwrap();
+    assert_eq!(ast["function"], "0x140001020");
+    assert!(ast["source"]["variables"].as_array().unwrap().len() > 10);
+    assert!(ast["source"]["blocks"][0]["address"].is_string());
+    assert!(ast["source"]["signature"]["function"].is_string());
+    assert!(response.program.converged);
+}
+
+#[test]
 fn override_writes_cannot_mix_two_projects_for_the_same_binary() {
     use ura_core::decomp::TypeDatabase;
     let dir = tempfile::tempdir().unwrap();

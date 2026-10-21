@@ -203,6 +203,8 @@ pub struct DecompFunctionParams {
     pub offset: Option<usize>,
     #[schemars(description = "Maximum lines to return (1-2000, default 200)")]
     pub limit: Option<usize>,
+    /// Include the self-contained typed tree and original SSA semantics (2 MiB maximum); high-level IR queries only.
+    pub ast: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

@@ -7,7 +7,7 @@
 //! rendered lines are a deterministic printer over it, and the legacy text
 //! contract is locked by snapshot tests.
 use super::abi::SignatureHints;
-use super::postdom::{PostDominators, build as build_post_dominators};
+use super::postdom::PostDominators;
 use super::signature::{FunctionSignature, Location};
 use super::stack::StackFrame;
 use crate::ir::dataflow::Dataflow;
@@ -18,7 +18,6 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 pub const MAX_HIR_LINES: usize = 20_000;
 pub const MAX_HIR_DEPTH: usize = 64;
-const MAX_JOIN_NODES: usize = 2_048;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -56,6 +55,20 @@ impl HighLevelFunction {
 pub struct HirFunction {
     pub function: u64,
     pub statements: Vec<HirStatement>,
+    /// Self-contained machine semantics and SSA value types. No operation is
+    /// removed here when its display definition is folded or hidden as dead.
+    #[serde(default)]
+    pub source: Option<HirSource>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HirSource {
+    pub address_width: u16,
+    pub variables: Vec<crate::ir::Variable>,
+    pub blocks: Vec<SsaBlock>,
+    pub constants: Vec<(Value, Constant)>,
+    pub signature: FunctionSignature,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -206,8 +219,12 @@ pub enum HirArgument {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum HirExpr {
-    Value { value: Value },
-    Constant { constant: Constant },
+    Value {
+        value: Value,
+    },
+    Constant {
+        constant: Constant,
+    },
     Missing,
     UnknownCondition,
     Binary {
@@ -279,6 +296,7 @@ struct Structurer<'a> {
     predecessors: BTreeMap<u64, Vec<u64>>,
     latches: BTreeMap<u64, Vec<u64>>,
     postdominators: Option<PostDominators>,
+    successors: BTreeMap<u64, Vec<u64>>,
     constants: BTreeMap<Value, Constant>,
     dead: BTreeSet<Value>,
     hints: &'a SignatureHints,
@@ -333,12 +351,15 @@ pub fn build_with_ast(
             )
         })
         .collect();
+    let successors = super::postdom::graph_for(ssa);
+    let postdominators = super::postdom::over_graph(ssa.entry.0, &successors).ok();
     let mut structurer = Structurer {
         ssa,
         blocks,
         predecessors,
         latches,
-        postdominators: build_post_dominators(ssa).ok(),
+        postdominators,
+        successors,
         constants: dataflow.constants.iter().copied().collect(),
         dead: dataflow.dead_definitions.iter().copied().collect(),
         hints,
@@ -387,9 +408,16 @@ pub fn build_with_ast(
     let ast = HirFunction {
         function: ssa.entry.0,
         statements,
+        source: Some(HirSource {
+            address_width: ssa.address_width,
+            variables: ssa.variables.clone(),
+            blocks: ssa.blocks.clone(),
+            constants: dataflow.constants.clone(),
+            signature: signature.clone(),
+        }),
     };
     let mut printer = Printer {
-        ssa,
+        variables: &ssa.variables,
         constants: &structurer.constants,
         lines: Vec::new(),
         indent: 0,
@@ -434,14 +462,27 @@ pub fn build(
     build_with_ast(ssa, dataflow, signature, hints, frame).0
 }
 
+/// Re-render a stored HIR using its own variable types and constant facts.
+/// No disassembly, SSA construction or type recovery is performed here.
+pub fn render_ast(ast: &HirFunction) -> Result<(Vec<HighLevelLine>, bool), String> {
+    let source = ast
+        .source
+        .as_ref()
+        .ok_or("HIR has no self-contained source metadata")?;
+    let constants = source.constants.iter().copied().collect();
+    let mut printer = Printer {
+        variables: &source.variables,
+        constants: &constants,
+        lines: Vec::new(),
+        indent: 0,
+        truncated: false,
+    };
+    printer.function(ast);
+    Ok((printer.lines, printer.truncated))
+}
+
 impl<'a> Structurer<'a> {
-    fn region(
-        &mut self,
-        entry: u64,
-        stop: Option<u64>,
-        depth: usize,
-        out: &mut Vec<HirStatement>,
-    ) {
+    fn region(&mut self, entry: u64, stop: Option<u64>, depth: usize, out: &mut Vec<HirStatement>) {
         if self.truncated {
             return;
         }
@@ -476,13 +517,7 @@ impl<'a> Structurer<'a> {
         self.terminator(block, stop, depth, out);
     }
 
-    fn goto(
-        &mut self,
-        target: u64,
-        stop: Option<u64>,
-        depth: usize,
-        out: &mut Vec<HirStatement>,
-    ) {
+    fn goto(&mut self, target: u64, stop: Option<u64>, depth: usize, out: &mut Vec<HirStatement>) {
         if Some(target) == stop {
             return;
         }
@@ -640,10 +675,7 @@ impl<'a> Structurer<'a> {
             }
         }
         self.active.pop();
-        out.push(HirStatement::While {
-            header,
-            body,
-        });
+        out.push(HirStatement::While { header, body });
         if let Some(exit) = exit {
             self.region(exit, stop, depth + 1, out);
         }
@@ -703,11 +735,7 @@ impl<'a> Structurer<'a> {
         nodes
     }
 
-    fn block_statements(
-        &mut self,
-        block: &'a SsaBlock,
-        out: &mut Vec<HirStatement>,
-    ) {
+    fn block_statements(&mut self, block: &'a SsaBlock, out: &mut Vec<HirStatement>) {
         for phi in &block.phis {
             if self.dead.contains(&phi.output) {
                 continue;
@@ -733,13 +761,13 @@ impl<'a> Structurer<'a> {
                     continue;
                 }
             }
-            if let Some(node) = self.statement(statement) {
+            if let Some(node) = self.statement(block, statement) {
                 out.push(node);
             }
         }
     }
 
-    fn statement(&mut self, statement: &SsaStatement) -> Option<HirStatement> {
+    fn statement(&mut self, block: &'a SsaBlock, statement: &SsaStatement) -> Option<HirStatement> {
         let address = Some(statement.source.0);
         let output = statement.output;
         let node = match &statement.op {
@@ -751,8 +779,15 @@ impl<'a> Structurer<'a> {
                     value: self.arg(statement, 0),
                 }
             }
-            Operation::Add | Operation::Sub | Operation::And | Operation::Or | Operation::Xor
-            | Operation::Shl | Operation::Shr | Operation::Equal | Operation::UnsignedLess => {
+            Operation::Add
+            | Operation::Sub
+            | Operation::And
+            | Operation::Or
+            | Operation::Xor
+            | Operation::Shl
+            | Operation::Shr
+            | Operation::Equal
+            | Operation::UnsignedLess => {
                 let op = match &statement.op {
                     Operation::Add => HirBinaryOp::Add,
                     Operation::Sub => HirBinaryOp::Sub,
@@ -787,10 +822,7 @@ impl<'a> Structurer<'a> {
             }
             Operation::ZeroExtend | Operation::Truncate | Operation::ToBits => {
                 let output = output?;
-                let width = self
-                    .output_type(output)
-                    .and_then(Type::width)
-                    .unwrap_or(64);
+                let width = self.output_type(output).and_then(Type::width).unwrap_or(64);
                 HirStatement::Assignment {
                     address,
                     output,
@@ -803,10 +835,7 @@ impl<'a> Structurer<'a> {
             }
             Operation::SignExtend => {
                 let output = output?;
-                let width = self
-                    .output_type(output)
-                    .and_then(Type::width)
-                    .unwrap_or(64);
+                let width = self.output_type(output).and_then(Type::width).unwrap_or(64);
                 let from = statement
                     .args
                     .first()
@@ -825,10 +854,7 @@ impl<'a> Structurer<'a> {
             }
             Operation::ToAddress => {
                 let output = output?;
-                let width = self
-                    .output_type(output)
-                    .and_then(Type::width)
-                    .unwrap_or(64);
+                let width = self.output_type(output).and_then(Type::width).unwrap_or(64);
                 HirStatement::Assignment {
                     address,
                     output,
@@ -841,10 +867,7 @@ impl<'a> Structurer<'a> {
             }
             Operation::Extract { offset } => {
                 let output = output?;
-                let width = self
-                    .output_type(output)
-                    .and_then(Type::width)
-                    .unwrap_or(64);
+                let width = self.output_type(output).and_then(Type::width).unwrap_or(64);
                 HirStatement::Assignment {
                     address,
                     output,
@@ -891,10 +914,7 @@ impl<'a> Structurer<'a> {
             }
             Operation::Load => {
                 let output = output?;
-                let width = self
-                    .output_type(output)
-                    .and_then(Type::width)
-                    .unwrap_or(64);
+                let width = self.output_type(output).and_then(Type::width).unwrap_or(64);
                 HirStatement::Load {
                     address,
                     output,
@@ -917,7 +937,7 @@ impl<'a> Structurer<'a> {
                 }
             }
             Operation::Call => {
-                let (invocation, unresolved) = self.call_invocation(statement);
+                let (invocation, unresolved) = self.call_invocation(block, statement);
                 if unresolved {
                     self.unresolved += 1;
                 }
@@ -939,7 +959,11 @@ impl<'a> Structurer<'a> {
         Some(node)
     }
 
-    fn call_invocation(&mut self, statement: &SsaStatement) -> (HirInvocation, bool) {
+    fn call_invocation(
+        &mut self,
+        block: &'a SsaBlock,
+        statement: &SsaStatement,
+    ) -> (HirInvocation, bool) {
         let target = statement.args.first().copied();
         let address = match target {
             Some(Use::Constant(constant)) if matches!(constant.ty, Type::Address(_)) => {
@@ -947,15 +971,24 @@ impl<'a> Structurer<'a> {
             }
             _ => None,
         };
-        let signature = address.and_then(|address| {
-            if address == self.signature.function {
-                Some(self.signature)
-            } else {
-                self.hints.get(address)
+        // An indirect call through an import slot is only tied to a signature
+        // when the binary's own import tables bind that exact slot address.
+        // The call target is followed through at most a few in-block
+        // definition hops, because the lift wraps loaded values in address
+        // casts.
+        let slot = super::imports::slot_for_call(block, statement, &self.constants);
+        let signature = match address {
+            Some(address) => {
+                if address == self.signature.function {
+                    Some(self.signature)
+                } else {
+                    self.hints.get(address)
+                }
             }
-        });
+            None => slot.and_then(|slot| self.hints.get(slot)),
+        };
         match (address, signature) {
-            (Some(_address), Some(signature)) => {
+            (_, Some(signature)) => {
                 let mut arguments = Vec::new();
                 let mut stack_arguments = false;
                 let mut unresolved = signature.variadic != Some(false);
@@ -1001,11 +1034,8 @@ impl<'a> Structurer<'a> {
                     unresolved,
                 )
             }
-            (Some(address), None) => (
-                HirInvocation::DirectUnknown { target: address },
-                true,
-            ),
-            (None, _) => (
+            (Some(address), None) => (HirInvocation::DirectUnknown { target: address }, true),
+            (None, None) => (
                 HirInvocation::Indirect {
                     target: target.map(|value| self.expr_node(value)),
                 },
@@ -1187,66 +1217,9 @@ impl<'a> Structurer<'a> {
         if a == b {
             return Some(a);
         }
-        // The post-dominator analysis reports the nearest block every path
-        // from both targets must reach; when it is unavailable or the traces
-        // only share the synthetic sink, fall back to the bounded search.
-        if let Some(analysis) = &self.postdominators {
-            if let Some(common) = analysis.first_common(a, b) {
-                return Some(common);
-            }
-        }
-        let mut from_a = BTreeMap::from([(a, 0usize)]);
-        let mut queue = VecDeque::from([a]);
-        let mut visited = 0usize;
-        while let Some(current) = queue.pop_front() {
-            visited += 1;
-            if visited > MAX_JOIN_NODES {
-                break;
-            }
-            let distance = from_a[&current];
-            if let Some(block) = self.blocks.get(&current) {
-                for successor in &block.terminator.flow.successors {
-                    let successor = successor.0;
-                    if let std::collections::btree_map::Entry::Vacant(entry) =
-                        from_a.entry(successor)
-                    {
-                        entry.insert(distance + 1);
-                        queue.push_back(successor);
-                    }
-                }
-            }
-        }
-        let mut from_b = BTreeMap::from([(b, 0usize)]);
-        let mut queue = VecDeque::from([b]);
-        let mut best: Option<(usize, u64)> = None;
-        let mut visited = 0usize;
-        while let Some(current) = queue.pop_front() {
-            visited += 1;
-            if visited > MAX_JOIN_NODES {
-                break;
-            }
-            let distance = from_b[&current];
-            if let Some(other) = from_a.get(&current) {
-                let score = other + distance;
-                if best.map_or(true, |(best_score, best_address)| {
-                    score < best_score || (score == best_score && current < best_address)
-                }) {
-                    best = Some((score, current));
-                }
-            }
-            if let Some(block) = self.blocks.get(&current) {
-                for successor in &block.terminator.flow.successors {
-                    let successor = successor.0;
-                    if let std::collections::btree_map::Entry::Vacant(entry) =
-                        from_b.entry(successor)
-                    {
-                        entry.insert(distance + 1);
-                        queue.push_back(successor);
-                    }
-                }
-            }
-        }
-        best.map(|(_, address)| address)
+        self.postdominators
+            .as_ref()?
+            .first_common_on_all_paths(a, b, &self.successors)
     }
 
     fn return_shape(&mut self, block: &'a SsaBlock) -> HirReturnShape {
@@ -1315,7 +1288,6 @@ impl<'a> Structurer<'a> {
     }
 }
 
-
 // ---------------------------------------------------------------------------
 // Deterministic printer
 // ---------------------------------------------------------------------------
@@ -1323,7 +1295,7 @@ impl<'a> Structurer<'a> {
 // ---------------------------------------------------------------------------
 
 struct Printer<'a> {
-    ssa: &'a SsaFunction,
+    variables: &'a [crate::ir::Variable],
     constants: &'a BTreeMap<Value, Constant>,
     lines: Vec<HighLevelLine>,
     indent: usize,
@@ -1356,11 +1328,7 @@ impl<'a> Printer<'a> {
                 address,
                 declaration,
             } => {
-                self.line(
-                    "signature",
-                    &format!("{} {{", declaration),
-                    *address,
-                );
+                self.line("signature", &format!("{} {{", declaration), *address);
                 self.indent += 1;
             }
             HirStatement::FunctionClose => {
@@ -1402,11 +1370,7 @@ impl<'a> Printer<'a> {
                         self.line("control", &format!("if ({cond}) break;"), None);
                     }
                     IfExitTarget::Goto { target } => {
-                        self.line(
-                            "control",
-                            &format!("if ({cond}) goto L_{target:x};"),
-                            None,
-                        );
+                        self.line("control", &format!("if ({cond}) goto L_{target:x};"), None);
                     }
                 }
             }
@@ -1452,11 +1416,7 @@ impl<'a> Printer<'a> {
                 let mut parts: Vec<String> = incoming
                     .iter()
                     .map(|incoming| {
-                        format!(
-                            "{:#x}: {}",
-                            incoming.predecessor,
-                            self.name(incoming.value)
-                        )
+                        format!("{:#x}: {}", incoming.predecessor, self.name(incoming.value))
                     })
                     .collect();
                 if let Some(initial) = initial {
@@ -1504,7 +1464,12 @@ impl<'a> Printer<'a> {
             } => {
                 self.line(
                     "memory",
-                    &format!("*(u{}*){} = {};", width, self.expr(target), self.expr(value)),
+                    &format!(
+                        "*(u{}*){} = {};",
+                        width,
+                        self.expr(target),
+                        self.expr(value)
+                    ),
                     *address,
                 );
             }
@@ -1515,11 +1480,7 @@ impl<'a> Printer<'a> {
                 self.line("call", &self.invocation(invocation), *address);
             }
             HirStatement::Unsupported { address, case } => {
-                self.line(
-                    "unsupported",
-                    &self.unsupported_text(case),
-                    *address,
-                );
+                self.line("unsupported", &self.unsupported_text(case), *address);
             }
             HirStatement::Return { address, shape } => {
                 let (kind, text) = match shape {
@@ -1556,7 +1517,7 @@ impl<'a> Printer<'a> {
     }
 
     fn name(&self, value: Value) -> String {
-        let variable = &self.ssa.variables[value.variable];
+        let variable = &self.variables[value.variable];
         if value.version == 0 || variable.kind == VariableKind::Temporary {
             variable.name.clone()
         } else {
@@ -1585,7 +1546,11 @@ impl<'a> Printer<'a> {
                 format!("{} {} {}", self.expr(left), self.op(op), self.expr(right))
             }
             HirExpr::Not { operand } => format!("~{}", self.expr(operand)),
-            HirExpr::Cast { kind, width, operand } => {
+            HirExpr::Cast {
+                kind,
+                width,
+                operand,
+            } => {
                 let prefix = match kind {
                     HirCastKind::Bits => "bits",
                     HirCastKind::Address => "addr",
@@ -1610,13 +1575,18 @@ impl<'a> Printer<'a> {
                 } else {
                     (1u64 << width) - 1
                 };
-                format!(
-                    "({} >> {offset}) & {mask:#x}",
-                    self.expr(operand)
-                )
+                format!("({} >> {offset}) & {mask:#x}", self.expr(operand))
             }
-            HirExpr::Insert { base, value, offset } => {
-                format!("insert({}, {}, {offset})", self.expr(base), self.expr(value))
+            HirExpr::Insert {
+                base,
+                value,
+                offset,
+            } => {
+                format!(
+                    "insert({}, {}, {offset})",
+                    self.expr(base),
+                    self.expr(value)
+                )
             }
             HirExpr::Select {
                 condition,
@@ -1690,7 +1660,9 @@ impl<'a> Printer<'a> {
             UnsupportedCase::NestingLimit => "/* nesting limit reached */".into(),
             UnsupportedCase::JumpNoTarget => "/* jump with no resolved target */".into(),
             UnsupportedCase::BranchUnresolved => "/* unresolved branch target */".into(),
-            UnsupportedCase::LoopHeaderBranch => "/* loop header has an unresolved branch */".into(),
+            UnsupportedCase::LoopHeaderBranch => {
+                "/* loop header has an unresolved branch */".into()
+            }
             UnsupportedCase::LoopTransfer => "/* unresolved transfer inside loop */".into(),
             UnsupportedCase::OutsideFunction { target } => {
                 format!("/* transfer to an address outside the analyzed function: {target:#x} */")
@@ -1796,6 +1768,7 @@ mod tests {
         // The printer keeps the legacy indent scheme and bound behaviour.
         let ast = HirFunction {
             function: 0x1000,
+            source: None,
             statements: vec![
                 HirStatement::Signature {
                     address: Some(0x1000),
@@ -1834,7 +1807,7 @@ mod tests {
         };
         let constants = BTreeMap::new();
         let mut printer = Printer {
-            ssa: &ssa,
+            variables: &ssa.variables,
             constants: &constants,
             lines: Vec::new(),
             indent: 0,

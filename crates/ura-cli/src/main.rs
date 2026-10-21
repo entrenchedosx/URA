@@ -262,6 +262,9 @@ enum Command {
         offset: usize,
         #[arg(long, default_value_t = 200)]
         limit: usize,
+        /// Include the typed tree, value types and original SSA semantics (2 MiB maximum)
+        #[arg(long, requires = "json")]
+        ast: bool,
     },
     /// Read raw file bytes by virtual address or file offset
     Hex {
@@ -736,10 +739,11 @@ fn run(cli: Cli) -> Result<(), ServiceError> {
             function,
             offset,
             limit,
+            ast,
         } => {
             let handle = open(&mut service, &common)?.handle;
             service.analyze(&handle, &analysis.options())?;
-            let response = service.high_level(&handle, &function, offset, limit)?;
+            let response = service.high_level_with_ast(&handle, &function, offset, limit, ast)?;
             if common.json {
                 print_json(&response)
             } else {
