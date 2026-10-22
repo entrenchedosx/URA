@@ -1,0 +1,43 @@
+{
+  "engineCommit": "a42633b4e5602a171d547227e696041d6c0f4941",
+  "sourceCommit": "e9088342a52b828314d5da0fa51d0de7f07ea286",
+  "baselineTestsPassed": 237,
+  "formattingPassed": true,
+  "windowsScaleInspection": {
+    "api": "GetScaleFactorForMonitor",
+    "monitors": [
+      {
+        "scalePercent": 100,
+        "hresult": 0
+      }
+    ],
+    "configurationChanged": false
+  },
+  "os150PercentVerified": false,
+  "idle": [
+    {
+      "condition": "focused",
+      "seconds": 12.00064869999187,
+      "cpuOneCorePercent": 0.7812077692105387,
+      "workingSetMiB": 81.6015625,
+      "sample": "empty workspace, normal renderer, no UI polling or compilation during interval",
+      "nativeSha256": "9a8af2a0571212754a415a2f16c0e5616e56afbbe584e989a09aa6f37d4ff044"
+    },
+    {
+      "condition": "unfocused",
+      "seconds": 12.000392200017814,
+      "cpuOneCorePercent": 0.0,
+      "workingSetMiB": 81.890625,
+      "sample": "empty workspace, normal renderer, no UI polling or compilation during interval"
+    },
+    {
+      "condition": "minimized",
+      "seconds": 12.000033500022255,
+      "cpuOneCorePercent": 0.0,
+      "workingSetMiB": 81.5859375,
+      "sample": "empty workspace, normal renderer, no UI polling or compilation during interval"
+    }
+  ],
+  "releaseAccepted": false,
+  "manualChecklist": "docs/RELEASE-QUALIFICATION-0.8.md"
+}
