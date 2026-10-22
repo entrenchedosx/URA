@@ -25,6 +25,21 @@ pub fn pure(op: &Operation, ty: Type, args: &[Constant]) -> Option<Constant> {
         }
         Add => a.wrapping_add(b),
         Sub => a.wrapping_sub(b),
+        Mul => a.wrapping_mul(b),
+        Divide { signed, remainder } => {
+            let (quotient, rest) = divide(input_width, args, *signed)?;
+            if *remainder {
+                rest
+            } else {
+                quotient
+            }
+        }
+        DivideFault { signed } => u64::from(divide(input_width, args, *signed).is_none()),
+        UnsignedMulHigh => ((u128::from(a) * u128::from(b)) >> input_width) as u64,
+        SignedMulHigh => {
+            let signed = |v: u64| (i128::from(v) << (128 - input_width)) >> (128 - input_width);
+            ((signed(a) * signed(b)) >> input_width) as u64
+        }
         And => a & b,
         Or => a | b,
         Xor => a ^ b,
@@ -44,7 +59,20 @@ pub fn pure(op: &Operation, ty: Type, args: &[Constant]) -> Option<Constant> {
             }
         }
         Equal => u64::from(a == b),
+        RotateLeft | RotateRight => {
+            let count = b % u64::from(width);
+            if count == 0 {
+                a
+            } else if matches!(op, RotateLeft) {
+                (a << count) | (a >> (u64::from(width) - count))
+            } else {
+                (a >> count) | (a << (u64::from(width) - count))
+            }
+        }
         UnsignedLess => u64::from(a < b),
+        SignedLess => {
+            u64::from((a ^ (1u64 << (input_width - 1))) < (b ^ (1u64 << (input_width - 1))))
+        }
         Extract { offset } => a >> offset,
         Insert { offset } => {
             let w = args[1].ty.width()?;
@@ -65,6 +93,33 @@ pub fn pure(op: &Operation, ty: Type, args: &[Constant]) -> Option<Constant> {
         ty,
         value: Address(value & mask(width)),
     })
+}
+
+fn divide(width: u16, args: &[Constant], signed: bool) -> Option<(u64, u64)> {
+    let high = u128::from(args.first()?.value.0);
+    let low = u128::from(args.get(1)?.value.0);
+    let divisor = args.get(2)?.value.0;
+    let dividend = (high << width) | low;
+    if signed {
+        let dividend = ((dividend << (128 - 2 * width)) as i128) >> (128 - 2 * width);
+        let divisor = (i128::from(divisor) << (128 - width)) >> (128 - width);
+        let quotient = dividend.checked_div(divisor)?;
+        let bound = 1i128 << (width - 1);
+        if quotient < -bound || quotient >= bound {
+            return None;
+        }
+        Some((
+            quotient as u64 & mask(width),
+            dividend.checked_rem(divisor)? as u64 & mask(width),
+        ))
+    } else {
+        let divisor = u128::from(divisor);
+        let quotient = dividend.checked_div(divisor)?;
+        if quotient > u128::from(mask(width)) {
+            return None;
+        }
+        Some((quotient as u64, dividend.checked_rem(divisor)? as u64))
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -106,6 +161,15 @@ impl Machine {
                         .ok_or_else(|| format!("unknown input at {}", stmt.source))
                 };
                 let value = match stmt.op {
+                    Operation::Guard { ref reason } => {
+                        if arg(0)?.value.0 != 0 {
+                            return Err(format!("machine fault: {reason}"));
+                        }
+                        None
+                    }
+                    Operation::Select => operand(stmt.args[0], &values).and_then(|c| {
+                        operand(stmt.args[if c.value.0 != 0 { 1 } else { 2 }], &values)
+                    }),
                     Operation::Load => {
                         let address = arg(1)?.value.0;
                         let ty = function.variables[stmt.output.unwrap()].ty;

@@ -90,6 +90,7 @@ struct Printer<'a> {
     lines: Vec<Line>,
     indent: usize,
     truncated: bool,
+    pending_addresses: BTreeSet<Address>,
 }
 impl Printer<'_> {
     fn expr(&self, e: &Expr) -> String {
@@ -170,6 +171,22 @@ impl Printer<'_> {
                     }
                 };
                 match operator {
+                    Op::Divide { signed, .. } | Op::DivideFault { signed } => {
+                        let operation = match operator {
+                            Op::DivideFault { .. } => "fault",
+                            Op::Divide {
+                                remainder: true, ..
+                            } => "remainder",
+                            _ => "quotient",
+                        };
+                        format!(
+                            "ura_div_{operation}_{}{input_width}({a}, {b}, {})",
+                            if *signed { "s" } else { "u" },
+                            args.get(2)
+                                .map(String::as_str)
+                                .unwrap_or("ura_missing_operand()")
+                        )
+                    }
                     Op::Move | Op::ZeroExtend | Op::Truncate | Op::AddressCast | Op::BitsCast => {
                         if arguments
                             .first()
@@ -180,21 +197,47 @@ impl Printer<'_> {
                             cast(a.into())
                         }
                     }
-                    Op::Add | Op::Subtract | Op::And | Op::Or | Op::Xor => {
+                    Op::Add | Op::Subtract | Op::Multiply | Op::And | Op::Or | Op::Xor => {
+                        if matches!(operator, Op::Xor)
+                            && width == 1
+                            && matches!(arguments.get(1).map(|e| &e.kind), Some(ExprKind::Constant {constant}) if constant.value.0 == 1)
+                        {
+                            return format!("(!({a}))");
+                        }
                         let op = match operator {
                             Op::Add => "+",
                             Op::Subtract => "-",
+                            Op::Multiply => "*",
                             Op::And => "&",
                             Op::Or => "|",
                             _ => "^",
                         };
-                        cast(format!("({a}) {op} ({b})"))
+                        if matches!(operator, Op::Multiply) {
+                            // uint16_t operands otherwise promote to signed int
+                            // and may overflow before the outer truncation.
+                            cast(format!("((uint64_t)({a})) * ((uint64_t)({b}))"))
+                        } else {
+                            cast(format!("({a}) {op} ({b})"))
+                        }
                     }
                     Op::Complement => cast(format!("~({a})")),
                     Op::Equal => format!("(({a}) == ({b}))"),
                     Op::UnsignedLess => format!("(({a}) < ({b}))"),
+                    Op::SignedLess => {
+                        format!("(ura_signed_u{input_width}({a}) < ura_signed_u{input_width}({b}))")
+                    }
+                    Op::UnsignedMultiplyHigh | Op::SignedMultiplyHigh => format!(
+                        "ura_mul_high_{}_u{width}({a}, {b})",
+                        if matches!(operator, Op::SignedMultiplyHigh) {
+                            "signed"
+                        } else {
+                            "unsigned"
+                        }
+                    ),
                     Op::ShiftLeft => format!("ura_shl_u{input_width}({a}, {b})"),
                     Op::ShiftRight => format!("ura_shr_u{input_width}({a}, {b})"),
+                    Op::RotateLeft => format!("ura_rol_u{input_width}({a}, {b})"),
+                    Op::RotateRight => format!("ura_ror_u{input_width}({a}, {b})"),
                     Op::SignExtend => format!("ura_sext_{input_width}_{width}({a})"),
                     Op::Extract { offset } => {
                         if *offset == 0 && input_width == width {
@@ -256,7 +299,7 @@ impl Printer<'_> {
             self.truncated = true;
             return;
         }
-        let mut addresses = BTreeSet::new();
+        let mut addresses = std::mem::take(&mut self.pending_addresses);
         let mut variables = BTreeSet::new();
         if let Some(source) = statement
             .and_then(|s| s.source)
@@ -268,6 +311,7 @@ impl Printer<'_> {
         for expr in expressions {
             self.expression_meta(expr, &mut addresses, &mut variables);
         }
+        let synthetic = addresses.is_empty() && statement.map_or(true, |s| s.synthetic);
         self.lines.push(Line {
             number: self.lines.len() + 1,
             indent: self.indent,
@@ -275,7 +319,7 @@ impl Printer<'_> {
             addresses: addresses.into_iter().collect(),
             variables: variables.into_iter().collect(),
             callee,
-            synthetic: statement.map_or(true, |s| s.synthetic),
+            synthetic,
         });
     }
     fn body(
@@ -295,6 +339,17 @@ impl Printer<'_> {
                 break;
             }
             match &statement.kind {
+                StatementKind::Guard { condition, reason } => self.line(
+                    format!(
+                        "if ({}) ura_trap(/* {} */);",
+                        self.expr(condition),
+                        comment(reason)
+                    ),
+                    Some(statement),
+                    &[condition],
+                    None,
+                    None,
+                ),
                 StatementKind::Assign { variable, value } => self.line(
                     format!(
                         "{} = {};",
@@ -390,13 +445,13 @@ impl Printer<'_> {
                     None,
                 ),
                 StatementKind::Block { .. } => {}
-                StatementKind::Provenance => self.line(
-                    "/* structured transfer */".into(),
-                    Some(statement),
-                    &[],
-                    None,
-                    None,
-                ),
+                StatementKind::Provenance => {
+                    if let Some(source) =
+                        statement.source.and_then(|s| self.function.sources.get(s))
+                    {
+                        self.pending_addresses.extend(source.instruction);
+                    }
+                }
                 StatementKind::Goto { target } => self.line(
                     format!("goto L_{:X};", target.0),
                     Some(statement),
@@ -480,6 +535,7 @@ pub fn render(mut ast: Function, control: &dyn AnalysisControl) -> Result<Output
         lines: Vec::new(),
         indent: 0,
         truncated: false,
+        pending_addresses: BTreeSet::new(),
     };
     printer.line(
         "/* Reconstructed C-like pseudocode; machine helpers preserve explicit widths/effects. */"
@@ -498,6 +554,7 @@ pub fn render(mut ast: Function, control: &dyn AnalysisControl) -> Result<Output
         };
         for s in body {
             match &s.kind {
+                StatementKind::Guard { condition, .. } => expr(condition),
                 StatementKind::Assign { variable, value } => {
                     expr(value);
                     let _ = variable;
@@ -626,7 +683,7 @@ pub fn render(mut ast: Function, control: &dyn AnalysisControl) -> Result<Output
         number: printer.lines.len() + 1,
         indent: 0,
         text: "}".into(),
-        addresses: Vec::new(),
+        addresses: printer.pending_addresses.iter().copied().collect(),
         variables: Vec::new(),
         callee: None,
         synthetic: true,

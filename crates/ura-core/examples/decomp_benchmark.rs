@@ -77,11 +77,13 @@ fn main() {
                 decomp::semantic::lower(&bundle.ssa, &inferred.values, &()).expect("semantic HIR");
             semantic_ms += timer.elapsed().as_secs_f64() * 1000.0;
             let timer = Instant::now();
-            let source = decomp::source::build(
+            let source = decomp::source::build_with_facts(
                 &semantic,
                 &function.fallback_name(),
                 &context.hints,
                 Some(&frame),
+                &Default::default(),
+                &bundle.dataflow.constants,
                 &(),
             )
             .expect("C-like reconstruction");

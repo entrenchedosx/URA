@@ -200,12 +200,13 @@ pub fn analyze_function(
             }
         }
     }
-    let pseudocode = source::build_with_calls(
+    let pseudocode = source::build_with_facts(
         &semantic,
         &signature.name,
         &hints,
         Some(&frame),
         &call_bindings,
+        &bundle.dataflow.constants,
         control,
     )?;
     let mut diagnostics = recovery.notes;

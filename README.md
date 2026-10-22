@@ -4,6 +4,11 @@
 
 Ultimate Reverse Engineer
 
+The [v0.9 finalisation continuation](docs/FINALISATION-0.9.md) adds proven-constant
+pseudocode simplification, direct CMP conditions, scalar multiply/divide with
+fault guards, rotates and all CMOV/SETcc conditions. The shared engine has 260
+passing tests. Current release acceptance and measured limits are recorded there.
+
 Public prerelease: [`v0.8.0-dev`](https://github.com/entrenchedosx/URA/releases/tag/v0.8.0-dev)
 from commit `1194403`. Current development is `0.9.0-dev` on `v0.9-c-decompiler`; that source is ahead of the public ZIP. See [v0.9 verification](docs/VERIFICATION-0.9.md) and the permanent [feature-parity ledger](docs/FEATURE-PARITY.md). The complete v0.8 checklist remains unfinished; see the [checklist audit](docs/AUDIT-0.8.md).
 High-level output is experimental and variable idle CPU remains an unexplained

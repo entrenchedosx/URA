@@ -695,7 +695,9 @@ pub fn infer_types_with_control(
                         }
                     }
                 }
-                crate::ir::Operation::Equal | crate::ir::Operation::UnsignedLess => {
+                crate::ir::Operation::Equal
+                | crate::ir::Operation::UnsignedLess
+                | crate::ir::Operation::SignedLess => {
                     for arg in &statement.args {
                         if let Use::Value(value) = arg {
                             add(

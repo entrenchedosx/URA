@@ -146,6 +146,21 @@ pub fn analyze_with_control(
                 Operation::Unknown { .. } | Operation::Load | Operation::Store
             ) {
                 Lattice::Unknown
+            } else if matches!(op, Operation::Select) && n.args.len() == 3 {
+                match value(n.args[0], &states) {
+                    Lattice::Constant(c) => {
+                        value(n.args[if c.value.0 != 0 { 1 } else { 2 }], &states)
+                    }
+                    Lattice::Bottom => Lattice::Bottom,
+                    Lattice::Unknown => {
+                        match (value(n.args[1], &states), value(n.args[2], &states)) {
+                            (Lattice::Constant(a), Lattice::Constant(b)) if a == b => {
+                                Lattice::Constant(a)
+                            }
+                            _ => Lattice::Unknown,
+                        }
+                    }
+                }
             } else if matches!(op, Operation::Xor | Operation::Sub)
                 && n.args.len() == 2
                 && n.args[0] == n.args[1]

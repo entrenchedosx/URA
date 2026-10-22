@@ -127,19 +127,40 @@ pub enum Operation {
     Copy,
     Add,
     Sub,
+    Mul,
+    UnsignedMulHigh,
+    SignedMulHigh,
+    Divide {
+        signed: bool,
+        remainder: bool,
+    },
+    DivideFault {
+        signed: bool,
+    },
+    /// Stop before subsequent effects when the one-bit condition is true.
+    Guard {
+        reason: String,
+    },
     And,
     Or,
     Xor,
     Not,
     Shl,
     Shr,
+    RotateLeft,
+    RotateRight,
     Equal,
     UnsignedLess,
+    SignedLess,
     ZeroExtend,
     SignExtend,
     Truncate,
-    Extract { offset: u16 },
-    Insert { offset: u16 },
+    Extract {
+        offset: u16,
+    },
+    Insert {
+        offset: u16,
+    },
     Select,
     Parity,
     ToAddress,
@@ -147,14 +168,23 @@ pub enum Operation {
     Load,
     Store,
     Call,
-    Barrier { reason: String },
-    Unknown { reason: String },
+    Barrier {
+        reason: String,
+    },
+    Unknown {
+        reason: String,
+    },
 }
 impl Operation {
     pub fn observable(&self) -> bool {
         matches!(
             self,
-            Self::Load | Self::Store | Self::Call | Self::Barrier { .. } | Self::Unknown { .. }
+            Self::Load
+                | Self::Store
+                | Self::Call
+                | Self::Barrier { .. }
+                | Self::Guard { .. }
+                | Self::Unknown { .. }
         )
     }
 }

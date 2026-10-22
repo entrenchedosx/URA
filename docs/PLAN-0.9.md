@@ -3,6 +3,10 @@
 Starting source: `b1a05c7` after the verified v0.8 qualification record. Development
 branch: `v0.9-c-decompiler`; version: `0.9.0-dev`. No automatic main update.
 
+The finalisation continuation starts from `bc73e7f`, retains its Release tools
+for matched measurements, and records current evidence in
+[FINALISATION-0.9.md](FINALISATION-0.9.md). It stays within v0.9 until acceptance.
+
 Execution priorities are: preserve the verified engine and projects; establish
 executable C-like AST semantics; validate transformations independently; expose
 the same output through desktop/CLI/MCP; review and measure; package; publish

@@ -1,0 +1,39 @@
+{
+  "version": "0.9.0-dev",
+  "archive": "URA-0.9.0-dev-windows-x64.zip",
+  "sha256": "0bf7c5892b382b3c90a4da0e49af2c3864f9ec8bbc1a88dea40395a6ce137ab5",
+  "bytes": 16488471,
+  "zipCrcPassed": true,
+  "checkedFiles": 580,
+  "allFilesListed": true,
+  "binarySha256": {
+    "ura-native.exe": "11ac914216dcd8472f03d8a38e689ff745770412d0f86fbda7b4b98997d2c699",
+    "ura-cli.exe": "74ef2e864954d48a5099d5f9cf1cbaeec130e84526762a0191ad6ab13cfd4e53",
+    "ura-mcp.exe": "ce91be30d113038ea47702f7ebae4f6e02d37afe786c73d742d3164fa9508cbe"
+  },
+  "binaryIdentityMatchesTestedRelease": true,
+  "iconMatches": true,
+  "missingLicenseTexts": 0,
+  "cliVersionAndJsonPassed": true,
+  "mcpVersionAndStdioPassed": true,
+  "mcpTools": 32,
+  "typeLibraryRoundTrip": true,
+  "cDecompileRoundTrip": true,
+  "cExportRoundTrip": true,
+  "nativeStartup": {
+    "passed": true,
+    "fromFreshExtraction": true,
+    "osScalePercent": 100,
+    "openedDisposableProject": true,
+    "function": "0x140001020",
+    "f5Pseudocode": true,
+    "lines": 27,
+    "note": "Actual extracted native executable reached Ready, opened the headless verifier project and displayed reconstructed loop pseudocode with source highlighting. This does not establish 150% DPI or in-flight cancellation acceptance."
+  },
+  "dependencyPackages": 277,
+  "acceptedPublicRelease": false,
+  "remainingLiveGates": [
+    "Actual OS 150% DPI",
+    "Observed in-flight cancellation"
+  ]
+}

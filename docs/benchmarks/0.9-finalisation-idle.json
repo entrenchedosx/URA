@@ -1,0 +1,48 @@
+{
+  "baselineCommit": "bc73e7f",
+  "records": [
+    {
+      "seconds": 20.000454799970612,
+      "version": "baseline",
+      "condition": "focused",
+      "cpuOneCorePercent": 0.3124928939120516,
+      "workingSetMiB": 93.31640625
+    },
+    {
+      "seconds": 20.00007569999434,
+      "version": "baseline",
+      "condition": "unfocused",
+      "cpuOneCorePercent": 0.0,
+      "workingSetMiB": 93.50390625
+    },
+    {
+      "seconds": 20.000362500024494,
+      "version": "baseline",
+      "condition": "minimized",
+      "cpuOneCorePercent": 0.0,
+      "workingSetMiB": 93.3515625
+    },
+    {
+      "seconds": 20.000210399972275,
+      "version": "current",
+      "condition": "focused",
+      "cpuOneCorePercent": 0.0,
+      "workingSetMiB": 93.38671875
+    },
+    {
+      "seconds": 20.000434299989138,
+      "version": "current",
+      "condition": "unfocused",
+      "cpuOneCorePercent": 0.07812330355250578,
+      "workingSetMiB": 92.94140625
+    },
+    {
+      "seconds": 20.000465900055133,
+      "version": "current",
+      "condition": "minimized",
+      "cpuOneCorePercent": 0.0,
+      "workingSetMiB": 93.41796875
+    }
+  ],
+  "method": "Owned ura64.exe function 0x140001020; classic theme; Pseudocode and signature visible; 1480x920 client window, actual primary monitor 100%; separate persistence; normal frame scheduling; 8s settle plus 20s sample; no UI polling or Cargo during each sample. One-core CPU percentage, not whole-machine normalization. Failed minimized input attempt excluded and repeated. Single samples do not explain earlier intermittent CPU."
+}

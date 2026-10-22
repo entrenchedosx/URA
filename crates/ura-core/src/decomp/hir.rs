@@ -219,6 +219,10 @@ pub enum HirArgument {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum HirExpr {
+    Intrinsic {
+        name: String,
+        arguments: Vec<HirExpr>,
+    },
     Value {
         value: Value,
     },
@@ -270,11 +274,17 @@ pub enum HirExpr {
 pub enum HirBinaryOp {
     Add,
     Sub,
+    Mul,
+    UnsignedMulHigh,
+    SignedMulHigh,
+    SignedLess,
     And,
     Or,
     Xor,
     Shl,
     Shr,
+    RotateLeft,
+    RotateRight,
     Equal,
     UnsignedLess,
 }
@@ -771,6 +781,38 @@ impl<'a> Structurer<'a> {
         let address = Some(statement.source.0);
         let output = statement.output;
         let node = match &statement.op {
+            Operation::Divide { signed, .. } | Operation::DivideFault { signed } => {
+                let output = output?;
+                let operation = match statement.op {
+                    Operation::DivideFault { .. } => "fault",
+                    Operation::Divide {
+                        remainder: true, ..
+                    } => "remainder",
+                    _ => "quotient",
+                };
+                HirStatement::Assignment {
+                    address,
+                    output,
+                    value: HirExpr::Intrinsic {
+                        name: format!(
+                            "divide_{operation}_{}",
+                            if *signed { "signed" } else { "unsigned" }
+                        ),
+                        arguments: (0..3).map(|i| self.arg(statement, i)).collect(),
+                    },
+                }
+            }
+            Operation::Guard { reason } => {
+                self.unresolved += 1;
+                HirStatement::Unsupported {
+                    address,
+                    case: UnsupportedCase::Effect {
+                        reason: format!(
+                            "conditional machine fault guard: {reason}; inspect semantic/C AST"
+                        ),
+                    },
+                }
+            }
             Operation::Copy => {
                 let output = output?;
                 HirStatement::Assignment {
@@ -781,21 +823,33 @@ impl<'a> Structurer<'a> {
             }
             Operation::Add
             | Operation::Sub
+            | Operation::Mul
+            | Operation::UnsignedMulHigh
+            | Operation::SignedMulHigh
+            | Operation::SignedLess
             | Operation::And
             | Operation::Or
             | Operation::Xor
             | Operation::Shl
             | Operation::Shr
+            | Operation::RotateLeft
+            | Operation::RotateRight
             | Operation::Equal
             | Operation::UnsignedLess => {
                 let op = match &statement.op {
                     Operation::Add => HirBinaryOp::Add,
                     Operation::Sub => HirBinaryOp::Sub,
+                    Operation::Mul => HirBinaryOp::Mul,
+                    Operation::UnsignedMulHigh => HirBinaryOp::UnsignedMulHigh,
+                    Operation::SignedMulHigh => HirBinaryOp::SignedMulHigh,
+                    Operation::SignedLess => HirBinaryOp::SignedLess,
                     Operation::And => HirBinaryOp::And,
                     Operation::Or => HirBinaryOp::Or,
                     Operation::Xor => HirBinaryOp::Xor,
                     Operation::Shl => HirBinaryOp::Shl,
                     Operation::Shr => HirBinaryOp::Shr,
+                    Operation::RotateLeft => HirBinaryOp::RotateLeft,
+                    Operation::RotateRight => HirBinaryOp::RotateRight,
                     Operation::Equal => HirBinaryOp::Equal,
                     _ => HirBinaryOp::UnsignedLess,
                 };
@@ -1602,6 +1656,15 @@ impl<'a> Printer<'a> {
                 )
             }
             HirExpr::Parity { operand } => format!("parity({})", self.expr(operand)),
+            HirExpr::Intrinsic { name, arguments } => format!(
+                "{}({})",
+                name,
+                arguments
+                    .iter()
+                    .map(|e| self.expr(e))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
         }
     }
 
@@ -1609,11 +1672,17 @@ impl<'a> Printer<'a> {
         match op {
             HirBinaryOp::Add => "+".into(),
             HirBinaryOp::Sub => "-".into(),
+            HirBinaryOp::Mul => "*".into(),
+            HirBinaryOp::UnsignedMulHigh => "mul_high_unsigned".into(),
+            HirBinaryOp::SignedMulHigh => "mul_high_signed".into(),
+            HirBinaryOp::SignedLess => "signed_less".into(),
             HirBinaryOp::And => "&".into(),
             HirBinaryOp::Or => "|".into(),
             HirBinaryOp::Xor => "^".into(),
             HirBinaryOp::Shl => "<<".into(),
             HirBinaryOp::Shr => ">>".into(),
+            HirBinaryOp::RotateLeft => "rotate_left".into(),
+            HirBinaryOp::RotateRight => "rotate_right".into(),
             HirBinaryOp::Equal => "==".into(),
             HirBinaryOp::UnsignedLess => "<".into(),
         }

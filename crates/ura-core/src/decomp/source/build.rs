@@ -106,6 +106,7 @@ struct Builder<'a> {
     live: BTreeSet<usize>,
     phi_inputs: BTreeSet<usize>,
     inline: BTreeMap<usize, Expr>,
+    constants: BTreeMap<usize, Constant>,
     eliminated: usize,
     phi_copies: usize,
     unresolved: usize,
@@ -132,6 +133,20 @@ pub fn build_with_calls(
     hints: &SignatureHints,
     frame: Option<&StackFrame>,
     call_bindings: &BTreeMap<usize, u64>,
+    control: &dyn AnalysisControl,
+) -> Result<Output, String> {
+    build_with_facts(hir, name, hints, frame, call_bindings, &[], control)
+}
+
+/// Constants must be produced by dataflow analysis of the same verified SSA
+/// program as `hir`. Memory effects are never folded or moved by this pass.
+pub fn build_with_facts(
+    hir: &semantic::SemanticFunction,
+    name: &str,
+    hints: &SignatureHints,
+    frame: Option<&StackFrame>,
+    call_bindings: &BTreeMap<usize, u64>,
+    constant_facts: &[(crate::ir::ssa::Value, Constant)],
     control: &dyn AnalysisControl,
 ) -> Result<Output, String> {
     if control.is_cancelled() {
@@ -215,6 +230,17 @@ pub fn build_with_calls(
                 }
             })
             .collect();
+    let facts: BTreeMap<_, _> = constant_facts.iter().copied().collect();
+    let constants = hir
+        .values
+        .iter()
+        .filter_map(|value| {
+            facts
+                .get(&value.ssa)
+                .filter(|c| c.ty == value.storage && c.valid())
+                .map(|c| (value.id, *c))
+        })
+        .collect();
     let mut b = Builder {
         hir,
         variables,
@@ -223,6 +249,7 @@ pub fn build_with_calls(
         live: BTreeSet::new(),
         phi_inputs: BTreeSet::new(),
         inline: BTreeMap::new(),
+        constants,
         eliminated: 0,
         phi_copies: 0,
         unresolved: 0,
@@ -240,11 +267,25 @@ pub fn build_with_calls(
         let mut statements = vec![Statement::synthetic(StatementKind::Block {
             address: block.address,
         })];
+        let mut elided_instructions = BTreeSet::new();
         for id in &block.operations {
             let node = &hir.nodes[*id];
             if matches!(node.kind, NodeKind::Scalar { .. })
-                && node.output.is_some_and(|v| !b.live.contains(&v))
+                && node
+                    .output
+                    .is_some_and(|v| !b.live.contains(&v) || b.constants.contains_key(&v))
             {
+                // One compact marker per instruction keeps navigation through
+                // folded/dead pure operations without printing a comment line.
+                if let Some(address) = hir.sources[node.source].instruction {
+                    if elided_instructions.insert(address) {
+                        statements.push(Statement {
+                            source: Some(node.source),
+                            synthetic: false,
+                            kind: StatementKind::Provenance,
+                        });
+                    }
+                }
                 continue;
             }
             if matches!(node.kind, NodeKind::UnknownEffect)
@@ -259,6 +300,20 @@ pub fn build_with_calls(
                 expr.source = Some(node.source);
             }
             match &node.kind {
+                NodeKind::Guard => {
+                    let reason = match &hir.sources[node.source].original_operation {
+                        Some(crate::ir::Operation::Guard { reason }) => reason.clone(),
+                        _ => "machine fault".into(),
+                    };
+                    statements.push(Statement {
+                        source: Some(node.source),
+                        synthetic: false,
+                        kind: StatementKind::Guard {
+                            condition: b.argument(node, 0),
+                            reason,
+                        },
+                    });
+                }
                 NodeKind::Scalar { .. } => {
                     if let (Some(variable), Some(value)) = (node.output, value) {
                         let (size, depth) = value.size();
@@ -529,30 +584,6 @@ impl Builder<'_> {
     fn liveness(&mut self) {
         let mut roots = Vec::new();
         for block in &self.hir.blocks {
-            let mut used = |input: Input| {
-                if let Input::Value(id) = input {
-                    self.uses[id] += 1;
-                    self.use_blocks[id].insert(block.address);
-                }
-            };
-            for id in &block.operations {
-                let node = &self.hir.nodes[*id];
-                // Snapshot operands are real uses even before a call signature
-                // is known. This also prevents cross-block elimination based on
-                // address-sorted lowering order.
-                for input in &node.inputs {
-                    used(*input);
-                }
-            }
-            for id in &block.phis {
-                if let NodeKind::Phi { initial, incoming } = &self.hir.nodes[*id].kind {
-                    for value in initial.iter().chain(incoming.iter().map(|v| &v.value)) {
-                        self.phi_inputs.insert(*value);
-                        self.uses[*value] += 1;
-                        self.use_blocks[*value].insert(block.address);
-                    }
-                }
-            }
             let mut flow_inputs = Vec::new();
             match block.transfer.kind {
                 TransferKind::Branch { condition, .. } => flow_inputs.extend(condition),
@@ -574,7 +605,11 @@ impl Builder<'_> {
         for node in &self.hir.nodes {
             if matches!(
                 node.kind,
-                NodeKind::ReadMemory | NodeKind::WriteMemory | NodeKind::Invoke | NodeKind::Barrier
+                NodeKind::ReadMemory
+                    | NodeKind::WriteMemory
+                    | NodeKind::Invoke
+                    | NodeKind::Barrier
+                    | NodeKind::Guard
             ) || matches!(node.kind, NodeKind::UnknownEffect)
                 && node
                     .output
@@ -591,6 +626,9 @@ impl Builder<'_> {
             if !self.live.insert(id) {
                 continue;
             }
+            if self.constants.contains_key(&id) {
+                continue;
+            }
             if let Some(node) = self.hir.values[id].definition.map(|id| &self.hir.nodes[id]) {
                 roots.extend(node.inputs.iter().filter_map(|input| match input {
                     Input::Value(id) => Some(*id),
@@ -599,6 +637,43 @@ impl Builder<'_> {
                 if let NodeKind::Phi { initial, incoming } = &node.kind {
                     roots.extend(initial);
                     roots.extend(incoming.iter().map(|v| v.value));
+                }
+            }
+        }
+        // Count only uses that survive the observable slice. Dead flag math
+        // must not prevent a result from being inlined into its sole real use.
+        // Calls still root/count every machine-state snapshot operand, even
+        // when their ABI is unknown or their target is in a later block.
+        for block in &self.hir.blocks {
+            for id in &block.operations {
+                let node = &self.hir.nodes[*id];
+                if matches!(node.kind, NodeKind::Scalar { .. } | NodeKind::UnknownEffect)
+                    && node
+                        .output
+                        .is_some_and(|v| !self.live.contains(&v) || self.constants.contains_key(&v))
+                {
+                    continue;
+                }
+                for input in &node.inputs {
+                    if let Input::Value(id) = input {
+                        self.uses[*id] += 1;
+                        self.use_blocks[*id].insert(block.address);
+                    }
+                }
+            }
+            for id in &block.phis {
+                let node = &self.hir.nodes[*id];
+                if node
+                    .output
+                    .is_some_and(|v| self.live.contains(&v) && !self.constants.contains_key(&v))
+                {
+                    if let NodeKind::Phi { initial, incoming } = &node.kind {
+                        for value in initial.iter().chain(incoming.iter().map(|v| &v.value)) {
+                            self.phi_inputs.insert(*value);
+                            self.uses[*value] += 1;
+                            self.use_blocks[*value].insert(block.address);
+                        }
+                    }
                 }
             }
         }
@@ -611,9 +686,18 @@ impl Builder<'_> {
                 kind: ExprKind::Constant { constant },
             },
             Input::Value(id) => self
-                .inline
+                .constants
                 .get(&id)
-                .cloned()
+                .map(|constant| Expr {
+                    storage: constant.ty,
+                    source: self.hir.values[id]
+                        .definition
+                        .map(|d| self.hir.nodes[d].source),
+                    kind: ExprKind::Constant {
+                        constant: *constant,
+                    },
+                })
+                .or_else(|| self.inline.get(&id).cloned())
                 .unwrap_or_else(|| Expr::variable(id, self.hir.values[id].storage)),
         }
     }
@@ -673,14 +757,17 @@ impl Builder<'_> {
             for id in &block.phis {
                 let node = &self.hir.nodes[*id];
                 let output = node.output.ok_or("phi has no output")?;
-                if !self.live.contains(&output) || self.hir.values[output].storage == Type::Memory {
+                if !self.live.contains(&output)
+                    || self.constants.contains_key(&output)
+                    || self.hir.values[output].storage == Type::Memory
+                {
                     continue;
                 }
                 if let NodeKind::Phi { incoming, .. } = &node.kind {
                     let value = incoming
                         .iter()
                         .find(|edge| edge.predecessor == from)
-                        .map(|edge| Expr::variable(edge.value, self.hir.values[edge.value].storage))
+                        .map(|edge| self.expr(Input::Value(edge.value)))
                         .unwrap_or_else(|| {
                             self.unknown(self.hir.values[output].storage, "missing phi predecessor")
                         });
@@ -707,7 +794,10 @@ impl Builder<'_> {
         for id in &block.phis {
             let node = &self.hir.nodes[*id];
             let output = node.output.ok_or("missing initial phi output")?;
-            if !self.live.contains(&output) || self.hir.values[output].storage == Type::Memory {
+            if !self.live.contains(&output)
+                || self.constants.contains_key(&output)
+                || self.hir.values[output].storage == Type::Memory
+            {
                 continue;
             }
             if let NodeKind::Phi { initial, .. } = node.kind {

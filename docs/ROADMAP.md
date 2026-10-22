@@ -16,6 +16,8 @@ No release may equate a panel/API with verified feature parity.
 - [x] Shared CLI/MCP decompile, bounded AST and guarded whole-function export.
 - [x] Independent IR/HIR/AST semantic corpus including Clang C/C++ O0–O3 PE/ELF.
 - [x] Independent agent review and regression repairs.
+- [x] Proven SSA constants, live-use inlining and compact assembly provenance.
+- [x] Scalar MUL/IMUL, guarded DIV/IDIV, ROL/ROR and all CMOV/SETcc conditions.
 - [ ] Complete source local/lifetime coalescing and structure-field syntax.
 - [ ] Canonical for/do-while, proved complete switches and short-circuit syntax.
 - [ ] Broader call effects, scalar idioms, vector/floating and aggregate ABIs.

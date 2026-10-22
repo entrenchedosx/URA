@@ -6,11 +6,24 @@ pub(crate) fn signature(op: &Operation, out: Option<Type>, args: &[Type]) -> boo
     let bits = |t: Type| matches!(t,Type::Bits(w) if (1..=64).contains(&w));
     match op {
         Copy => args.len() == 1 && out == Some(args[0]),
-        Add | Sub | And | Or | Xor | Shl | Shr => {
+        Add | Sub | Mul | UnsignedMulHigh | SignedMulHigh | And | Or | Xor | Shl | Shr
+        | RotateLeft | RotateRight => {
             args.len() == 2 && bits(args[0]) && args[0] == args[1] && out == Some(args[0])
         }
         Not => args.len() == 1 && bits(args[0]) && out == Some(args[0]),
-        Equal | UnsignedLess => {
+        Divide { .. } | DivideFault { .. } => {
+            args.len() == 3
+                && bits(args[0])
+                && args.iter().all(|a| *a == args[0])
+                && out
+                    == Some(if matches!(op, DivideFault { .. }) {
+                        Type::Bits(1)
+                    } else {
+                        args[0]
+                    })
+        }
+        Guard { .. } => out.is_none() && args == [Type::Bits(1)],
+        Equal | UnsignedLess | SignedLess => {
             args.len() == 2 && bits(args[0]) && args[0] == args[1] && out == Some(Type::Bits(1))
         }
         ZeroExtend | SignExtend => {

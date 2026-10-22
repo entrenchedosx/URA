@@ -7,7 +7,7 @@ mod print;
 
 use super::{semantic, types::TypeRef};
 use crate::ir::{Address, Constant, Type};
-pub use build::{build, build_with_calls, parallel_copies};
+pub use build::{build, build_with_calls, build_with_facts, parallel_copies};
 pub use print::{identifier, render};
 use serde::{Deserialize, Serialize};
 
@@ -105,6 +105,10 @@ pub struct Statement {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum StatementKind {
+    Guard {
+        condition: Expr,
+        reason: String,
+    },
     Assign {
         variable: VariableId,
         value: Expr,
@@ -133,7 +137,7 @@ pub enum StatementKind {
     Block {
         address: Address,
     },
-    /// Removed structural transfer, retained for assembly/source navigation.
+    /// Elided pure operation or transfer, retained for assembly navigation.
     Provenance,
     Goto {
         target: Address,

@@ -409,6 +409,83 @@ fn phi_destruction_and_self_loop_have_no_phi_text_and_exact_provenance() {
 }
 
 #[test]
+fn constant_facts_remove_machine_temporaries_and_keep_every_instruction_mapped() {
+    // xor eax,eax; add eax,42; ret: result is independent of entry state.
+    let code = [0x31, 0xc0, 0x83, 0xc0, 42, 0xc3];
+    let image = CodeImage::new(vec![CodeRegion {
+        start: 0x1000,
+        bytes: &code,
+    }]);
+    let analysis = ura_core::analyze_image(&image, 64, Some(0x1000), &[], &Default::default(), &());
+    let raw = ir::lift_image(&image, 64, &analysis, 0x1000, &()).unwrap();
+    let ssa = ssa::construct(&raw).unwrap();
+    let facts = ir::dataflow::analyze(&ssa).unwrap();
+    let (types, _) = types::infer_ssa_types(&ssa, &()).unwrap();
+    let hir = semantic::lower(&ssa, &types, &()).unwrap();
+    let output = source::build_with_facts(
+        &hir,
+        "constant",
+        &Default::default(),
+        None,
+        &Default::default(),
+        &facts.constants,
+        &(),
+    )
+    .unwrap();
+    let unpropagated = source::build(&hir, "constant", &Default::default(), None, &()).unwrap();
+    assert!(output.lines.len() < unpropagated.lines.len());
+    assert!(output.text().contains("return 0x2aULL;"));
+    assert!(!output.text().contains("structured transfer"));
+    let mapped = output
+        .lines
+        .iter()
+        .flat_map(|l| l.addresses.iter().copied())
+        .collect::<std::collections::BTreeSet<_>>();
+    for address in [0x1000, 0x1002, 0x1005] {
+        assert!(mapped.contains(&Address(address)));
+    }
+    let mut state = State::default();
+    state.registers.insert("rsp".into(), 0x8000);
+    for offset in 0..8 {
+        state.memory.insert(0x8000 + offset, 0);
+    }
+    assert_eq!(
+        state.run(&output.ast, 1000).unwrap(),
+        Exit::Return {
+            result: Some(42),
+            destination: Some(0)
+        }
+    );
+    assert_eq!(
+        serde_json::to_string(&output).unwrap(),
+        serde_json::to_string(&source::render(output.ast.clone(), &()).unwrap()).unwrap()
+    );
+}
+
+#[test]
+fn multiply_prints_an_unsigned_intermediate_before_truncating() {
+    // imul ax,bx must be defined for 65535*65535, including C promotions.
+    let output = reconstruct(&[0x66, 0x0f, 0xaf, 0xc3, 0xc3]);
+    assert!(output.text().contains("((uint64_t)("));
+    let mut state = State::default();
+    state.registers = BTreeMap::from([
+        ("rax".into(), 65535),
+        ("rbx".into(), 65535),
+        ("rsp".into(), 0x8000),
+    ]);
+    for offset in 0..8 {
+        state.memory.insert(0x8000 + offset, 0);
+    }
+    assert_eq!(
+        state.run(&output.ast, 1000).unwrap(),
+        Exit::Return {
+            result: Some(1),
+            destination: Some(0)
+        }
+    );
+}
+
+#[test]
 fn unsupported_effects_remain_visible_and_stop_concrete_execution() {
     let output = reconstruct(&[0x0f, 0x0b]); // UD2
     assert!(output.unresolved > 0);

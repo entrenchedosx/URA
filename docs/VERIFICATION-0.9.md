@@ -1,5 +1,10 @@
 # v0.9 engineering checkpoint verification
 
+**Current continuation:** [v0.9 finalisation](FINALISATION-0.9.md) records the
+subsequent readability/instruction work, 260 passing tests, updated measurements
+and remaining release gates. The results below describe the earlier `bc73e7f`
+checkpoint and are preserved as its baseline, not silently applied to later builds.
+
 Version `0.9.0-dev`, branch `v0.9-c-decompiler`, starting from the v0.8
 qualification checkpoint `b1a05c7`. Verification date: 2026-10-22. The source
 checkpoint is publishable to its development branch; **the v0.9 milestone and

@@ -9,16 +9,20 @@ promise of compilable C. No LLM participates in decompilation.
 ## Representation and transformations
 
 The version-1 C-like AST contains typed scalar expressions, ordered loads and
-stores, calls, explicit unknown effects, assignments, labels/gotos, conditions,
+stores, calls, conditional machine-fault guards, explicit unknown effects, assignments, labels/gotos, conditions,
 loops, returns and unresolved exits. A single source catalog retains instruction,
 block, ordinal, original operation and synthetic provenance. Variables retain
-SSA identity and inferred types; line metadata lists all contributing instruction
-addresses and referenced/written variable IDs. Callees carry navigation addresses
+SSA identity and inferred types; line metadata lists expression origins, adjacent
+elided instructions and referenced/written variable IDs. Callees carry navigation addresses
 only when the machine target is established. Synthetic copies never acquire an
 invented instruction address.
 
-Liveness begins at observable ABI results/control transfers and ordered effects.
-Unconsumed pure flags can disappear. A pure expression is inlined only for one
+Liveness begins at observable ABI results/control transfers, fault guards and ordered effects.
+Use counts are computed after this slice, so dead flag calculations cannot pin
+otherwise single-use expressions. Proven constants from the same verified SSA
+dataflow replace scalar expressions and phi inputs; loads and fault guards remain
+ordered and observable. Elided instructions map to the next surviving line (or
+closing brace), without standalone provenance comment lines. A pure expression is inlined only for one
 same-block use, within 24 nodes and depth 8, and never if it feeds a phi. Loads
 remain assignments and are never duplicated or moved across effects. Call
 snapshots count as uses even before a prototype is recovered; this prevents an
@@ -49,7 +53,24 @@ formal parameters are converted to that domain before arithmetic or unsigned
 comparison, preventing signed overflow/comparison changes in printed C-like
 syntax. Add/subtract/bitwise expressions preserve widths and precedence;
 sign-extension, parity, guarded shifts and partial-register insertion use explicit
-helpers. Non-native pointer widths use width-bearing pointer pseudotypes.
+helpers. Multiplication converts operands to unsigned 64-bit intermediates before
+width truncation, including 16-bit operands that C would otherwise promote to
+signed `int`. Non-native pointer widths use width-bearing pointer pseudotypes.
+
+The lifter supports all 16 CMOV/SETcc conditions, MUL and one/two/three-operand
+IMUL, DIV/IDIV, ROL/ROR, and their scalar sign-extension preparation instructions.
+CMP keeps immutable operand snapshots for direct signed/unsigned conditions
+inside a block; flag-changing operations, calls and barriers invalidate the
+relation. CMOV memory sources are read even when the condition is false. Multiply
+retains the full high/low product and defined CF/OF; other flags remain unknown.
+Divide has an ordered, observable #DE guard for zero divisors and quotient
+overflow, followed by quotient/remainder before overlapping register writes.
+ROL/ROR distinguish the masked count from the modulo-width count; zero preserves
+flags, and overflow remains unknown for masked counts above one. Select consumes
+only its chosen value after already ordered memory reads. RCL/RCR, floating-point,
+SIMD, memory faults and general exception propagation remain outside this model.
+The legacy high-level view explicitly marks divide guards as a presentation gap;
+the semantic and C-like ASTs preserve and execute the conditional guard.
 
 Exact entry registers can use established formal names. A low-bit extraction
 can use a narrower formal without inventing its high bits. Narrow scalar return
@@ -68,7 +89,7 @@ Stack store annotations use exact recovered instruction/width evidence and the
 existing user name overrides. Physical stack names/types remain editable in the
 same project schema 5. Automatic scalar stack-local reconstruction, named
 structure-field expressions, general arrays, alias sets, C++ classes/vtables/RTTI,
-floating/vector semantics, multiplication/division and many optimized idioms are
+floating/vector semantics and many optimized idioms are
 not complete. User structures are preserved as evidence, not used to invent
 unproved field accesses. Instruction comments remain in the existing Inspector.
 
@@ -110,7 +131,12 @@ paths must remain non-concrete or hit a budget.
 The corpus includes 1280 bounded arithmetic/partial-register cases, diamond and
 nested/irreducible loops, 1024 simultaneous-copy patterns over four widths,
 memory ordering, unsupported effects, signed/narrow parameters, call snapshot
-regressions, source mapping, and deterministic rendering. Owned Clang C/C++
+regressions, source mapping, and deterministic rendering. Additional expected-result
+tests cover all conditional forms, signed boundaries, high/low products, masked
+rotate counts 0–255, quotient/remainder and divide faults across 8/16/32/64-bit
+operands, with representative x86 cases. A separate long-division and shift/add
+oracle checks the semantic executor independently of raw IR host arithmetic.
+Owned Clang C/C++
 PE/ELF fixtures span O0/O1/O2/O3: 256 known-behavior executions plus 48 C++
 function-class reconstruction checks. C++ members/switches/nested loops are
 included as honest partial cases, not claims of general C++ support. Scripts
@@ -120,5 +146,5 @@ shared service and exercise denied writes, export completeness and persistence.
 
 Independent agent review found and prompted repairs to signed parameter printing,
 call use counts/register identity, names, removed-jump provenance, unsupported
-call formals and pointer-width declarations. See [VERIFICATION-0.9.md](VERIFICATION-0.9.md)
+call formals, pointer-width declarations and multiplication integer promotion. See [VERIFICATION-0.9.md](VERIFICATION-0.9.md)
 for measured gates and [FEATURE-PARITY.md](FEATURE-PARITY.md) for remaining work.

@@ -73,6 +73,7 @@ pub fn lift_image(
         }
         builder.ops.clear();
         builder.transfer = None;
+        builder.comparison = None;
         for address in &block.instructions {
             if control.is_cancelled() {
                 return Err("IR lifting cancelled".into());
@@ -206,6 +207,7 @@ struct Builder {
     transfer: Option<Operand>,
     total_ops: usize,
     address_bits: u16,
+    comparison: Option<(Operand, Operand)>,
 }
 impl Builder {
     fn new(bits: u16, entry: u64) -> Self {
@@ -263,6 +265,7 @@ impl Builder {
             transfer: None,
             total_ops: 0,
             address_bits: bits,
+            comparison: None,
         }
     }
     fn constant(&self, w: u16, v: u64) -> Operand {
@@ -301,6 +304,7 @@ impl Builder {
         (0..self.arch_count).map(Operand::Variable).collect()
     }
     fn barrier(&mut self, reason: String) {
+        self.comparison = None;
         self.function.diagnostics.push(Diagnostic {
             source: self.source,
             message: reason.clone(),
@@ -529,6 +533,7 @@ impl Builder {
         }
     }
     fn flags(&mut self, m: M, left: Operand, right: Operand, result: Operand) {
+        self.comparison = None;
         let width = self.ty(result).width().unwrap();
         let zero = self.compare(Operation::Equal, result, self.constant(width, 0));
         self.set_flag(3, zero);
@@ -575,6 +580,30 @@ impl Builder {
     }
     fn condition(&mut self, c: C) -> Result<Operand, String> {
         let invert = |b: &mut Self, v: Operand| b.binary(Operation::Xor, v, b.constant(1, 1));
+        // CMP operands are immutable snapshots, not aliases to registers that
+        // a flag-preserving instruction may overwrite before Jcc/CMOV/SETcc.
+        // Across blocks or after flag writes, retain the architectural flags.
+        if let Some((left, right)) = self.comparison {
+            let (op, a, b, negate) = match c {
+                C::e => (Operation::Equal, left, right, false),
+                C::ne => (Operation::Equal, left, right, true),
+                C::b => (Operation::UnsignedLess, left, right, false),
+                C::ae => (Operation::UnsignedLess, left, right, true),
+                C::a => (Operation::UnsignedLess, right, left, false),
+                C::be => (Operation::UnsignedLess, right, left, true),
+                C::l => (Operation::SignedLess, left, right, false),
+                C::ge => (Operation::SignedLess, left, right, true),
+                C::g => (Operation::SignedLess, right, left, false),
+                C::le => (Operation::SignedLess, right, left, true),
+                _ => return self.flag_condition(c),
+            };
+            let value = self.compare(op, a, b);
+            return Ok(if negate { invert(self, value) } else { value });
+        }
+        self.flag_condition(c)
+    }
+    fn flag_condition(&mut self, c: C) -> Result<Operand, String> {
+        let invert = |b: &mut Self, v: Operand| b.binary(Operation::Xor, v, b.constant(1, 1));
         Ok(match c {
             C::o => self.flag(5),
             C::no => invert(self, self.flag(5)),
@@ -607,6 +636,197 @@ impl Builder {
             }
             _ => return Err("unsupported condition (including counter/loop branches)".into()),
         })
+    }
+    fn divide(&mut self, i: &Instruction) -> Result<(), String> {
+        self.comparison = None;
+        let width = self.width(i, 0)?;
+        let signed = i.mnemonic() == M::Idiv;
+        let (low_register, high_register) = match width {
+            8 => (R::AL, R::AH),
+            16 => (R::AX, R::DX),
+            32 => (R::EAX, R::EDX),
+            64 => (R::RAX, R::RDX),
+            _ => return Err("unsupported divide width".into()),
+        };
+        let divisor = self.read(i, 0, width)?;
+        let low = self.register(low_register)?;
+        let high = self.register(high_register)?;
+        let args = vec![high, low, divisor];
+        let fault = self.emit(
+            Type::Bits(1),
+            Operation::DivideFault { signed },
+            args.clone(),
+        );
+        self.ops.push(Statement {
+            source: self.source,
+            output: None,
+            op: Operation::Guard {
+                reason: "divide error (#DE)".into(),
+            },
+            args: vec![fault],
+        });
+        let quotient = self.emit(
+            Type::Bits(width),
+            Operation::Divide {
+                signed,
+                remainder: false,
+            },
+            args.clone(),
+        );
+        let remainder = self.emit(
+            Type::Bits(width),
+            Operation::Divide {
+                signed,
+                remainder: true,
+            },
+            args,
+        );
+        self.write_register(low_register, quotient)?;
+        self.write_register(high_register, remainder)?;
+        for flag in 0..FLAGS.len() {
+            let value = self.unknown(Type::Bits(1), "divide leaves arithmetic flags undefined");
+            self.set_flag(flag, value);
+        }
+        Ok(())
+    }
+    fn rotate(&mut self, i: &Instruction) -> Result<(), String> {
+        self.comparison = None;
+        let width = self.width(i, 0)?;
+        let address = if i.op0_kind() == OpKind::Memory {
+            Some(self.address(i)?)
+        } else {
+            None
+        };
+        let value = self.read(i, 0, width)?;
+        let count = self.read(i, 1, 8)?;
+        let count = self.resize(count, width, false);
+        let count = self.binary(
+            Operation::And,
+            count,
+            self.constant(width, if width == 64 { 63 } else { 31 }),
+        );
+        let result = self.binary(
+            if i.mnemonic() == M::Rol {
+                Operation::RotateLeft
+            } else {
+                Operation::RotateRight
+            },
+            value,
+            count,
+        );
+        let zero = self.compare(Operation::Equal, count, self.constant(width, 0));
+        let one = self.compare(Operation::Equal, count, self.constant(width, 1));
+        let carry = self.unary(
+            Operation::Extract {
+                offset: if i.mnemonic() == M::Rol { 0 } else { width - 1 },
+            },
+            result,
+            Type::Bits(1),
+        );
+        let carry_out = self.emit(
+            Type::Bits(1),
+            Operation::Select,
+            vec![zero, self.flag(0), carry],
+        );
+        let sign = self.unary(
+            Operation::Extract { offset: width - 1 },
+            result,
+            Type::Bits(1),
+        );
+        let other = if i.mnemonic() == M::Rol {
+            carry
+        } else {
+            self.unary(
+                Operation::Extract { offset: width - 2 },
+                result,
+                Type::Bits(1),
+            )
+        };
+        let overflow = self.binary(Operation::Xor, sign, other);
+        let undefined = self.unknown(
+            Type::Bits(1),
+            "rotate overflow is undefined for masked counts above one",
+        );
+        let overflow = self.emit(
+            Type::Bits(1),
+            Operation::Select,
+            vec![one, overflow, undefined],
+        );
+        let overflow = self.emit(
+            Type::Bits(1),
+            Operation::Select,
+            vec![zero, self.flag(5), overflow],
+        );
+        self.set_flag(0, carry_out);
+        self.set_flag(5, overflow);
+        self.write(i, result, address)
+    }
+    fn multiply(&mut self, i: &Instruction) -> Result<(), String> {
+        self.comparison = None;
+        let width = self.width(i, 0)?;
+        let one = i.op_count() == 1;
+        let signed = i.mnemonic() == M::Imul;
+        let accumulator = match width {
+            8 => R::AL,
+            16 => R::AX,
+            32 => R::EAX,
+            64 => R::RAX,
+            _ => return Err("unsupported multiply width".into()),
+        };
+        let (left, right) = if one {
+            (self.register(accumulator)?, self.read(i, 0, width)?)
+        } else {
+            let first = u32::from(i.op_count() == 3);
+            (self.read(i, first, width)?, self.read(i, first + 1, width)?)
+        };
+        let low = self.binary(Operation::Mul, left, right);
+        let high = self.binary(
+            if signed {
+                Operation::SignedMulHigh
+            } else {
+                Operation::UnsignedMulHigh
+            },
+            left,
+            right,
+        );
+        let expected = if signed {
+            let sign = self.unary(Operation::Extract { offset: width - 1 }, low, Type::Bits(1));
+            self.resize(sign, width, true)
+        } else {
+            self.constant(width, 0)
+        };
+        let fits = self.compare(Operation::Equal, high, expected);
+        let overflow = self.binary(Operation::Xor, fits, self.constant(1, 1));
+        self.set_flag(0, overflow);
+        self.set_flag(5, overflow);
+        for flag in [1, 2, 3, 4] {
+            let value = self.unknown(Type::Bits(1), "multiply leaves this flag undefined");
+            self.set_flag(flag, value);
+        }
+        if one {
+            if width == 8 {
+                let low = self.resize(low, 16, false);
+                let full = self.emit(
+                    Type::Bits(16),
+                    Operation::Insert { offset: 8 },
+                    vec![low, high],
+                );
+                self.write_register(R::AX, full)?;
+            } else {
+                self.write_register(accumulator, low)?;
+                self.write_register(
+                    match width {
+                        16 => R::DX,
+                        32 => R::EDX,
+                        _ => R::RDX,
+                    },
+                    high,
+                )?;
+            }
+        } else {
+            self.write(i, low, None)?;
+        }
+        Ok(())
     }
     fn stack_address(&mut self, sp: Operand) -> Operand {
         let mut bits = sp;
@@ -705,6 +925,11 @@ impl Builder {
                 };
                 let result = self.binary(op, left, right);
                 self.flags(i.mnemonic(), left, right, result);
+                if i.mnemonic() == M::Cmp {
+                    let left = self.emit(self.ty(left), Operation::Copy, vec![left]);
+                    let right = self.emit(self.ty(right), Operation::Copy, vec![right]);
+                    self.comparison = Some((left, right));
+                }
                 if !matches!(i.mnemonic(), M::Cmp | M::Test) {
                     self.write(i, result, address)?;
                 }
@@ -766,6 +991,7 @@ impl Builder {
                 });
             }
             M::Call => {
+                self.comparison = None;
                 let width = if matches!(i.op0_kind(), OpKind::Register | OpKind::Memory) {
                     self.width(i, 0)?
                 } else {
@@ -823,6 +1049,82 @@ impl Builder {
                 let target = self.resize(target, self.bits, false);
                 self.transfer =
                     Some(self.unary(Operation::ToAddress, target, Type::Address(self.bits)));
+            }
+            M::Mul | M::Imul => self.multiply(i)?,
+            M::Div | M::Idiv => self.divide(i)?,
+            M::Cbw | M::Cwde | M::Cdqe => {
+                let (from, to) = match i.mnemonic() {
+                    M::Cbw => (R::AL, R::AX),
+                    M::Cwde => (R::AX, R::EAX),
+                    _ => (R::EAX, R::RAX),
+                };
+                let value = self.register(from)?;
+                let value = self.resize(value, (to.size() * 8) as u16, true);
+                self.write_register(to, value)?;
+            }
+            M::Cwd | M::Cdq | M::Cqo => {
+                let (from, to, width) = match i.mnemonic() {
+                    M::Cwd => (R::AX, R::DX, 16),
+                    M::Cdq => (R::EAX, R::EDX, 32),
+                    _ => (R::RAX, R::RDX, 64),
+                };
+                let value = self.register(from)?;
+                let sign = self.unary(
+                    Operation::Extract { offset: width - 1 },
+                    value,
+                    Type::Bits(1),
+                );
+                let value = self.resize(sign, width, true);
+                self.write_register(to, value)?;
+            }
+            M::Rol | M::Ror => self.rotate(i)?,
+            M::Seto
+            | M::Setno
+            | M::Setb
+            | M::Setae
+            | M::Sete
+            | M::Setne
+            | M::Setbe
+            | M::Seta
+            | M::Sets
+            | M::Setns
+            | M::Setp
+            | M::Setnp
+            | M::Setl
+            | M::Setge
+            | M::Setle
+            | M::Setg => {
+                let condition = self.condition(i.condition_code())?;
+                let value = self.resize(condition, 8, false);
+                self.write(i, value, None)?;
+            }
+            M::Cmovo
+            | M::Cmovno
+            | M::Cmovb
+            | M::Cmovae
+            | M::Cmove
+            | M::Cmovne
+            | M::Cmovbe
+            | M::Cmova
+            | M::Cmovs
+            | M::Cmovns
+            | M::Cmovp
+            | M::Cmovnp
+            | M::Cmovl
+            | M::Cmovge
+            | M::Cmovle
+            | M::Cmovg => {
+                let width = self.width(i, 0)?;
+                let old = self.read(i, 0, width)?;
+                // The source memory read is unconditional, even when false.
+                let new = self.read(i, 1, width)?;
+                let condition = self.condition(i.condition_code())?;
+                let value = self.emit(
+                    Type::Bits(width),
+                    Operation::Select,
+                    vec![condition, new, old],
+                );
+                self.write(i, value, None)?;
             }
             _ if i.is_jcc_short_or_near() => {
                 self.transfer = Some(self.condition(i.condition_code())?);

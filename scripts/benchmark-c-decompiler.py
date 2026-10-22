@@ -1,8 +1,9 @@
-"""Compare retained v0.8 and current Release tools without executing samples.
+"""Compare a retained baseline and current Release tools without executing samples.
 
 Run after workspace/examples Release builds, with no Cargo or UI polling active.
 Uses psutil only for read-only process measurements. Raw data stays under target.
 """
+import argparse
 import hashlib
 import json
 from pathlib import Path
@@ -11,15 +12,24 @@ import subprocess
 import time
 import psutil
 
-folder = Path('target/v09/performance')
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--baseline-dir', type=Path, default=Path('target/v09/baseline'))
+parser.add_argument('--baseline-label', default='v0.8-retained')
+parser.add_argument('--output', type=Path, default=Path('target/v09/performance'))
+parser.add_argument('--current-first', action='store_true', help='Reverse the process order for a matched recheck')
+args = parser.parse_args()
+folder = args.output
 folder.mkdir(parents=True, exist_ok=True)
 flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 samples = ['tests/fixtures/ura64.exe', 'tests/fixtures/semantic-O0.exe',
            'tests/fixtures/semantic-O3.elf', 'tests/fixtures/decompiler-O0.exe',
            'tests/fixtures/decompiler-O3.elf', 'C:/Windows/System32/ntdll.dll']
 records = []
-for label, executable in [('v0.8-retained', Path('target/v09/baseline/decomp_benchmark.exe')),
-                          ('v0.9-source', Path('target/release/examples/decomp_benchmark.exe'))]:
+core_versions = [(args.baseline_label, args.baseline_dir / 'decomp_benchmark.exe'),
+                 ('v0.9-source', Path('target/release/examples/decomp_benchmark.exe'))]
+if args.current_first:
+    core_versions.reverse()
+for label, executable in core_versions:
     for sample in samples:
         sample = Path(sample)
         output = folder / f'{label}-{sample.name}.jsonl'
@@ -44,9 +54,12 @@ for label, executable in [('v0.8-retained', Path('target/v09/baseline/decomp_ben
                         'observedPeakWorkingSetMiB': peak / 1048576, 'rows': rows})
         print(label, sample.name, round(peak/1048576, 2), 'MiB', flush=True)
 cli = []
-for label, executable in [('v0.8-retained', Path('target/v09/baseline/ura-cli.exe')),
-                          ('v0.9-source', Path('target/release/ura-cli.exe'))]:
-    for command in ['signature', 'highlevel'] + (['decompile'] if label == 'v0.9-source' else []):
+cli_versions = [(args.baseline_label, args.baseline_dir / 'ura-cli.exe'),
+                ('v0.9-source', Path('target/release/ura-cli.exe'))]
+if args.current_first:
+    cli_versions.reverse()
+for label, executable in cli_versions:
+    for command in ['signature', 'highlevel'] + (['decompile'] if not label.startswith('v0.8') else []):
         values = []
         for _ in range(5):
             start = time.perf_counter()

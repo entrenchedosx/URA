@@ -8,19 +8,22 @@ use ura_core::ir::{self, dataflow, evaluate::Machine, ssa, VariableKind};
 use ura_core::{AnalysisOptions, CodeImage, CodeRegion};
 
 fn lift(code: &[u8]) -> ir::Function {
+    lift_bits(code, 64)
+}
+fn lift_bits(code: &[u8], bits: u8) -> ir::Function {
     let image = CodeImage::new(vec![CodeRegion {
         start: 0x1000,
         bytes: code,
     }]);
     let analysis = ura_core::analyze_image(
         &image,
-        64,
+        bits,
         Some(0x1000),
         &[],
         &AnalysisOptions::default(),
         &(),
     );
-    ir::lift_image(&image, 64, &analysis, 0x1000, &()).unwrap()
+    ir::lift_image(&image, bits, &analysis, 0x1000, &()).unwrap()
 }
 fn compare(code: &[u8], inputs: &[(String, u64)], limit: usize) {
     compare_raw(lift(code), code, inputs, limit);
@@ -35,7 +38,7 @@ fn compare_raw(
     let (types, _) = types::infer_ssa_types(&ssa, &()).unwrap();
     let hir = semantic::lower(&ssa, &types, &()).unwrap();
     // Constant propagation is deliberately not used to execute either model.
-    let _ = dataflow::analyze(&ssa).unwrap();
+    let facts = dataflow::analyze(&ssa).unwrap();
     let mut reference = Machine::default();
     for variable in &raw.variables {
         if variable.kind != VariableKind::Temporary && variable.ty.width().is_some() {
@@ -45,7 +48,15 @@ fn compare_raw(
     for (name, value) in inputs {
         reference.values.insert(name.clone(), *value);
     }
-    reference.values.insert("rsp".into(), 0x8000);
+    reference.values.insert(
+        if raw.address_width == 32 {
+            "esp"
+        } else {
+            "rsp"
+        }
+        .into(),
+        0x8000,
+    );
     for offset in 0..16 {
         reference.memory.insert(0x8000 + offset, 0);
     }
@@ -58,8 +69,16 @@ fn compare_raw(
         memory: reference.memory.clone(),
         trace: Vec::new(),
     };
-    let reconstructed =
-        ura_core::decomp::source::build(&hir, "fixture", &Default::default(), None, &()).unwrap();
+    let reconstructed = ura_core::decomp::source::build_with_facts(
+        &hir,
+        "fixture",
+        &Default::default(),
+        None,
+        &Default::default(),
+        &facts.constants,
+        &(),
+    )
+    .unwrap();
     let mut source_state = ura_core::decomp::source::evaluate::State::default();
     source_state.registers = reference.values.clone();
     source_state.memory = reference.memory.clone();
@@ -115,7 +134,14 @@ fn compare_raw(
                 );
                 assert_eq!(
                     result,
-                    reference.values.get("rax").copied(),
+                    reference
+                        .values
+                        .get(if raw.address_width == 32 {
+                            "eax"
+                        } else {
+                            "rax"
+                        })
+                        .copied(),
                     "C-like ABI result"
                 );
             }
@@ -146,6 +172,506 @@ fn compare_raw(
 }
 fn input(rcx: u64, rdx: u64) -> Vec<(String, u64)> {
     vec![("rcx".into(), rcx), ("rdx".into(), rdx)]
+}
+
+fn condition_oracle(code: u8, a: u64, b: u64, width: u16) -> bool {
+    let mask = u64::MAX >> (64 - width);
+    let a = a & mask;
+    let b = b & mask;
+    let result = a.wrapping_sub(b) & mask;
+    let sign = 1u64 << (width - 1);
+    let carry = a < b;
+    let zero = result == 0;
+    let negative = result & sign != 0;
+    let overflow = (a ^ b) & (a ^ result) & sign != 0;
+    let parity = (result as u8).count_ones() % 2 == 0;
+    [
+        overflow,
+        !overflow,
+        carry,
+        !carry,
+        zero,
+        !zero,
+        carry || zero,
+        !carry && !zero,
+        negative,
+        !negative,
+        parity,
+        !parity,
+        negative != overflow,
+        negative == overflow,
+        zero || negative != overflow,
+        !zero && negative == overflow,
+    ][usize::from(code)]
+}
+
+#[test]
+fn all_setcc_and_cmov_conditions_match_known_integer_results() {
+    let boundaries = [
+        0,
+        1,
+        0x7fff,
+        0x8000,
+        0x7fff_ffff,
+        0x8000_0000,
+        0x7fff_ffff_ffff_ffff,
+        0x8000_0000_0000_0000,
+        u64::MAX,
+    ];
+    for width in [16, 32, 64] {
+        let prefix: &[u8] = match width {
+            16 => &[0x66],
+            32 => &[],
+            _ => &[0x48],
+        };
+        for cc in 0..16 {
+            let mut mov = prefix.to_vec();
+            mov.extend([0x39, 0xd1]); // cmp cx/ecx/rcx,dx/edx/rdx
+                                      // These moves preserve flags and overwrite the compared registers.
+            mov.extend([0xb9, 0, 0, 0, 0, 0xba, 0, 0, 0, 0]);
+            mov.extend(prefix);
+            mov.extend([0x0f, 0x40 + cc, 0xc3, 0xc3]); // cmovcc ax/eax/rax,bx/ebx/rbx; ret
+            for &a in &boundaries {
+                for &b in &boundaries {
+                    let old = 0xa5a5_1234_8765_4321;
+                    let new = 0x5a5a_5678_1234_9876;
+                    let mask = u64::MAX >> (64 - width);
+                    let selected = if condition_oracle(cc, a, b, width) {
+                        new
+                    } else {
+                        old
+                    };
+                    let expected = if width == 16 {
+                        (old & !mask) | (selected & mask)
+                    } else {
+                        selected & mask
+                    };
+                    let mut inputs = input(a, b);
+                    inputs.extend([("rax".into(), old), ("rbx".into(), new)]);
+                    let state = compare_raw(lift(&mov), &mov, &inputs, 8);
+                    assert_eq!(
+                        state.registers.get("rax"),
+                        Some(&expected),
+                        "CMOV cc={cc} width={width} a={a:x} b={b:x}"
+                    );
+                    if width == 64 {
+                        let set = vec![0x48, 0x39, 0xd1, 0x0f, 0x90 + cc, 0xc0, 0xc3];
+                        let expected = (old & !255) | u64::from(condition_oracle(cc, a, b, width));
+                        let state = compare_raw(lift(&set), &set, &inputs, 8);
+                        assert_eq!(state.registers.get("rax"), Some(&expected), "SET cc={cc}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn multiply_forms_match_full_products_and_defined_overflow_flags() {
+    for width in [8, 16, 32, 64] {
+        let mask = u64::MAX >> (64 - width);
+        let boundary = [0, 1, 2, mask >> 1, (mask >> 1) + 1, mask - 1, mask];
+        for signed in [false, true] {
+            let prefix: &[u8] = match width {
+                8 | 32 => &[],
+                16 => &[0x66],
+                _ => &[0x48],
+            };
+            let mut code = prefix.to_vec();
+            code.extend([
+                if width == 8 { 0xf6 } else { 0xf7 },
+                if signed { 0xeb } else { 0xe3 },
+                0xc3,
+            ]); // imul/mul bl/bx/ebx/rbx
+            for &a in &boundary {
+                for &b in &boundary {
+                    let mut inputs = input(0, 0);
+                    inputs.extend([("rax".into(), a), ("rbx".into(), b)]);
+                    let state = compare_raw(lift(&code), &code, &inputs, 8);
+                    let sign = |v: u64| (i128::from(v) << (128 - width)) >> (128 - width);
+                    let product = if signed {
+                        (sign(a) * sign(b)) as u128
+                    } else {
+                        u128::from(a) * u128::from(b)
+                    };
+                    let low = product as u64 & mask;
+                    let high = (product >> width) as u64 & mask;
+                    let overflow = if signed {
+                        sign(low) != product as i128
+                    } else {
+                        high != 0
+                    };
+                    let actual_low = state.registers["rax"];
+                    if width == 8 {
+                        assert_eq!(actual_low & 65535, (high << 8) | low);
+                    } else {
+                        assert_eq!(actual_low & mask, low);
+                        assert_eq!(state.registers["rdx"] & mask, high);
+                    }
+                    assert_eq!(state.registers["cf"], u64::from(overflow));
+                    assert_eq!(state.registers["of"], u64::from(overflow));
+                    for flag in ["pf", "af", "zf", "sf"] {
+                        assert!(!state.registers.contains_key(flag));
+                    }
+                }
+            }
+        }
+        if width != 8 {
+            for &a in &boundary {
+                for &b in &boundary {
+                    let prefix: &[u8] = match width {
+                        16 => &[0x66],
+                        32 => &[],
+                        _ => &[0x48],
+                    };
+                    let mut code = prefix.to_vec();
+                    code.extend([0x0f, 0xaf, 0xc3, 0xc3]);
+                    let state = compare_raw(
+                        lift(&code),
+                        &code,
+                        &[("rax".into(), a), ("rbx".into(), b)],
+                        8,
+                    );
+                    assert_eq!(state.registers["rax"] & mask, a.wrapping_mul(b) & mask);
+                }
+            }
+            let prefix: &[u8] = match width {
+                16 => &[0x66],
+                32 => &[],
+                _ => &[0x48],
+            };
+            let mut code = prefix.to_vec();
+            code.extend([0x6b, 0xc3, 0xfd, 0xc3]); // imul ax/eax/rax,bx/ebx/rbx,-3
+            let state = compare_raw(lift(&code), &code, &[("rbx".into(), 7)], 8);
+            assert_eq!(state.registers["rax"] & mask, (-21i64) as u64 & mask);
+        }
+    }
+}
+
+#[test]
+fn rotates_mask_counts_preserve_zero_flags_and_leave_multibit_overflow_unknown() {
+    for width in [8u16, 16, 32, 64] {
+        let mask = u64::MAX >> (64 - width);
+        let prefix: &[u8] = match width {
+            8 | 32 => &[],
+            16 => &[0x66],
+            _ => &[0x48],
+        };
+        for left in [false, true] {
+            let mut code = prefix.to_vec();
+            code.extend([
+                if width == 8 { 0xd2 } else { 0xd3 },
+                if left { 0xc0 } else { 0xc8 },
+                0xc3,
+            ]);
+            for value in [0, 1, mask >> 1, (mask >> 1) + 1, mask] {
+                for count in 0..=255 {
+                    let state = compare_raw(
+                        lift(&code),
+                        &code,
+                        &[
+                            ("rax".into(), value),
+                            ("rcx".into(), count),
+                            ("cf".into(), 1),
+                            ("of".into(), 1),
+                        ],
+                        8,
+                    );
+                    let masked = count & if width == 64 { 63 } else { 31 };
+                    let mut expected = value;
+                    for _ in 0..masked % u64::from(width) {
+                        expected = if left {
+                            ((expected << 1) | (expected >> (width - 1))) & mask
+                        } else {
+                            (expected >> 1) | ((expected & 1) << (width - 1))
+                        };
+                    }
+                    assert_eq!(
+                        state.registers["rax"] & mask,
+                        expected,
+                        "rotate width={width} count={count}"
+                    );
+                    let cf = if masked == 0 {
+                        1
+                    } else if left {
+                        expected & 1
+                    } else {
+                        expected >> (width - 1)
+                    };
+                    assert_eq!(state.registers["cf"], cf);
+                    if masked == 0 {
+                        assert_eq!(state.registers["of"], 1);
+                    } else if masked == 1 {
+                        let of = (expected >> (width - 1))
+                            ^ if left {
+                                cf
+                            } else {
+                                (expected >> (width - 2)) & 1
+                            };
+                        assert_eq!(state.registers["of"], of);
+                    } else {
+                        assert!(!state.registers.contains_key("of"));
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn division_recovers_quotients_remainders_and_preserves_defined_widths() {
+    for width in [8u16, 16, 32, 64] {
+        let mask = u64::MAX >> (64 - width);
+        let boundary = [0, 1, 2, mask >> 1, (mask >> 1) + 1, mask];
+        for signed in [false, true] {
+            let prefix: &[u8] = match width {
+                8 | 32 => &[],
+                16 => &[0x66],
+                _ => &[0x48],
+            };
+            let mut code = prefix.to_vec();
+            code.extend([
+                if width == 8 { 0xf6 } else { 0xf7 },
+                if signed { 0xfb } else { 0xf3 },
+                0xc3,
+            ]);
+            for high in boundary {
+                for low in boundary {
+                    for divisor in boundary {
+                        let pair = (u128::from(high) << width) | u128::from(low);
+                        let expected = if signed {
+                            let dividend =
+                                ((pair << (128 - 2 * width)) as i128) >> (128 - 2 * width);
+                            let denominator =
+                                (i128::from(divisor) << (128 - width)) >> (128 - width);
+                            dividend.checked_div(denominator).and_then(|q| {
+                                let bound = 1i128 << (width - 1);
+                                if q < -bound || q >= bound {
+                                    None
+                                } else {
+                                    dividend
+                                        .checked_rem(denominator)
+                                        .map(|r| (q as u64 & mask, r as u64 & mask))
+                                }
+                            })
+                        } else {
+                            pair.checked_div(u128::from(divisor))
+                                .filter(|q| *q <= u128::from(mask))
+                                .and_then(|q| {
+                                    pair.checked_rem(u128::from(divisor))
+                                        .map(|r| (q as u64, r as u64))
+                                })
+                        };
+                        let Some((quotient, remainder)) = expected else {
+                            continue;
+                        };
+                        let rax = if width == 8 { (high << 8) | low } else { low };
+                        let inputs = [
+                            ("rax".into(), rax),
+                            ("rdx".into(), high),
+                            ("rbx".into(), divisor),
+                        ];
+                        let state = compare_raw(lift(&code), &code, &inputs, 8);
+                        assert_eq!(
+                            state.registers["rax"] & mask,
+                            quotient,
+                            "divide width={width} signed={signed}"
+                        );
+                        let actual_remainder = if width == 8 {
+                            (state.registers["rax"] >> 8) & mask
+                        } else {
+                            state.registers["rdx"] & mask
+                        };
+                        assert_eq!(actual_remainder, remainder);
+                        for flag in ["cf", "pf", "af", "zf", "sf", "of"] {
+                            assert!(!state.registers.contains_key(flag));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Common compiler preparation: CQO; IDIV RBX, and CDQ; IDIV EBX.
+    for (code, expected) in [
+        (&[0x48, 0x99, 0x48, 0xf7, 0xfb, 0xc3][..], (-7i64) as u64),
+        (&[0x99, 0xf7, 0xfb, 0xc3][..], u64::from((-7i32) as u32)),
+    ] {
+        let state = compare_raw(
+            lift(code),
+            code,
+            &[("rax".into(), (-22i64) as u64), ("rbx".into(), 3)],
+            8,
+        );
+        assert_eq!(state.registers["rax"], expected);
+    }
+}
+
+#[test]
+fn division_faults_stop_before_following_memory_effects_in_all_models() {
+    for signed in [false, true] {
+        let code = [
+            0x48,
+            0xf7,
+            if signed { 0xfb } else { 0xf3 },
+            0x48,
+            0x89,
+            0x06,
+            0xc3,
+        ];
+        let raw = lift(&code);
+        let ssa = ssa::construct(&raw).unwrap();
+        let (types, _) = types::infer_ssa_types(&ssa, &()).unwrap();
+        let hir = semantic::lower(&ssa, &types, &()).unwrap();
+        let facts = dataflow::analyze(&ssa).unwrap();
+        let output = ura_core::decomp::source::build_with_facts(
+            &hir,
+            "fault",
+            &Default::default(),
+            None,
+            &Default::default(),
+            &facts.constants,
+            &(),
+        )
+        .unwrap();
+        assert!(output.text().contains("ura_trap"));
+        for (high, low, divisor) in if signed {
+            vec![
+                (0, 1, 0),
+                (u64::MAX, 0x8000_0000_0000_0000, u64::MAX),
+                (1, 0, 1),
+            ]
+        } else {
+            vec![(0, 1, 0), (1, 0, 1), (u64::MAX, u64::MAX, 2)]
+        } {
+            let registers = [
+                ("rax".into(), low),
+                ("rdx".into(), high),
+                ("rbx".into(), divisor),
+                ("rsi".into(), 0x9000),
+            ]
+            .into_iter()
+            .collect::<std::collections::BTreeMap<_, _>>();
+            let memory = [(0x9000, 0x5a)]
+                .into_iter()
+                .collect::<std::collections::BTreeMap<_, _>>();
+            let mut raw_state = Machine {
+                values: registers.clone(),
+                memory: memory.clone(),
+                trace: Vec::new(),
+            };
+            let mut semantic_state = execute::State {
+                registers: registers.clone(),
+                memory: memory.clone(),
+                trace: Vec::new(),
+            };
+            let mut source_state = ura_core::decomp::source::evaluate::State::default();
+            source_state.registers = registers;
+            source_state.memory = memory.clone();
+            for result in [
+                raw_state.run(&raw, 8).map(|_| ()),
+                semantic_state.run(&hir, 8).map(|_| ()),
+                source_state.run(&output.ast, 1000).map(|_| ()),
+            ] {
+                assert!(result.unwrap_err().contains("machine fault"));
+            }
+            assert_eq!(raw_state.memory, memory);
+            assert_eq!(semantic_state.memory, memory);
+            assert_eq!(source_state.memory, memory);
+        }
+    }
+}
+
+#[test]
+fn x86_condition_multiply_rotate_and_divide_forms_have_known_results() {
+    type IntegerCase<'a> = (&'a [u8], &'a [(&'a str, u64)], u64);
+    let cases: &[IntegerCase<'_>] = &[
+        (
+            &[0x39, 0xd1, 0x0f, 0x9c, 0xc0, 0x0f, 0xb6, 0xc0, 0xc3],
+            &[("ecx", u64::from(u32::MAX)), ("edx", 1)],
+            1,
+        ),
+        (
+            &[0x39, 0xd1, 0x0f, 0x4c, 0xc3, 0xc3],
+            &[
+                ("eax", 9),
+                ("ebx", 4),
+                ("ecx", u64::from(u32::MAX)),
+                ("edx", 1),
+            ],
+            4,
+        ),
+        (&[0x0f, 0xaf, 0xc3, 0xc3], &[("eax", 6), ("ebx", 7)], 42),
+        (&[0xc1, 0xc0, 1, 0xc3], &[("eax", 0x8000_0000)], 1),
+        (
+            &[0x99, 0xf7, 0xfb, 0xc3],
+            &[("eax", u64::from((-22i32) as u32)), ("ebx", 3)],
+            u64::from((-7i32) as u32),
+        ),
+        (
+            &[0x39, 0xd1, 0x0f, 0x94, 0x06, 0xc3],
+            &[("eax", 7), ("ecx", 1), ("edx", 1), ("esi", 0x9000)],
+            7,
+        ),
+    ];
+    for (code, inputs, expected) in cases {
+        let inputs = inputs
+            .iter()
+            .map(|(name, value)| (name.to_string(), *value))
+            .collect::<Vec<_>>();
+        let state = compare_raw(lift_bits(code, 32), code, &inputs, 8);
+        assert_eq!(state.registers["eax"], *expected);
+    }
+}
+
+#[test]
+fn false_cmov_memory_source_is_read_before_selection_in_all_models() {
+    let raw = lift(&[0x48, 0x39, 0xd1, 0x48, 0x0f, 0x44, 0x03, 0xc3]);
+    let ssa = ssa::construct(&raw).unwrap();
+    let (types, _) = types::infer_ssa_types(&ssa, &()).unwrap();
+    let hir = semantic::lower(&ssa, &types, &()).unwrap();
+    let facts = dataflow::analyze(&ssa).unwrap();
+    let output = ura_core::decomp::source::build_with_facts(
+        &hir,
+        "cmov",
+        &Default::default(),
+        None,
+        &Default::default(),
+        &facts.constants,
+        &(),
+    )
+    .unwrap();
+    let registers = [
+        ("rcx".into(), 1),
+        ("rdx".into(), 2),
+        ("rbx".into(), 0x9000),
+        ("rax".into(), 7),
+        ("rsp".into(), 0x8000),
+    ]
+    .into_iter()
+    .collect::<std::collections::BTreeMap<_, _>>();
+    let memory = (0..8)
+        .map(|i| (0x8000 + i, 0))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let mut raw_state = Machine {
+        values: registers.clone(),
+        memory: memory.clone(),
+        trace: Vec::new(),
+    };
+    let mut semantic_state = execute::State {
+        registers: registers.clone(),
+        memory: memory.clone(),
+        trace: Vec::new(),
+    };
+    let mut source_state = ura_core::decomp::source::evaluate::State::default();
+    source_state.registers = registers;
+    source_state.memory = memory;
+    for result in [
+        raw_state.run(&raw, 8).map(|_| ()),
+        semantic_state.run(&hir, 8).map(|_| ()),
+        source_state.run(&output.ast, 1000).map(|_| ()),
+    ] {
+        assert!(result.unwrap_err().contains("unmapped"));
+    }
 }
 
 #[test]

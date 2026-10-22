@@ -118,6 +118,16 @@ impl State {
                 StatementKind::Call { .. } => {
                     return Err("unknown call effects cannot be concretely executed".into())
                 }
+                StatementKind::Guard { condition, reason } => {
+                    if self
+                        .expression(condition, 0)?
+                        .ok_or("unknown C-like fault condition")?
+                        != 0
+                    {
+                        return Err(format!("machine fault: {reason}"));
+                    }
+                    Flow::Next
+                }
                 StatementKind::Unknown {
                     variable, memory, ..
                 } => {
@@ -224,6 +234,24 @@ impl State {
                 Some(n)
             }
             ExprKind::Scalar {
+                operator: semantic::ScalarOp::Select,
+                arguments,
+            } => {
+                let condition = self.expression(
+                    arguments.first().ok_or("missing C-like select condition")?,
+                    depth + 1,
+                )?;
+                match condition {
+                    Some(value) => self.expression(
+                        arguments
+                            .get(if value != 0 { 1 } else { 2 })
+                            .ok_or("missing C-like select arm")?,
+                        depth + 1,
+                    )?,
+                    None => None,
+                }
+            }
+            ExprKind::Scalar {
                 operator,
                 arguments,
             } => {
@@ -261,6 +289,54 @@ impl State {
             S::Move | S::AddressCast | S::BitsCast | S::Truncate | S::ZeroExtend => a,
             S::Add => ((u128::from(a) + u128::from(b)) & u128::from(u64::MAX)) as u64,
             S::Subtract => a.overflowing_sub(b).0,
+            S::Multiply => a.overflowing_mul(b).0,
+            S::Divide { signed, .. } | S::DivideFault { signed } => {
+                let low = *v.get(1).ok_or("missing dividend low word")?;
+                let divisor = *v.get(2).ok_or("missing divisor")?;
+                let pair = (u128::from(a) << width) | u128::from(low);
+                let parts = if signed {
+                    let numerator = ((pair << (128 - 2 * width)) as i128) >> (128 - 2 * width);
+                    let denominator = (i128::from(divisor) << (128 - width)) >> (128 - width);
+                    numerator.checked_div(denominator).and_then(|q| {
+                        let bound = 1i128 << (width - 1);
+                        if q < -bound || q >= bound {
+                            None
+                        } else {
+                            numerator
+                                .checked_rem(denominator)
+                                .map(|r| (q as u64, r as u64))
+                        }
+                    })
+                } else {
+                    pair.checked_div(u128::from(divisor)).and_then(|q| {
+                        if q > u128::from(bits(u64::MAX, Type::Bits(width))) {
+                            None
+                        } else {
+                            pair.checked_rem(u128::from(divisor))
+                                .map(|r| (q as u64, r as u64))
+                        }
+                    })
+                };
+                match op {
+                    S::DivideFault { .. } => u64::from(parts.is_none()),
+                    S::Divide { remainder, .. } => match parts {
+                        Some((q, r)) => {
+                            if remainder {
+                                r
+                            } else {
+                                q
+                            }
+                        }
+                        None => return Ok(None),
+                    },
+                    _ => return Err("invalid divide operator".into()),
+                }
+            }
+            S::UnsignedMultiplyHigh => ((u128::from(a) * u128::from(b)) >> width) as u64,
+            S::SignedMultiplyHigh => {
+                let sign = |v: u64| (i128::from(v) << (128 - width)) >> (128 - width);
+                ((sign(a) * sign(b)) >> width) as u64
+            }
             S::And => a & b,
             S::Or => a | b,
             S::Xor => a ^ b,
@@ -277,6 +353,21 @@ impl State {
                     1
                 } else {
                     0
+                }
+            }
+            S::SignedLess => {
+                let sign = |v: u64| (i128::from(v) << (128 - width)) >> (128 - width);
+                u64::from(sign(a) < sign(b))
+            }
+            S::RotateLeft | S::RotateRight => {
+                let count = (b % u64::from(width)) as u32;
+                let wide = u128::from(a);
+                if count == 0 {
+                    a
+                } else if matches!(op, S::RotateLeft) {
+                    ((wide << count) | (wide >> (u32::from(width) - count))) as u64
+                } else {
+                    ((wide >> count) | (wide << (u32::from(width) - count))) as u64
                 }
             }
             S::ShiftLeft => {

@@ -108,6 +108,17 @@ impl State {
                     .map(|input| read(*input, &values))
                     .collect();
                 let result = match &node.kind {
+                    NodeKind::Scalar {
+                        operator: ScalarOp::Select,
+                    } => node
+                        .inputs
+                        .first()
+                        .and_then(|v| read(*v, &values))
+                        .and_then(|condition| {
+                            node.inputs
+                                .get(if condition != 0 { 1 } else { 2 })
+                                .and_then(|v| read(*v, &values))
+                        }),
                     NodeKind::Scalar { operator } => args.and_then(|args| {
                         scalar(
                             *operator,
@@ -161,6 +172,18 @@ impl State {
                     }
                     NodeKind::Invoke | NodeKind::Barrier => {
                         return Err("unknown effects cannot be concretely executed".into())
+                    }
+                    NodeKind::Guard => {
+                        if node
+                            .inputs
+                            .first()
+                            .and_then(|v| read(*v, &values))
+                            .ok_or("unknown machine fault condition")?
+                            != 0
+                        {
+                            return Err("machine fault: divide error (#DE)".into());
+                        }
+                        None
                     }
                     NodeKind::UnknownEffect => {
                         if node.output.map_or(true, |id| {
@@ -246,6 +269,35 @@ fn scalar(
         Move | ZeroExtend | Truncate | AddressCast | BitsCast => a,
         Add => a.wrapping_add(b),
         Subtract => a.wrapping_sub(b),
+        Multiply => a.wrapping_mul(b),
+        Divide { signed, remainder } => {
+            let (quotient, rest) = division_oracle(input_width, args, signed)?;
+            if remainder {
+                rest
+            } else {
+                quotient
+            }
+        }
+        DivideFault { signed } => u64::from(division_oracle(input_width, args, signed).is_none()),
+        UnsignedMultiplyHigh | SignedMultiplyHigh => {
+            // Separate shift-and-add oracle: do not reuse raw IR arithmetic.
+            let mut product = 0u128;
+            for bit in 0..input_width {
+                if (b >> bit) & 1 != 0 {
+                    product = product.wrapping_add(u128::from(a) << bit);
+                }
+            }
+            let mut high = (product >> input_width) as u64;
+            if matches!(op, SignedMultiplyHigh) {
+                if a & (1u64 << (input_width - 1)) != 0 {
+                    high = high.wrapping_sub(b);
+                }
+                if b & (1u64 << (input_width - 1)) != 0 {
+                    high = high.wrapping_sub(a);
+                }
+            }
+            high
+        }
         And => a & b,
         Or => a | b,
         Xor => a ^ b,
@@ -265,7 +317,22 @@ fn scalar(
             }
         }
         Equal => u64::from(a == b),
+        RotateLeft | RotateRight => {
+            let mut result = a;
+            for _ in 0..b % u64::from(width) {
+                result = if matches!(op, RotateLeft) {
+                    ((result << 1) | (result >> (width - 1))) & bitmask(width)
+                } else {
+                    (result >> 1) | ((result & 1) << (width - 1))
+                };
+            }
+            result
+        }
         UnsignedLess => u64::from(a < b),
+        SignedLess => {
+            let signed = |v: u64| ((v << (64 - input_width)) as i64) >> (64 - input_width);
+            u64::from(signed(a) < signed(b))
+        }
         SignExtend => {
             let signed = if input_width >= 64 {
                 a as i64
@@ -293,6 +360,62 @@ fn scalar(
         Parity => u64::from((a & 255).count_ones() & 1 == 0),
     };
     Some(result & bitmask(width))
+}
+
+// Independent unsigned long division with signed magnitude conversion. It does
+// not call the IR evaluator or use its host-wide division implementation.
+fn division_oracle(width: u16, args: &[u64], signed: bool) -> Option<(u64, u64)> {
+    let word_mask = bitmask(width);
+    let pair_mask = if width == 64 {
+        u128::MAX
+    } else {
+        (1u128 << (2 * width)) - 1
+    };
+    let raw = (u128::from(*args.first()?) << width) | u128::from(*args.get(1)?);
+    let divisor = *args.get(2)?;
+    if divisor == 0 {
+        return None;
+    }
+    let negative_dividend = signed && (args[0] >> (width - 1)) != 0;
+    let negative_divisor = signed && (divisor >> (width - 1)) != 0;
+    let magnitude = if negative_dividend {
+        raw.wrapping_neg() & pair_mask
+    } else {
+        raw
+    };
+    let denominator = u128::from(if negative_divisor {
+        divisor.wrapping_neg() & word_mask
+    } else {
+        divisor
+    });
+    let (mut quotient, mut rest) = (0u128, 0u128);
+    for bit in (0..2 * width).rev() {
+        rest = (rest << 1) | ((magnitude >> bit) & 1);
+        if rest >= denominator {
+            rest -= denominator;
+            quotient |= 1u128 << bit;
+        }
+    }
+    let negative = negative_dividend != negative_divisor;
+    let bound = if signed {
+        (1u128 << (width - 1)) - u128::from(!negative)
+    } else {
+        u128::from(word_mask)
+    };
+    if quotient > bound {
+        return None;
+    }
+    let quotient = if negative {
+        quotient.wrapping_neg()
+    } else {
+        quotient
+    };
+    let rest = if negative_dividend {
+        rest.wrapping_neg()
+    } else {
+        rest
+    };
+    Some((quotient as u64 & word_mask, rest as u64 & word_mask))
 }
 
 fn validate(function: &SemanticFunction) -> Result<(), String> {
