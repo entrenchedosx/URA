@@ -1,11 +1,46 @@
-# Current source audit status
+# Release status — 2026-10-21
 
-The release notes below describe the historical `1194403` archive published as
-`v0.8.0-dev`. Current branch source adds correctness repairs, native editing and
-schema v5 user type libraries. Those changes are **not in the published ZIP**.
-The full supplied v0.8 checklist is incomplete; [AUDIT-0.8.md](AUDIT-0.8.md)
-records the remaining work. No existing tag/artifact is replaced and no new
-accepted prerelease is claimed by the audit checkpoint.
+**The Windows ZIP attached to `v0.8.0-dev` is the original `1194403` build.
+The newer development work described here is not included in that download
+or in this release tag's automatic source archives.**
+
+Latest verified engine source:
+[`a42633b4e5602a171d547227e696041d6c0f4941`](https://github.com/entrenchedosx/URA/commit/a42633b4e5602a171d547227e696041d6c0f4941)
+on [`v0.8-decompiler-foundations`](https://github.com/entrenchedosx/URA/tree/v0.8-decompiler-foundations).
+
+| Verification / capability | Published ZIP | Latest verified engine source |
+|---|---|---|
+| Engine commit | `1194403` | `a42633b` |
+| Passing workspace tests | 122 | 237 |
+| MCP tools | 29 | 30 |
+| Project schema | v4 | v5, preserving existing edits and migrations |
+
+The latest source adds indexed executable semantic HIR with exact SSA provenance,
+independent bounded IR/HIR execution comparisons (including compiled PE/ELF O0/O2
+fixtures), SSA-specific type evidence, forward argument and return constraints,
+verified external import-call edges, and bounded semantic block queries. It also
+repairs native editor field sizing. Unsupported effects, conflicting types and
+partial analysis remain explicit; the C-like view is still experimental.
+
+Formatting, strict all-target workspace Clippy, all 237 tests and the Windows
+Release build pass. Actual CLI/MCP queries, clean package extraction, checksums,
+dependency notices and extracted desktop startup passed. Live native signature,
+stack/type and structure edits, HIR-to-assembly navigation, and save/reopen
+persistence were verified.
+
+**A corrected public `v0.8.0-dev.1` prerelease has not been published.** Current
+OS-level DPI acceptance remains unverified because Windows Settings did not
+expose a controllable window. Intermittent idle CPU remains unexplained. The
+existing release's tag and downloadable assets retain their original identity;
+`main` remains unchanged.
+
+See the [engineering and live verification report](https://github.com/entrenchedosx/URA/blob/a42633b4e5602a171d547227e696041d6c0f4941/docs/ENGINE-COMPLETION-0.8.md),
+[measured performance and test results](https://github.com/entrenchedosx/URA/blob/a42633b4e5602a171d547227e696041d6c0f4941/docs/benchmarks/0.8-completion.json),
+and [local package verification](https://github.com/entrenchedosx/URA/blob/a42633b4e5602a171d547227e696041d6c0f4941/docs/benchmarks/0.8-completion-package.json).
+
+---
+
+The notes below describe the original published ZIP, not the newer source.
 
 # URA v0.8.0-dev prerelease
 
