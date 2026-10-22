@@ -1,0 +1,45 @@
+{
+  "liveInteraction": false,
+  "measurements": [
+    {
+      "frameBuildAndTessellationMs": [
+        4.1166,
+        0.2845,
+        0.2505
+      ],
+      "scale": 1.0,
+      "theme": "Classic"
+    },
+    {
+      "frameBuildAndTessellationMs": [
+        2.0074,
+        0.2142,
+        0.1771
+      ],
+      "scale": 1.5,
+      "theme": "Classic"
+    },
+    {
+      "frameBuildAndTessellationMs": [
+        3.0975,
+        0.34900000000000003,
+        0.2202
+      ],
+      "scale": 1.0,
+      "theme": "Dark"
+    },
+    {
+      "frameBuildAndTessellationMs": [
+        3.1108,
+        0.3395,
+        0.1457
+      ],
+      "scale": 1.5,
+      "theme": "Dark"
+    }
+  ],
+  "transactions": 4096,
+  "version": "0.10.0-dev",
+  "profile": "Release",
+  "note": "Headless egui frame construction/tessellation with simulated 1.0/1.5 scale; does not establish native event, GPU, present or input latency."
+}

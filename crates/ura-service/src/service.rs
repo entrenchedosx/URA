@@ -35,11 +35,12 @@ pub struct Service {
 pub(crate) type StackOverrides = BTreeMap<u64, BTreeMap<String, (Option<String>, Option<TypeRef>)>>;
 
 pub(crate) struct Session {
+    pub(crate) patches: Option<ura_core::patch::PatchDocument>,
     pub(crate) binary: LoadedBinary,
     pub(crate) info: BinaryView,
-    sections: Vec<SectionView>,
-    imports: Vec<ImportView>,
-    exports: Vec<ExportView>,
+    pub(crate) sections: Vec<SectionView>,
+    pub(crate) imports: Vec<ImportView>,
+    pub(crate) exports: Vec<ExportView>,
     pub(crate) project: Option<PathBuf>,
     pub(crate) names: BTreeMap<u64, String>,
     manual: Vec<u64>,
@@ -69,6 +70,23 @@ impl Service {
         path: &Path,
         project: Option<&Path>,
     ) -> ServiceResult<OpenBinaryResponse> {
+        self.open_with_options(path, project, None)
+    }
+    pub fn open_raw_binary(
+        &mut self,
+        path: &Path,
+        project: Option<&Path>,
+        base: Option<u64>,
+        bitness: u32,
+    ) -> ServiceResult<OpenBinaryResponse> {
+        self.open_with_options(path, project, Some((base, bitness)))
+    }
+    fn open_with_options(
+        &mut self,
+        path: &Path,
+        project: Option<&Path>,
+        raw: Option<(Option<u64>, u32)>,
+    ) -> ServiceResult<OpenBinaryResponse> {
         if self.sessions.len() >= 8 {
             return Err(ServiceError::LimitExceeded(
                 "at most eight binary handles may be open; close a handle first".into(),
@@ -76,7 +94,41 @@ impl Service {
         }
         let resolved = self.policy.allow_read(path)?;
         let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
-        let binary = analyze_path(&resolved)?;
+        let raw = if raw.is_some() {
+            raw
+        } else if let Some(project) = project {
+            let snapshot = ura_project::read_project(&self.policy.allow_write(project)?)?;
+            if snapshot.project.format == "raw" {
+                let state = snapshot.patch_state.ok_or_else(|| {
+                    ServiceError::InvalidArgument(
+                        "raw project is missing explicit mode/base metadata".into(),
+                    )
+                })?;
+                Some((
+                    state.raw_base,
+                    state
+                        .raw_bitness
+                        .ok_or_else(|| ServiceError::InvalidArgument("raw mode missing".into()))?,
+                ))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let mut binary = if let Some((base, bits)) = raw {
+            ura_core::binary::analyze_raw_path(&resolved, base, bits)?
+        } else {
+            analyze_path(&resolved)?
+        };
+        let mut patches = if let Some((base, bits)) = raw {
+            Some(
+                ura_core::patch::PatchDocument::raw_shared(binary.shared_bytes(), base, bits)
+                    .map_err(|e| ServiceError::InvalidArgument(e.to_string()))?,
+            )
+        } else {
+            ura_core::patch::PatchDocument::from_shared(binary.shared_bytes()).ok()
+        };
         let mut open = binary.open_result();
         let mut names = BTreeMap::new();
         let mut manual = Vec::new();
@@ -96,10 +148,28 @@ impl Service {
             {
                 return Err(ServiceError::ProjectBinaryMismatch);
             }
+            if snapshot.project.format != open.info.format
+                || snapshot.project.architecture != open.info.architecture
+            {
+                return Err(ServiceError::InvalidArgument(
+                    "project format/architecture interpretation differs from this handle".into(),
+                ));
+            }
             names = names_from_snapshot(&snapshot);
             manual = manual_from_snapshot(&snapshot);
             signature_overrides = signature_overrides_from_snapshot(&snapshot);
             stack_overrides = stack_overrides_from_snapshot(&snapshot);
+            if let Some(state) = &snapshot.patch_state {
+                let document = patches.as_mut().ok_or_else(|| {
+                    ServiceError::InvalidArgument(
+                        "patches are unsupported for this binary mapping".into(),
+                    )
+                })?;
+                document
+                    .restore(state)
+                    .map_err(|e| ServiceError::InvalidArgument(e.to_string()))?;
+                binary = document.effective_binary(&resolved)?;
+            }
             if let Some(library) = snapshot.type_library {
                 if library.address_bits != type_library.address_bits {
                     return Err(ServiceError::InvalidArgument(
@@ -112,6 +182,13 @@ impl Service {
         }
 
         let handle = format!("bin{}", self.next_handle);
+        if patches.as_ref().is_some_and(|p| p.changed_bytes() > 0) {
+            let effective = binary.open_result();
+            open.sections = effective.sections;
+            open.imports = effective.imports;
+            open.exports = effective.exports;
+            open.info.warnings.push("Analysis uses a patched overlay; the reported identity SHA-256 belongs to the immutable original file.".into());
+        }
         self.next_handle += 1;
         open.info.path = display_path(&absolute);
 
@@ -128,6 +205,7 @@ impl Service {
         self.sessions.insert(
             handle,
             Session {
+                patches,
                 binary,
                 info: open.info,
                 sections: open.sections,
@@ -638,6 +716,7 @@ impl Service {
             session.info.clone()
         };
         let resolved = self.policy.allow_write(project_path)?;
+        let previous_patches = self.session(handle)?.patches.clone();
         let (project, names, manual, signatures, stack, created) = if resolved.exists() {
             let snapshot = ura_project::read_project(&resolved)?;
             if !snapshot
@@ -646,6 +725,13 @@ impl Service {
                 .eq_ignore_ascii_case(&info.sha256)
             {
                 return Err(ServiceError::ProjectBinaryMismatch);
+            }
+            if snapshot.project.format != info.format
+                || snapshot.project.architecture != info.architecture
+            {
+                return Err(ServiceError::InvalidArgument(
+                    "project format/architecture interpretation differs from this handle".into(),
+                ));
             }
             let names = names_from_snapshot(&snapshot);
             let manual = manual_from_snapshot(&snapshot);
@@ -671,11 +757,62 @@ impl Service {
             )
         };
 
+        let saved_snapshot = ura_project::read_project(&resolved)?;
+        let patches = if created {
+            if let Some(doc) = &previous_patches {
+                if doc.state().revision > 0 || doc.format() == "raw" {
+                    ura_project::save_patch_state(&resolved, doc.state(), 0)?;
+                }
+            }
+            previous_patches
+        } else if let Some(previous) = previous_patches {
+            let document = if previous.format() == "raw" {
+                ura_core::patch::PatchDocument::raw(
+                    previous.original().to_vec(),
+                    previous.state().raw_base,
+                    previous.bitness(),
+                )
+            } else {
+                ura_core::patch::PatchDocument::new(previous.original().to_vec())
+            };
+            let mut document =
+                document.map_err(|e| ServiceError::InvalidArgument(e.to_string()))?;
+            if let Some(state) = &saved_snapshot.patch_state {
+                document
+                    .restore(state)
+                    .map_err(|e| ServiceError::InvalidArgument(e.to_string()))?;
+            }
+            Some(document)
+        } else {
+            None
+        };
+        let effective = if let Some(doc) = &patches {
+            Some(doc.effective_binary(self.session(handle)?.binary.path())?)
+        } else {
+            None
+        };
+        let effective_changed = effective
+            .as_ref()
+            .is_some_and(|b| b.bytes() != self.session(handle).unwrap().binary.bytes());
         let session = self
             .sessions
             .get_mut(handle)
             .ok_or_else(|| ServiceError::UnknownHandle(handle.to_string()))?;
         session.project = Some(resolved.clone());
+        session.patches = patches;
+        if let Some(binary) = effective {
+            let open = binary.open_result();
+            session.sections = open.sections;
+            session.imports = open.imports;
+            session.exports = open.exports;
+            session.binary = binary;
+        }
+        if effective_changed {
+            session.analysis = None;
+            session.analysis_options = None;
+            session.ir_cache.clear();
+            session.ir_cache_order.clear();
+        }
         session.names = names;
         session.manual = manual;
         session.signature_overrides = signatures;

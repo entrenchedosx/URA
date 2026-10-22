@@ -310,6 +310,10 @@ impl LoadedBinary {
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
     }
+    /// Share immutable bytes with a sparse patch overlay without another file copy.
+    pub fn shared_bytes(&self) -> Arc<Vec<u8>> {
+        self.bytes.clone()
+    }
 
     pub fn analysis(&self) -> &Analysis {
         &self.analysis
@@ -392,6 +396,67 @@ pub fn analyze_path(path: &Path) -> Result<LoadedBinary> {
     analyze_bytes(path, bytes)
 }
 
+/// Explicit raw loading. No virtual mapping is invented without a base.
+pub fn analyze_raw_path(path: &Path, base: Option<u64>, bitness: u32) -> Result<LoadedBinary> {
+    use std::io::Read;
+    let file = std::fs::File::open(path)?;
+    let size = file.metadata()?.len();
+    if size > MAX_FILE_SIZE {
+        return Err(UraError::FileTooLarge {
+            size,
+            limit: MAX_FILE_SIZE,
+        });
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_FILE_SIZE + 1).read_to_end(&mut bytes)?;
+    analyze_raw_bytes(path, bytes, base, bitness)
+}
+pub fn analyze_raw_bytes(
+    path: &Path,
+    bytes: Vec<u8>,
+    base: Option<u64>,
+    bitness: u32,
+) -> Result<LoadedBinary> {
+    if bytes.is_empty() || bytes.len() as u64 > MAX_FILE_SIZE {
+        return Err(UraError::InvalidRange);
+    }
+    if !matches!(bitness, 32 | 64)
+        || base.is_some_and(|b| {
+            b.checked_add(bytes.len() as u64)
+                .map_or(true, |end| bitness == 32 && end > 1u64 << 32)
+        })
+    {
+        return Err(UraError::InvalidAddress(
+            "invalid raw mode/base range".into(),
+        ));
+    }
+    let sections = base
+        .map(|address| {
+            vec![Section {
+                name: "raw".into(),
+                address,
+                size: bytes.len() as u64,
+                file_offset: Some(0),
+                file_size: bytes.len() as u64,
+                executable: true,
+                readable: true,
+                writable: true,
+                kind: "raw".into(),
+            }]
+        })
+        .unwrap_or_default();
+    let analysis=Analysis {format:"raw".into(),architecture:if bitness==32 {CpuArchitecture::X86} else {CpuArchitecture::X86_64},bitness:bitness as u8,endianness:Endianness::Little,image_base:base.unwrap_or(0),entry_point:base,object_kind:"explicit raw image".into(),has_symbols:false,has_debug_symbols:false,sections,symbols:vec![],imports:vec![],exports:vec![],warnings:vec!["Raw image: processor mode/base are user-supplied; no loader metadata or execution is verified.".into()]};
+    Ok(LoadedBinary {
+        path: path.to_path_buf(),
+        file_name: path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned(),
+        bytes: Arc::new(bytes),
+        analysis,
+    })
+}
 pub fn analyze_bytes(path: &Path, bytes: Vec<u8>) -> Result<LoadedBinary> {
     if bytes.len() as u64 > MAX_FILE_SIZE {
         return Err(UraError::FileTooLarge {

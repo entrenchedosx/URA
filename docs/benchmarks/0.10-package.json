@@ -1,0 +1,52 @@
+{
+  "version": "0.10.0-dev",
+  "archive": "URA-0.10.0-dev-windows-x64.zip",
+  "sha256": "befb80046869fc1f28ae09a9ea519ba686411208986f8b8931d398ae214b614f",
+  "bytes": 16989176,
+  "zipCrcPassed": true,
+  "checkedFiles": 588,
+  "allFilesListed": true,
+  "binarySha256": {
+    "ura-native.exe": "3a4a2658adafd8d6f0457ad3604427b3a8a292e3badfc09383665d5d946fa3d0",
+    "ura-cli.exe": "1ed6ed37cb10f2c32767f5b135f4b22b6af7cd3dac229f361fe8f32a18acac56",
+    "ura-mcp.exe": "44e93318a4d5ba5358edd39f944e51d518693be8eb91e24ba51f0ef695332b53"
+  },
+  "binaryIdentityMatchesTestedRelease": true,
+  "iconMatches": true,
+  "missingLicenseTexts": 0,
+  "cliVersionAndJsonPassed": true,
+  "mcpVersionAndStdioPassed": true,
+  "mcpTools": 39,
+  "typeLibraryRoundTrip": true,
+  "cDecompileRoundTrip": true,
+  "cExportRoundTrip": true,
+  "nativeStartup": "Not exercised. The image matches the compiled Release executable; no live v0.10 native acceptance is claimed.",
+  "date": "2026-10-22",
+  "sourceBranch": "v0.10-binary-patching",
+  "publicReleaseAccepted": false,
+  "checksumSidecarPassed": true,
+  "thirdPartyNoticeDirectories": 271,
+  "extractedPatchWorkflow": {
+    "version": "0.10.0-dev",
+    "mcpTools": 39,
+    "cliPatchWorkflow": true,
+    "mcpPatchWorkflow": true,
+    "readOnlyDenied": true,
+    "originalUnchanged": true,
+    "exactUntouchedBytes": true,
+    "reimportedExports": true,
+    "stalePreviewRejected": true,
+    "undoRedo": true,
+    "manifestExport": true,
+    "cliMcpByteEquality": true,
+    "elf32Workflow": true,
+    "rawProjectRoundTrip": true,
+    "nativeLaunched": false,
+    "executableSha256": {
+      "ura-native.exe": "3a4a2658adafd8d6f0457ad3604427b3a8a292e3badfc09383665d5d946fa3d0",
+      "ura-cli.exe": "1ed6ed37cb10f2c32767f5b135f4b22b6af7cd3dac229f361fe8f32a18acac56",
+      "ura-mcp.exe": "44e93318a4d5ba5358edd39f944e51d518693be8eb91e24ba51f0ef695332b53"
+    }
+  },
+  "documentationSnapshot": "The archive contains the documentation snapshot before this external package audit; its EXEs match the tested Release images. The post-audit source report is published separately."
+}

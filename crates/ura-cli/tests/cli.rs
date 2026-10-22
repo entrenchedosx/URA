@@ -18,6 +18,108 @@ fn fixture(name: &str) -> PathBuf {
 }
 
 #[test]
+fn executable_patch_workflow_preserves_original_and_exports_effective_bytes() {
+    let directory = tempfile::tempdir().unwrap();
+    let sample = directory.path().join("sample.exe");
+    std::fs::copy(fixture("ura64.exe"), &sample).unwrap();
+    let original = std::fs::read(&sample).unwrap();
+    let project = directory.path().join("project.ura");
+    let output = directory.path().join("patched.exe");
+    let invoke = |args: &[&str], writes: bool| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_ura-cli"));
+        command.arg("--allow").arg(directory.path());
+        if writes {
+            command.arg("--enable-writes");
+        }
+        command.args(args).output().unwrap()
+    };
+    let init = invoke(
+        &[
+            "patch",
+            text(&sample),
+            "init",
+            "--destination",
+            text(&project),
+        ],
+        true,
+    );
+    assert!(init.status.success(), "{}", stderr(&init));
+    let instruction = [
+        "patch",
+        text(&sample),
+        "--project",
+        text(&project),
+        "--json",
+        "instruction",
+        "--space",
+        "va",
+        "--address",
+        "140001020",
+        "--budget",
+        "1",
+        "--assembly",
+        "ret",
+        "--apply",
+    ];
+    let denied = invoke(&instruction, false);
+    assert!(!denied.status.success());
+    assert_eq!(json(&denied)["error"]["code"], "write_disabled");
+    let applied = invoke(&instruction, true);
+    assert!(applied.status.success(), "{}", stderr(&applied));
+    assert_eq!(json(&applied)["changedBytes"], 1);
+    let read = invoke(
+        &[
+            "patch",
+            text(&sample),
+            "--project",
+            text(&project),
+            "read",
+            "--space",
+            "offset",
+            "--address",
+            "220",
+            "--length",
+            "1",
+        ],
+        false,
+    );
+    assert!(read.status.success(), "{}", stderr(&read));
+    assert_eq!(json(&read)["current"], serde_json::json!([195]));
+    let export = invoke(
+        &[
+            "patch",
+            text(&sample),
+            "--project",
+            text(&project),
+            "export",
+            "--destination",
+            text(&output),
+        ],
+        true,
+    );
+    assert!(export.status.success(), "{}", stderr(&export));
+    assert_eq!(std::fs::read(&sample).unwrap(), original);
+    let bytes = std::fs::read(output).unwrap();
+    assert_eq!(bytes.len(), original.len());
+    assert_eq!(bytes[0x220], 0xc3);
+    assert_eq!(&bytes[0x221..], &original[0x221..]);
+    let undo = invoke(
+        &[
+            "patch",
+            text(&sample),
+            "--project",
+            text(&project),
+            "history",
+            "--action",
+            "undo",
+        ],
+        true,
+    );
+    assert!(undo.status.success(), "{}", stderr(&undo));
+    assert_eq!(json(&undo)["changedBytes"], 0);
+}
+
+#[test]
 fn decompile_json_matches_service_and_plain_output_is_c_like() {
     let sample = fixture("ura64.exe");
     let output = run([

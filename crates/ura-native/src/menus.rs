@@ -54,7 +54,11 @@ impl Workspace {
                         "Open project…     Ctrl+Shift+O",
                         Action::OpenDialog(true),
                     ),
-                    (loaded, "Create project…     Ctrl+N", Action::NewProject),
+                    (
+                        loaded && !self.opening,
+                        "Create project…     Ctrl+N",
+                        Action::NewProject,
+                    ),
                     (project, "Save workspace     Ctrl+S", Action::Save),
                     (project, "Export annotations…", Action::Export),
                     (function, "Export pseudocode…", Action::ExportPseudocode),
@@ -82,6 +86,13 @@ impl Workspace {
                 }
             });
             root_menu(ui, "Edit", egui::Key::E, |ui| {
+                command(
+                    ui,
+                    loaded,
+                    "Patch Manager",
+                    Action::Show(Panel::Patches),
+                    &mut self.actions,
+                );
                 command(
                     ui,
                     function && project,
@@ -208,7 +219,10 @@ impl Workspace {
                 );
                 command(
                     ui,
-                    self.analyzing || self.ir_loading.is_some() || self.decomp_loading.is_some(),
+                    self.opening
+                        || self.analyzing
+                        || self.ir_loading.is_some()
+                        || self.decomp_loading.is_some(),
                     "Cancel analysis",
                     Action::Cancel,
                     &mut self.actions,
@@ -304,7 +318,10 @@ impl Workspace {
                     self.actions.push(action);
                 }
             }
-            if (self.analyzing || self.ir_loading.is_some() || self.decomp_loading.is_some())
+            if (self.opening
+                || self.analyzing
+                || self.ir_loading.is_some()
+                || self.decomp_loading.is_some())
                 && ui.small_button("Cancel").clicked()
             {
                 self.actions.push(Action::Cancel);

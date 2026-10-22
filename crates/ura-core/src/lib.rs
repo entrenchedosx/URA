@@ -7,6 +7,7 @@ pub mod error;
 pub mod hex;
 pub mod ir;
 mod jumptable;
+pub mod patch;
 pub mod strings;
 
 pub use address::{format_address, format_offset, parse_address};

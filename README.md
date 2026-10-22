@@ -4,16 +4,20 @@
 
 Ultimate Reverse Engineer
 
-The [v0.9 finalisation continuation](docs/FINALISATION-0.9.md) adds proven-constant
-pseudocode simplification, direct CMP conditions, scalar multiply/divide with
-fault guards, rotates and all CMOV/SETcc conditions. The shared engine has 260
-passing tests. Current release acceptance and measured limits are recorded there.
+Current development is **0.10.0-dev** on `v0.10-binary-patching`: a shared
+transactional binary-patching engine, explicit instruction previews, history,
+project persistence and new-file export across the native Desktop, CLI and MCP.
+See [patching design](docs/BINARY-PATCHING.md) for exact scope and limitations,
+and [v0.10 verification](docs/VERIFICATION-0.10.md) for test evidence and release gates.
+This development source is not an accepted public binary release.
 
-Public prerelease: [`v0.8.0-dev`](https://github.com/entrenchedosx/URA/releases/tag/v0.8.0-dev)
-from commit `1194403`. Current development is `0.9.0-dev` on `v0.9-c-decompiler`; that source is ahead of the public ZIP. See [v0.9 verification](docs/VERIFICATION-0.9.md) and the permanent [feature-parity ledger](docs/FEATURE-PARITY.md). The complete v0.8 checklist remains unfinished; see the [checklist audit](docs/AUDIT-0.8.md).
-High-level output is experimental and variable idle CPU remains an unexplained
-known limitation; see [v0.8 verification](docs/VERIFICATION-0.8.md) and
-[decompiler design](docs/DECOMPILER.md).
+The verified 263-test v0.9 checkpoint is preserved at `61ee8a4` on
+`v0.9-c-decompiler`; its remaining live checks are recorded in
+[the continuation report](docs/FINALISATION-0.9.md). Existing public releases are
+preserved, including [v0.8.0-dev](https://github.com/entrenchedosx/URA/releases/tag/v0.8.0-dev).
+Full IDA Pro/Hex-Rays/Ghidra parity remains a long-term requirement; the
+[roadmap](docs/ROADMAP.md) and [ledger](docs/FEATURE-PARITY.md) distinguish real
+implementation from missing capabilities.
 
 The latest [v0.8 finalisation checkpoint](docs/FINALISATION-0.8.md) adds a
 self-contained typed tree, conservative postdominator joins, bounded parameter
@@ -32,7 +36,8 @@ so the corrected public prerelease remains withheld.
 
 URA is a native Rust static-analysis workbench for executable files. The desktop,
 CLI and MCP server use the same analysis engine. Samples are read locally and
-are never executed by URA. This is an early engineering release, with explicit
+are never executed by the static or patching workflows. Original files stay unchanged;
+modified images are exported only through explicit operations. This is an early engineering release, with explicit
 analysis limits; it is not a replacement for the full feature sets of IDA or Ghidra.
 
 ## Current capabilities
@@ -50,7 +55,8 @@ analysis limits; it is not a replacement for the full feature sets of IDA or Ghi
 - Narrow guarded absolute/relative jump-table patterns and tail/thunk candidates.
 - Evidence-based ABI/signature recovery, physical stack frames and conservative types.
 - Bounded interprocedural call graph and experimental C-like high-level rendering.
-- Native CLI with text/JSON output and a local stdio MCP server with 32 tools.
+- Transactional byte/instruction patches, project history, undo/redo and verified new-file export.
+- Native CLI with text/JSON output and a local stdio MCP server with 39 tools.
 
 CLI `decompile` and MCP `ura_decompile_function` reconstruct a separate C-like AST from semantic HIR: bounded expressions, edge-specific phi copies, proved nested regions/loops, ordered memory operations and explicit unknowns. The legacy `highlevel` view remains a diagnostic SSA representation. Reconstructed pseudocode uses explicit machine helpers and is not guaranteed to compile; see [decompiler scope](docs/C-DECOMPILER-0.9.md). There is no debugger, PDB/C++ loader or public
 plugin API. Indirect transfers remain open, including transfers with heuristic
@@ -90,13 +96,13 @@ The default application uses eframe, egui and OpenGL. It has no WebView dependen
 Compact native menus and docking provide Functions, Project structure,
 Disassembly, Graph, Hex View, Strings, Xrefs, Overview, Inspector, Output,
 Graph overview, Function signature, Stack frame, Types, Call graph and
-Pseudocode panels. Project structure includes sections, symbols, imports
+Pseudocode and Patch Manager panels. Project structure includes sections, symbols, imports
 and exports. Imports without mapped addresses are informational.
 
 The Function signature, Stack frame, Types, Call graph and Pseudocode
 panels follow the selected function. They show evidence, confidence, conflicts
 and hard-bound truncation, and addresses navigate back to disassembly.
-The desktop edits signatures, physical stack-slot names/types and user structures/unions/aliases. Open a project to save edits; double-click a stack name or right-click for references. Schema v5 preserves these overrides separately from inference. CLI and MCP expose matching guarded writes. Press F5 for Pseudocode. Line numbers, syntax colors, instruction links, variable-use menus, existing signature/stack/type editors and whole-function export share the cached analysis. Pseudocode is reconstructed and partial effects remain visible. Current 150% OS DPI acceptance is still unverified.
+The desktop edits signatures, physical stack-slot names/types and user structures/unions/aliases. Open a project to save edits; double-click a stack name or right-click for references. Schema v6 preserves these overrides separately from inference and stores patch history. CLI and MCP expose matching guarded writes. Press F5 for Pseudocode. Line numbers, syntax colors, instruction links, variable-use menus, existing signature/stack/type editors and whole-function export share the cached analysis. Pseudocode is reconstructed and partial effects remain visible. Current 150% OS DPI acceptance is still unverified.
 
 Open the optional **IR** panel from Windows or search `IR` in Ctrl+K. It follows
 the selected function, offers Raw IR / SSA IR, and links operation addresses back
@@ -129,7 +135,7 @@ python scripts/generate_icons.py
 ```
 
 Create the portable Windows archive after the Release build with
-`./scripts/package-windows.ps1 -Version 0.8.0-dev`. It checks all three executable
+`./scripts/package-windows.ps1 -Version 0.10.0-dev`. It checks all three executable
 version/product resources, writes per-file checksums, collects dependency license
 texts (including bundled font notices) and emits a SHA-256 sidecar for the ZIP.
 Publishing the archive is a separate release step.

@@ -55,6 +55,134 @@ impl UraServer {
 #[tool_router]
 impl UraServer {
     #[tool(
+        name = "ura_list_patches",
+        annotations(title = "List patch history", read_only_hint = true),
+        description = "Read bounded patch transactions and cursor for this binary. The original SHA-256 is immutable. No inspected code is executed."
+    )]
+    fn ura_list_patches(
+        &self,
+        Parameters(p): Parameters<BinaryHandleParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        respond(self.service().list_patches(&p.handle))
+    }
+    #[tool(
+        name = "ura_read_effective_bytes",
+        annotations(title = "Read effective patch bytes", read_only_hint = true),
+        description = "Read original and effective bytes (1..=1MiB). Explicit space is offset, va or rva; address is hexadecimal. Unbacked/ambiguous virtual ranges are rejected."
+    )]
+    fn ura_read_effective_bytes(
+        &self,
+        Parameters(p): Parameters<crate::params::PatchReadParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        respond(
+            ura_service::patch_address(&p.space, &p.address)
+                .and_then(|a| self.service().read_effective_bytes(&p.handle, a, p.length)),
+        )
+    }
+    #[tool(
+        name = "ura_preview_byte_patch",
+        annotations(title = "Preview byte patch", read_only_hint = true),
+        description = "Validate a fixed-size change without writing. Expected and replacement contain hexadecimal byte pairs. The preview binds original SHA-256, effective bytes and revision; apply must present it unchanged."
+    )]
+    fn ura_preview_byte_patch(
+        &self,
+        Parameters(p): Parameters<crate::params::PatchByteParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        respond((|| {
+            let a = ura_service::patch_address(&p.space, &p.address)?;
+            let parse = |s: &str| {
+                ura_core::patch::parse_hex(s)
+                    .map_err(|e| ServiceError::InvalidArgument(e.to_string()))
+            };
+            self.service().preview_byte_patch(
+                &p.handle,
+                a,
+                &parse(&p.expected)?,
+                &parse(&p.replacement)?,
+                p.comment.as_deref().unwrap_or(""),
+            )
+        })())
+    }
+    #[tool(
+        name = "ura_preview_instruction_patch",
+        annotations(title = "Preview instruction patch", read_only_hint = true),
+        description = "Preview bounded supported Intel register/immediate instructions and direct branches using iced-x86 encoding plus operand decode checks. Requires current ura_analyze and an instruction start. Budget is explicit (<=256); NOP padding is opt-in. No memory operands, labels, directives or relocation."
+    )]
+    fn ura_preview_instruction_patch(
+        &self,
+        Parameters(p): Parameters<crate::params::PatchInstructionParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        respond(
+            ura_service::patch_address(&p.space, &p.address).and_then(|a| {
+                self.service().preview_instruction_patch(
+                    &p.handle,
+                    a,
+                    p.budget,
+                    &p.assembly,
+                    p.nop_padding.unwrap_or(false),
+                    p.comment.as_deref().unwrap_or(""),
+                )
+            }),
+        )
+    }
+    #[tool(
+        name = "ura_apply_patch",
+        annotations(title = "Apply reviewed patch", read_only_hint = false),
+        description = "Apply an exact preview atomically to the attached project. Requires --enable-writes. Expected bytes, binary hash, revision, project identity, paths and budgets are revalidated. Invalidates every derived analysis cache; analyse again afterwards. Original file is unchanged."
+    )]
+    fn ura_apply_patch(
+        &self,
+        Parameters(p): Parameters<crate::params::PatchApplyParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        respond((|| {
+            if p.preview.to_string().len() > 9 * 1024 * 1024 {
+                return Err(ServiceError::LimitExceeded(
+                    "preview JSON exceeds budget".into(),
+                ));
+            }
+            let preview =
+                serde_json::from_value(p.preview.get("patch").unwrap_or(&p.preview).clone())
+                    .map_err(|e| ServiceError::InvalidArgument(format!("invalid preview: {e}")))?;
+            self.service()
+                .apply_patch(&p.handle, Path::new(&p.project), &preview)
+        })())
+    }
+    #[tool(
+        name = "ura_patch_history",
+        annotations(title = "Undo redo or revert patches", read_only_hint = false),
+        description = "Explicit history actions: undo, redo, revert (requires id), revertAll. Requires --enable-writes and the attached project. Overlapping later patches block individual revert; undo them first. Invalidates current analysis."
+    )]
+    fn ura_patch_history(
+        &self,
+        Parameters(p): Parameters<crate::params::PatchHistoryParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        respond(
+            self.service()
+                .patch_history(&p.handle, Path::new(&p.project), &p.action, p.id),
+        )
+    }
+    #[tool(
+        name = "ura_export_patched_binary",
+        annotations(title = "Export patched file or manifest", read_only_hint = false),
+        description = "Requires --enable-writes. Export to a new allowed path only; original/existing files are never overwritten. Binary bytes are verified, reparsed and hashed before atomic publication. manifest=true exports patch history JSON instead. Code signatures may be invalid; nothing is launched."
+    )]
+    fn ura_export_patched_binary(
+        &self,
+        Parameters(p): Parameters<crate::params::PatchExportParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        if p.manifest.unwrap_or(false) {
+            respond(
+                self.service()
+                    .export_patch_manifest(&p.handle, Path::new(&p.destination)),
+            )
+        } else {
+            respond(
+                self.service()
+                    .export_patched_binary(&p.handle, Path::new(&p.destination)),
+            )
+        }
+    }
+    #[tool(
         name = "ura_decompile_function",
         annotations(title = "Decompile function", read_only_hint = true),
         description = "Reconstruct bounded deterministic C-like pseudocode from semantic HIR. Returns paged lines with instruction addresses and variable IDs, explicit unresolved diagnostics, and optional independent C-like AST (2 MiB). This is reconstructed pseudocode, not original source. Requires ura_analyze."
@@ -335,6 +463,29 @@ impl UraServer {
         &self,
         Parameters(params): Parameters<OpenBinaryParams>,
     ) -> Result<CallToolResult, ErrorData> {
+        if params.raw.unwrap_or(false) {
+            return respond(
+                params
+                    .base
+                    .as_deref()
+                    .map(ura_core::parse_address)
+                    .transpose()
+                    .map_err(ServiceError::from)
+                    .and_then(|base| {
+                        self.service().open_raw_binary(
+                            Path::new(&params.binary),
+                            params.project.as_deref().map(Path::new),
+                            base,
+                            params.bitness.unwrap_or(64),
+                        )
+                    }),
+            );
+        }
+        if params.base.is_some() || params.bitness.is_some() {
+            return respond::<serde_json::Value>(Err(ServiceError::InvalidArgument(
+                "base/bitness require explicit raw=true".into(),
+            )));
+        }
         respond(self.service().open_binary(
             Path::new(&params.binary),
             params.project.as_deref().map(Path::new),

@@ -6,7 +6,7 @@ use ura_core::decomp::signature::SignatureOverride;
 use ura_core::decomp::types::{TypeDatabase, TypeRef};
 use ura_core::{format_address, parse_address, sha256_hex};
 
-pub const SCHEMA_VERSION: i64 = 5;
+pub const SCHEMA_VERSION: i64 = 6;
 pub const MAX_VIEW_STATE_BYTES: usize = 512 * 1024;
 
 #[derive(Debug, Error)]
@@ -126,6 +126,7 @@ pub struct ProjectSnapshot {
     pub function_signatures: Vec<FunctionSignatureEntry>,
     pub stack_variables: Vec<StackVariableOverride>,
     pub type_library: Option<TypeDatabase>,
+    pub patch_state: Option<ura_core::patch::PatchState>,
     pub view_state: Option<String>,
     pub binary_status: String,
 }
@@ -233,6 +234,7 @@ pub fn open_project(project_path: &Path) -> ProjectResult<ProjectSnapshot> {
         function_signatures,
         stack_variables,
         type_library: load_type_library(&connection)?,
+        patch_state: load_patch_state(&connection)?,
         view_state,
         binary_status,
     })
@@ -288,6 +290,11 @@ pub fn read_project(project_path: &Path) -> ProjectResult<ProjectSnapshot> {
         },
         type_library: if version >= 5 {
             load_type_library(&connection)?
+        } else {
+            None
+        },
+        patch_state: if version >= 6 {
+            load_patch_state(&connection)?
         } else {
             None
         },
@@ -612,6 +619,76 @@ pub fn load_type_library_for_path(project_path: &Path) -> ProjectResult<Option<T
     load_type_library(&open_existing(project_path)?)
 }
 
+/// Commit a patch revision with an optimistic concurrency precondition. The
+/// original identity stays attached to the project, never to exported bytes.
+pub fn save_patch_state(
+    project_path: &Path,
+    state: &ura_core::patch::PatchState,
+    expected_revision: u64,
+) -> ProjectResult<()> {
+    let mut connection = Connection::open(project_path)?;
+    connection.busy_timeout(std::time::Duration::from_secs(5))?;
+    migrate_schema(&connection)?;
+    let transaction =
+        connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let project = load_project(&transaction)?;
+    if project.binary_hash != state.original_sha256 || project.file_size != state.file_size {
+        return Err(ProjectError::InvalidProject(
+            "patch original identity differs from project".into(),
+        ));
+    }
+    if (project.format == "raw") != state.raw_bitness.is_some()
+        || (project.format != "raw" && state.raw_base.is_some())
+    {
+        return Err(ProjectError::InvalidProject(
+            "patch mode/base metadata differs from project format".into(),
+        ));
+    }
+    let previous = load_patch_state(&transaction)?;
+    if previous.as_ref().map_or(0, |s| s.revision) != expected_revision
+        || state.revision < expected_revision
+    {
+        return Err(ProjectError::InvalidProject(
+            "patch project changed since this handle opened; reopen it before editing".into(),
+        ));
+    }
+    let json =
+        serde_json::to_string(state).map_err(|e| ProjectError::InvalidProject(e.to_string()))?;
+    if json.len() > MAX_PATCH_STATE_JSON_BYTES {
+        return Err(ProjectError::InvalidProject(
+            "patch state exceeds storage budget".into(),
+        ));
+    }
+    transaction.execute("INSERT INTO patch_state(id,state_json) VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET state_json=excluded.state_json",params![json])?;
+    transaction.commit()?;
+    Ok(())
+}
+const MAX_PATCH_STATE_JSON_BYTES: usize = ura_core::patch::MAX_HISTORY_BYTES * 4 + 2 * 1024 * 1024;
+fn load_patch_state(connection: &Connection) -> ProjectResult<Option<ura_core::patch::PatchState>> {
+    let length: Option<i64> = connection
+        .query_row(
+            "SELECT length(CAST(state_json AS BLOB)) FROM patch_state WHERE id=1",
+            [],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if length.is_some_and(|n| n < 0 || n as u64 > MAX_PATCH_STATE_JSON_BYTES as u64) {
+        return Err(ProjectError::InvalidProject(
+            "patch state exceeds storage budget".into(),
+        ));
+    }
+    let json: Option<String> = connection
+        .query_row("SELECT state_json FROM patch_state WHERE id=1", [], |r| {
+            r.get(0)
+        })
+        .optional()?;
+    json.map(|s| {
+        serde_json::from_str(&s)
+            .map_err(|e| ProjectError::InvalidProject(format!("invalid patch metadata: {e}")))
+    })
+    .transpose()
+}
+
 fn load_type_library(connection: &Connection) -> ProjectResult<Option<TypeDatabase>> {
     let json: Option<String> = connection
         .query_row(
@@ -838,6 +915,10 @@ fn migrate_schema(connection: &Connection) -> ProjectResult<()> {
         connection.execute_batch("BEGIN; CREATE TABLE IF NOT EXISTS type_library (id INTEGER PRIMARY KEY CHECK (id = 1), library_json TEXT NOT NULL); PRAGMA user_version = 5; COMMIT;")?;
     }
     let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    if version == 5 {
+        connection.execute_batch("BEGIN; CREATE TABLE IF NOT EXISTS patch_state (id INTEGER PRIMARY KEY CHECK (id = 1), state_json TEXT NOT NULL); PRAGMA user_version = 6; COMMIT;")?;
+    }
+    let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     if version != SCHEMA_VERSION {
         return Err(ProjectError::InvalidProject(format!(
             "expected schema version {}, found {}",
@@ -898,7 +979,8 @@ fn initialize_schema(connection: &Connection) -> ProjectResult<()> {
              PRIMARY KEY (function_address, slot_offset)
          );
          CREATE TABLE type_library (id INTEGER PRIMARY KEY CHECK (id = 1), library_json TEXT NOT NULL);
-         PRAGMA user_version = 5;
+         CREATE TABLE patch_state (id INTEGER PRIMARY KEY CHECK (id = 1), state_json TEXT NOT NULL);
+         PRAGMA user_version = 6;
          COMMIT;",
     )?;
     Ok(())

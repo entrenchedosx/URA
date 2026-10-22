@@ -3,7 +3,62 @@ use serde::Deserialize;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+pub struct PatchReadParams {
+    pub handle: String,
+    pub space: String,
+    pub address: String,
+    pub length: usize,
+}
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PatchByteParams {
+    pub handle: String,
+    pub space: String,
+    pub address: String,
+    pub expected: String,
+    pub replacement: String,
+    pub comment: Option<String>,
+}
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PatchInstructionParams {
+    pub handle: String,
+    pub space: String,
+    pub address: String,
+    pub budget: usize,
+    pub assembly: String,
+    pub nop_padding: Option<bool>,
+    pub comment: Option<String>,
+}
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PatchApplyParams {
+    pub handle: String,
+    pub project: String,
+    pub preview: serde_json::Value,
+}
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PatchHistoryParams {
+    pub handle: String,
+    pub project: String,
+    pub action: String,
+    pub id: Option<u64>,
+}
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PatchExportParams {
+    pub handle: String,
+    pub destination: String,
+    pub manifest: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct OpenBinaryParams {
+    pub raw: Option<bool>,
+    pub base: Option<String>,
+    pub bitness: Option<u32>,
     #[schemars(description = "Path to a PE, ELF or Mach-O file inside an allowed root")]
     pub binary: String,
     #[schemars(description = "Optional existing .ura project whose names and seeds are applied")]

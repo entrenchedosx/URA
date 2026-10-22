@@ -33,6 +33,46 @@ fn setup() -> (TempDir, PathBuf) {
 }
 
 #[test]
+fn v5_patch_migration_revision_history_and_corrupt_metadata_are_checked() {
+    use ura_core::patch::{Address, PatchDocument};
+    let (_dir, path) = setup();
+    let sample = fixture("ura64.exe");
+    create_project(&path, "patches", &identity(&sample)).unwrap();
+    save_annotation(&path, "140001020", None, "preserved").unwrap();
+    let c = rusqlite::Connection::open(&path).unwrap();
+    c.execute_batch("DROP TABLE patch_state; PRAGMA user_version=5;")
+        .unwrap();
+    drop(c);
+    let before = std::fs::read(&path).unwrap();
+    assert!(ura_project::read_project(&path)
+        .unwrap()
+        .patch_state
+        .is_none());
+    assert_eq!(before, std::fs::read(&path).unwrap());
+    assert_eq!(open_project(&path).unwrap().project.schema_version, 6);
+    let mut doc = PatchDocument::new(std::fs::read(sample).unwrap()).unwrap();
+    let p = doc
+        .preview(Address::FileOffset(0x220), &[0x55], &[0xc3], "return early")
+        .unwrap();
+    doc.apply(&p).unwrap();
+    ura_project::save_patch_state(&path, doc.state(), 0).unwrap();
+    let reopened = ura_project::read_project(&path).unwrap();
+    assert_eq!(reopened.annotations[0].note, "preserved");
+    assert_eq!(reopened.patch_state.as_ref().unwrap(), doc.state());
+    doc.undo().unwrap();
+    assert!(ura_project::save_patch_state(&path, doc.state(), 0).is_err());
+    ura_project::save_patch_state(&path, doc.state(), 1).unwrap();
+    let mut invalid = doc.state().clone();
+    invalid.original_sha256 = "0".repeat(64);
+    assert!(ura_project::save_patch_state(&path, &invalid, 2).is_err());
+    let c = rusqlite::Connection::open(&path).unwrap();
+    c.execute("UPDATE patch_state SET state_json=?1", ["{bad json}"])
+        .unwrap();
+    drop(c);
+    assert!(ura_project::read_project(&path).is_err());
+}
+
+#[test]
 fn migrates_v4_and_persists_validated_type_libraries_without_losing_user_data() {
     use ura_core::decomp::{StructField, Structure, TypeDatabase, TypeRef};
     let (_dir, path) = setup();
@@ -49,7 +89,7 @@ fn migrates_v4_and_persists_validated_type_libraries_without_losing_user_data() 
         .is_none());
     assert_eq!(before, std::fs::read(&path).unwrap());
     let migrated = open_project(&path).unwrap();
-    assert_eq!(migrated.project.schema_version, 5);
+    assert_eq!(migrated.project.schema_version, 6);
     assert_eq!(migrated.annotations[0].note, "keep me");
     let mut db = TypeDatabase::new(64);
     db.structures.insert(

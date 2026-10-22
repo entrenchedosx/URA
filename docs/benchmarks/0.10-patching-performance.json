@@ -1,0 +1,56 @@
+{
+  "fixturePatchProjectSaveMs": 2.3158,
+  "fixtureProjectReadMs": 0.8176,
+  "fixtureReparseCfgAndPseudocodeMs": 0.28919999999999996,
+  "guiInteractionMeasured": false,
+  "observations": [
+    {
+      "conflictSummaryMs": 0.0129,
+      "export16MiBMs": 57.556200000000004,
+      "exportBytes": 16777216,
+      "exportMiBPerSecond": 277.9891653722796,
+      "oneMiBPreviewApplyMs": 55.747,
+      "overlayChangedBytes": 1048576,
+      "redoMs": 0.0083,
+      "restoreIncludingOriginalHashMs": 74.5211,
+      "run": 0,
+      "singleBytePreviewApplyMs": 0.0349,
+      "undoMs": 0.0083
+    },
+    {
+      "conflictSummaryMs": 0.0017000000000000001,
+      "export16MiBMs": 54.9227,
+      "exportBytes": 16777216,
+      "exportMiBPerSecond": 291.3185258554295,
+      "oneMiBPreviewApplyMs": 52.9252,
+      "overlayChangedBytes": 1048576,
+      "redoMs": 0.0011,
+      "restoreIncludingOriginalHashMs": 75.2124,
+      "run": 1,
+      "singleBytePreviewApplyMs": 0.0081,
+      "undoMs": 0.0014
+    },
+    {
+      "conflictSummaryMs": 0.0017000000000000001,
+      "export16MiBMs": 56.8426,
+      "exportBytes": 16777216,
+      "exportMiBPerSecond": 281.4790315713919,
+      "oneMiBPreviewApplyMs": 52.752599999999994,
+      "overlayChangedBytes": 1048576,
+      "redoMs": 0.001,
+      "restoreIncludingOriginalHashMs": 74.8171,
+      "run": 2,
+      "singleBytePreviewApplyMs": 0.0086,
+      "undoMs": 0.0013
+    }
+  ],
+  "profile": "Release",
+  "rawOriginalMiB": 16,
+  "rawPatchMiB": 1,
+  "repetitions": 3,
+  "sampleExecuted": false,
+  "version": "0.10.0-dev",
+  "observedPeakWorkingSetMiB": 112.55078125,
+  "executableSha256": "1eed9c027d2e0d0a217cdfed9d1494d191ce82f614b758f28628f0c0a84dd63f",
+  "note": "Sequential Release harness; no Cargo or UI polling during timing. Process peak covers fixture allocation, sparse overlay, history, export and reparse; not pure overlay overhead."
+}

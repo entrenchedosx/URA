@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+mod patch;
 use std::process::ExitCode;
 use std::str::FromStr;
 
@@ -34,6 +35,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Transactional fixed-size binary patching; never executes inspected files
+    Patch {
+        #[command(flatten)]
+        common: CommonArgs,
+        #[command(subcommand)]
+        operation: patch::PatchCommand,
+    },
     /// Read a project type library, inspect one structure, or import validated definitions
     TypeLibrary {
         #[command(flatten)]
@@ -311,6 +319,7 @@ impl Command {
     fn json(&self) -> bool {
         match self {
             Command::Info { common }
+            | Command::Patch { common, .. }
             | Command::TypeLibrary { common, .. }
             | Command::SetSignature { common, .. }
             | Command::SetVariableType { common, .. }
@@ -336,6 +345,14 @@ impl Command {
 
 #[derive(Args)]
 struct CommonArgs {
+    /// Explicitly interpret the file as a raw x86/x64 image
+    #[arg(long)]
+    raw: bool,
+    /// Raw virtual base in hexadecimal; omit for file-offset-only operations
+    #[arg(long, requires = "raw")]
+    base: Option<String>,
+    #[arg(long, default_value_t = 64)]
+    bitness: u32,
     /// Binary to inspect
     binary: PathBuf,
     /// Existing .ura project whose function names and manual functions should be applied
@@ -400,6 +417,9 @@ fn run(cli: Cli) -> Result<(), ServiceError> {
     let policy = PathPolicy::new(cli.allow)?;
     let mut service = Service::new(policy.clone(), cli.enable_writes);
     match cli.command {
+        Command::Patch { common, operation } => {
+            patch::run(&mut service, &policy, &common, operation)
+        }
         Command::TypeLibrary {
             common,
             name,
@@ -866,7 +886,16 @@ fn read_definition<T: serde::de::DeserializeOwned>(
 }
 
 fn open(service: &mut Service, common: &CommonArgs) -> Result<OpenBinaryResponse, ServiceError> {
-    service.open_binary(&common.binary, common.project.as_deref())
+    if common.raw {
+        service.open_raw_binary(
+            &common.binary,
+            common.project.as_deref(),
+            common.base.as_deref().map(parse_address).transpose()?,
+            common.bitness,
+        )
+    } else {
+        service.open_binary(&common.binary, common.project.as_deref())
+    }
 }
 
 fn print_json<T: Serialize>(value: &T) -> Result<(), ServiceError> {

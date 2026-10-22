@@ -2,6 +2,7 @@ mod decomp;
 pub mod dto;
 pub mod error;
 mod ir;
+mod patch;
 pub mod paths;
 mod service;
 pub use ir::{DiagnosticsPage, DominatorPage, IrPage};
@@ -16,6 +17,7 @@ pub use dto::{
     XrefDirection, XrefView, XrefsResponse,
 };
 pub use error::{ErrorBody, ErrorView, ServiceError};
+pub use patch::{patch_address, EffectiveBytes, PatchList};
 pub use paths::PathPolicy;
 pub use service::Service;
 

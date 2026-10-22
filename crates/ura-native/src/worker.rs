@@ -18,11 +18,14 @@ use ura_core::{
 use ura_project::ProjectSnapshot;
 
 pub struct Opened {
+    pub patch_conflicts: std::collections::BTreeSet<u64>,
+    pub patches: Option<ura_core::patch::PatchDocument>,
     pub binary: Option<Arc<LoadedBinary>>,
     pub info: Option<BinaryView>,
     pub project: Option<(PathBuf, ProjectSnapshot)>,
 }
 pub enum Event {
+    PatchExported(String),
     Opened(Box<Opened>),
     Analysis(Arc<ProgramAnalysis>),
     Strings(StringScanResult),
@@ -54,6 +57,7 @@ pub struct IrRow {
 type Task = Box<dyn FnOnce() -> Result<Event, String> + Send>;
 #[derive(Clone, Copy)]
 pub enum TaskKind {
+    Patch,
     Other,
     Open,
     Analysis,
@@ -159,16 +163,54 @@ pub fn open(path: PathBuf) -> Result<Event, String> {
         .is_some_and(|e| e.eq_ignore_ascii_case("ura"))
     {
         let snapshot = ura_project::open_project(&path).map_err(|e| e.to_string())?;
+        let mut patches = None;
         let (binary, info) = if snapshot.binary_status != "missing" {
-            let binary =
-                ura_core::analyze_path(std::path::Path::new(&snapshot.project.binary_path))
-                    .map_err(|e| e.to_string())?;
+            let source = std::path::Path::new(&snapshot.project.binary_path);
+            let mut binary = if snapshot.project.format == "raw" {
+                let state = snapshot
+                    .patch_state
+                    .as_ref()
+                    .ok_or("raw project is missing mode/base metadata")?;
+                ura_core::binary::analyze_raw_path(
+                    source,
+                    state.raw_base,
+                    state.raw_bitness.ok_or("raw project mode missing")?,
+                )
+            } else {
+                ura_core::analyze_path(source)
+            }
+            .map_err(|e| e.to_string())?;
             let info = binary.view();
+            patches = if binary.analysis().format == "raw" {
+                let state = snapshot.patch_state.as_ref().unwrap();
+                Some(
+                    ura_core::patch::PatchDocument::raw_shared(
+                        binary.shared_bytes(),
+                        state.raw_base,
+                        state.raw_bitness.unwrap(),
+                    )
+                    .map_err(|e| e.to_string())?,
+                )
+            } else {
+                ura_core::patch::PatchDocument::from_shared(binary.shared_bytes()).ok()
+            };
+            if let Some(state) = &snapshot.patch_state {
+                let doc = patches.as_mut().ok_or("unsupported patch mapping")?;
+                doc.restore(state).map_err(|e| e.to_string())?;
+                binary = doc
+                    .effective_binary(binary.path())
+                    .map_err(|e| e.to_string())?;
+            }
             (Some(Arc::new(binary)), Some(info))
         } else {
             (None, None)
         };
         Ok(Event::Opened(Box::new(Opened {
+            patch_conflicts: patches
+                .as_ref()
+                .map(|p| p.revert_conflicts())
+                .unwrap_or_default(),
+            patches,
             binary,
             info,
             project: Some((path, snapshot)),
@@ -177,6 +219,8 @@ pub fn open(path: PathBuf) -> Result<Event, String> {
         let binary = ura_core::analyze_path(&path).map_err(|e| e.to_string())?;
         let info = binary.view();
         Ok(Event::Opened(Box::new(Opened {
+            patches: ura_core::patch::PatchDocument::from_shared(binary.shared_bytes()).ok(),
+            patch_conflicts: Default::default(),
             binary: Some(Arc::new(binary)),
             info: Some(info),
             project: None,

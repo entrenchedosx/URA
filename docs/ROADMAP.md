@@ -27,21 +27,39 @@ No release may equate a panel/API with verified feature parity.
 See [scope](C-DECOMPILER-0.9.md), [verification](VERIFICATION-0.9.md) and
 [explicit gates](PLAN-0.9.md). The earlier public v0.8 release is preserved.
 
-## Proposed subsequent stages
+## Capability milestones (planning targets)
 
-- **v0.10:** refine the decompiler first: named locals/lifetimes, exact layout
-  accesses, alias analysis, call results/arguments, optimized compiler idioms,
-  switch proofs and readability; broaden MSVC/GCC/debug-symbol validation.
-- **v0.11:** verified native patch transactions, expected-byte guards, history,
-  undo/redo, executable export and analysis invalidation.
-- **v0.12:** native debugging/tracing foundations, process/thread/memory/register
-  models, breakpoints/stepping and trace persistence.
-- **v0.13:** proof-backed deobfuscation and symbolic/dataflow refinements.
-- **Later:** processor/loaders and debug metadata, emulation, comparison,
-  stable scripting/plugin SDK, managed batch analysis and collaboration.
+- **v0.10 — binary patching:** transactional byte overlays, instruction encoding,
+  previews, history/undo/redo, project persistence, verified new-file export,
+  conservative analysis invalidation, Desktop/CLI/MCP integration.
+- **v0.11 — Windows debugging:** explicit process launch/attach, breakpoints,
+  stepping, registers, memory, threads and call stacks through a real backend.
+- **v0.12 — advanced debugging:** conditions, hardware watchpoints, execution
+  tracing, snapshots, persistence, remote foundations and scripting interfaces.
+- **v0.13 — emulation/dynamic analysis:** controlled emulation, trace-assisted
+  analysis, memory-image reconstruction and supported unpacking workflows.
+- **v0.14 — architectures/loaders:** ARM, ARM64, RISC-V, MIPS, PowerPC and further
+  file formats, with architecture-independent analysis and explicit verification.
+- **v0.15 — deobfuscation:** flattening recovery, opaque predicates, constant
+  decoding, symbolic/SMT-assisted simplification and indirect-call recovery.
+- **v0.16 — scripting/plugins:** Python automation, stable APIs, processor and
+  loader plugins, SDK and custom analysis passes.
+- **v0.17 — types/symbols:** PDB, DWARF, RTTI, classes, vtables, advanced C++
+  recovery and reusable type libraries.
+- **v0.18 — comparison:** function similarity, binary diffing, library/signature
+  recognition and semantic search.
+- **v0.19 — collaboration/remote:** shared projects, annotation merging, team
+  workflows, remote analysis and kernel debugging through authorised backends.
+- **v0.20+ — remaining parity:** continue tracking and implementing all missing,
+  partial and unverified capabilities; extend the roadmap until the reference
+  inventory is satisfied. Advanced decompilation remains an ongoing obligation.
 
-These are dependency-led proposals, not guaranteed release contents or dates.
-Debugging and patching were deliberately outside this decompiler milestone.
+These are capability goals, not evidence of implementation, release promises or
+completion guarantees. Each milestone requires meaningful functional progress,
+verified scope and an updated parity ledger. UI polish is secondary to missing
+capabilities except for crashes, data loss, security or functional regressions.
+The v0.9 source checkpoint is preserved at `61ee8a4`; its uncompleted live
+qualification is recorded in [FINALISATION-0.9.md](FINALISATION-0.9.md).
 
 ## v0.8 - foundations checkpoint, full checklist unfinished
 
@@ -199,11 +217,17 @@ as heuristic.
 - macOS and Linux host verification (the Rust engine and native GUI are portable).
 - Signed installers and automatic updates.
 
-## Explicit non-goals
+## Operational boundaries
 
-- Running, debugging, unpacking or patching samples.
-- Kernel drivers or anti-cheat bypass functionality.
-- Uploading or transmitting binaries to remote services.
+Static inspection remains local and non-executing by default. Patching is an
+explicit project operation with immutable originals and new-file export.
+Future execution, debugging, memory capture and remote communication require
+separate explicit user-controlled actions and supported backends. File overlays,
+exported-file patches and future live-process memory patches are distinct address
+spaces and permission models. No binary is uploaded without explicit permission.
+Kernel debugging belongs to authorised supported backends; anti-cheat bypass is
+not itself a parity requirement. Debugging, dynamic analysis, emulation, unpacking
+and binary modification are required product capabilities, not permanent non-goals.
 
 ## Engineering follow-ups
 

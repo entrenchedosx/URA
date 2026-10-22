@@ -15,6 +15,10 @@ impl egui_dock::TabViewer for Workspace {
         if ui.rect_contains_pointer(ui.max_rect()) && ui.input(|i| i.pointer.any_pressed()) {
             self.active = *tab;
         }
+        if self.opening && !matches!(*tab, Panel::Messages | Panel::Patches) {
+            ui.label("Updating the binary/project. Previous analysis is invalidated until the worker completes.");
+            return;
+        }
         ui.style_mut().text_styles.insert(
             egui::TextStyle::Monospace,
             FontId::monospace(self.settings.font_size),
@@ -37,6 +41,7 @@ impl egui_dock::TabViewer for Workspace {
             Panel::Types => self.types_view(ui),
             Panel::CallGraph => self.call_graph_view(ui),
             Panel::HighLevel => self.high_level_view(ui),
+            Panel::Patches => self.patch_manager(ui),
         }
     }
     fn scroll_bars(&self, _tab: &Panel) -> [bool; 2] {
@@ -1482,6 +1487,17 @@ impl Workspace {
     }
 
     fn disassembly(&mut self, ui: &mut egui::Ui) {
+        if ui
+            .add_enabled(
+                self.patches.as_ref().is_some_and(|p| p.supports_assembly())
+                    && self.project.is_some()
+                    && !self.opening,
+                egui::Button::new("Patch instruction…"),
+            )
+            .clicked()
+        {
+            self.actions.push(Action::PatchDialog(true));
+        }
         if self.empty(ui) {
             return;
         }
@@ -1805,6 +1821,20 @@ impl Workspace {
     }
 
     fn hex(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(
+                    self.patches.is_some() && self.project.is_some() && !self.opening,
+                    egui::Button::new("Edit selected bytes…"),
+                )
+                .clicked()
+            {
+                self.actions.push(Action::PatchDialog(false));
+            }
+            if ui.button("Patch Manager").clicked() {
+                self.actions.push(Action::Show(Panel::Patches));
+            }
+        });
         if self.empty(ui) {
             return;
         }
@@ -1908,7 +1938,13 @@ impl Workspace {
                                 Align2::LEFT_CENTER,
                                 format!("{byte:02X}"),
                                 font.clone(),
-                                if *byte == 0 {
+                                if self
+                                    .patches
+                                    .as_ref()
+                                    .is_some_and(|p| p.original().get(offset + j) != Some(byte))
+                                {
+                                    self.colors().accent
+                                } else if *byte == 0 {
                                     self.colors().muted
                                 } else {
                                     self.colors().text

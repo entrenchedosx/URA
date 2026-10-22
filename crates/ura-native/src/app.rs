@@ -43,9 +43,10 @@ pub enum Panel {
     Types,
     CallGraph,
     HighLevel,
+    Patches,
 }
 impl Panel {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         Self::Explorer,
         Self::Disassembly,
         Self::Functions,
@@ -63,6 +64,7 @@ impl Panel {
         Self::Types,
         Self::CallGraph,
         Self::HighLevel,
+        Self::Patches,
     ];
     pub fn title(self) -> &'static str {
         match self {
@@ -83,6 +85,7 @@ impl Panel {
             Self::Types => "Types",
             Self::CallGraph => "Call graph",
             Self::HighLevel => "Pseudocode",
+            Self::Patches => "Patch Manager",
         }
     }
     fn legacy(self) -> &'static str {
@@ -104,6 +107,7 @@ impl Panel {
             Self::Types => "types",
             Self::CallGraph => "callgraph",
             Self::HighLevel => "highlevel",
+            Self::Patches => "patches",
         }
     }
     fn from_legacy(s: &str) -> Option<Self> {
@@ -221,6 +225,10 @@ pub struct Filter {
 
 #[derive(Clone)]
 pub enum Action {
+    PatchDialog(bool),
+    PatchApply(ura_core::patch::Preview),
+    PatchHistory(&'static str, Option<u64>),
+    PatchExport(bool),
     OpenDialog(bool),
     Open(PathBuf),
     NewProject,
@@ -246,6 +254,9 @@ pub enum Action {
     Save,
 }
 pub struct Workspace {
+    pub patches: Option<ura_core::patch::PatchDocument>,
+    pub patch_conflicts: std::collections::BTreeSet<u64>,
+    pub patch_editor: Option<crate::patches::PatchEditor>,
     pub worker: Worker,
     pub ctx: egui::Context,
     pub generation: u64,
@@ -338,6 +349,9 @@ impl Workspace {
             Default::default(),
         );
         Self {
+            patches: None,
+            patch_conflicts: Default::default(),
+            patch_editor: None,
             worker: Worker::new(ctx.clone()),
             ctx,
             generation: 0,
@@ -461,6 +475,9 @@ impl Workspace {
             .push(Action::Navigate(self.address_location(address), true));
     }
     fn reset_data(&mut self) {
+        self.patches = None;
+        self.patch_conflicts.clear();
+        self.patch_editor = None;
         self.binary = None;
         self.info = None;
         self.project = None;
@@ -552,6 +569,9 @@ impl Workspace {
         self.ensure_graph();
     }
     pub fn request_page(&mut self, address: u64, append: bool) {
+        if self.opening {
+            return;
+        }
         let Some(binary) = self.binary.clone() else {
             return;
         };
@@ -567,6 +587,9 @@ impl Workspace {
             });
     }
     pub fn ensure_graph(&mut self) {
+        if self.opening {
+            return;
+        }
         if self.analysis.is_none() {
             return;
         }
@@ -833,7 +856,7 @@ impl Workspace {
             });
     }
     fn scan(&mut self) {
-        if self.scanning {
+        if self.scanning || self.opening {
             return;
         }
         let Some(binary) = self.binary.clone() else {
@@ -866,6 +889,12 @@ impl Workspace {
             match reply.result {
                 Err(error) => {
                     match reply.kind {
+                        TaskKind::Patch => {
+                            self.opening = false;
+                            if let Some((path, _)) = &self.project {
+                                self.actions.push(Action::Open(path.clone()));
+                            }
+                        }
                         TaskKind::Open => self.opening = false,
                         TaskKind::Analysis => self.analyzing = false,
                         TaskKind::Strings => self.scanning = false,
@@ -901,6 +930,8 @@ impl Workspace {
                     self.reset_data();
                     self.opening = false;
                     self.binary = opened.binary;
+                    self.patches = opened.patches;
+                    self.patch_conflicts = opened.patch_conflicts;
                     self.info = opened.info;
                     if let Some((path, snapshot)) = opened.project {
                         self.restore = snapshot.view_state.clone();
@@ -963,6 +994,10 @@ impl Workspace {
                         self.actions.push(Action::Scan);
                     }
                     self.explorer_filter.dirty = true;
+                }
+                Ok(Event::PatchExported(message)) => {
+                    self.opening = false;
+                    self.log(false, message);
                 }
                 Ok(Event::Analysis(analysis)) => {
                     self.analyzing = false;
@@ -1066,7 +1101,9 @@ impl Workspace {
                 }
                 Ok(Event::Message(message)) => self.log(false, message),
                 Ok(Event::Done) => {
-                    self.opening = false;
+                    if matches!(reply.kind, TaskKind::Open) {
+                        self.opening = false;
+                    }
                 }
             }
         }
@@ -1100,6 +1137,7 @@ impl Workspace {
             // Identity was verified at open. Refresh only mutable project data;
             // hashing a 500 MiB image for every note would be unnecessary work.
             let snapshot = ura_project::ProjectSnapshot {
+                patch_state: None,
                 project,
                 binary_status,
                 annotations: ura_project::load_annotations_for_path(&path)
@@ -1393,6 +1431,16 @@ impl NativeApp {
             }
             for action in actions {
                 match action {
+                    Action::PatchDialog(instruction) => {
+                        self.workspace.open_patch_editor(instruction)
+                    }
+                    Action::PatchApply(preview) => self
+                        .workspace
+                        .commit_patch(crate::patches::Change::Apply(preview)),
+                    Action::PatchHistory(action, id) => self
+                        .workspace
+                        .commit_patch(crate::patches::Change::History(action, id)),
+                    Action::PatchExport(manifest) => self.workspace.export_patches(manifest),
                     Action::Show(panel) => self.show_panel(panel),
                     Action::TogglePanel(panel) => {
                         if let Some(path) = self.dock.find_tab(&panel) {
@@ -1458,6 +1506,9 @@ impl NativeApp {
                         w.opening = false;
                     }
                     Action::NewProject => {
+                        if self.workspace.opening {
+                            continue;
+                        }
                         self.persist_project();
                         let w = &mut self.workspace;
                         let Some(info) = &w.info else {
@@ -1471,6 +1522,7 @@ impl NativeApp {
                             architecture: info.architecture.clone(),
                         };
                         let name = info.file_name.clone();
+                        let patch_state = w.patches.as_ref().map(|p| p.state().clone());
                         w.worker.submit(w.generation, move || {
                             let Some(path) = rfd::FileDialog::new()
                                 .set_title("Create analysis project")
@@ -1482,6 +1534,10 @@ impl NativeApp {
                             };
                             ura_project::create_project(&path, &name, &identity)
                                 .map_err(|e| e.to_string())?;
+                            if let Some(state) = &patch_state {
+                                ura_project::save_patch_state(&path, state, 0)
+                                    .map_err(|e| e.to_string())?;
+                            }
                             Ok(Event::Project(
                                 path.clone(),
                                 Box::new(
@@ -1740,6 +1796,7 @@ impl eframe::App for NativeApp {
                     .show_inside(ui, &mut self.workspace);
             });
         self.workspace.dialogs(&ctx);
+        self.workspace.patch_dialog(&ctx);
         if let Some(path) =
             ctx.input(|i| i.raw.dropped_files.first().map(|f| f.path().to_path_buf()))
         {
@@ -2110,7 +2167,185 @@ mod tests {
             app.workspace.history.step(-1).unwrap().address,
             Some(0x140001000)
         );
-        assert_eq!(ura_project::SCHEMA_VERSION, 5);
+        assert_eq!(ura_project::SCHEMA_VERSION, 6);
+    }
+    #[test]
+    fn patch_worker_reopens_effective_bytes_invalidates_analysis_and_preserves_annotations() {
+        let mut app = test_app();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("patches.ura");
+        let binary = app.workspace.binary.as_ref().unwrap();
+        let info = binary.view();
+        let identity = ura_project::BinaryIdentity {
+            binary_path: binary
+                .path()
+                .canonicalize()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+            binary_hash: info.sha256,
+            file_size: info.file_size,
+            format: info.format,
+            architecture: info.architecture,
+        };
+        ura_project::create_project(&path, "patches", &identity).unwrap();
+        ura_project::save_annotation(&path, "140001020", Some("entry"), "original address anchor")
+            .unwrap();
+        app.workspace.project = Some((path.clone(), ura_project::open_project(&path).unwrap()));
+        app.workspace.patches =
+            Some(ura_core::patch::PatchDocument::from_shared(binary.shared_bytes()).unwrap());
+        let preview = app
+            .workspace
+            .patches
+            .as_ref()
+            .unwrap()
+            .preview_instruction(
+                ura_core::patch::Address::VirtualAddress(0x140001020),
+                1,
+                "ret",
+                false,
+                "test",
+            )
+            .unwrap();
+        app.workspace
+            .actions
+            .push(Action::PatchApply(preview.patch));
+        app.process_actions();
+        assert!(app.workspace.opening);
+        assert!(app.workspace.analysis.is_none());
+        app.workspace.request_page(0x140001020, false);
+        assert!(
+            !app.workspace.page_loading,
+            "old bytes must not be queued with the new patch generation"
+        );
+        pump(&mut app, |a| {
+            !a.workspace.opening
+                && a.workspace.analysis.as_ref().is_some_and(|p| {
+                    p.function_by_start(0x140001020)
+                        .is_some_and(|f| f.instruction_count == 1)
+                })
+        });
+        assert_eq!(app.workspace.binary.as_ref().unwrap().bytes()[0x220], 0xc3);
+        assert_eq!(
+            app.workspace.project.as_ref().unwrap().1.annotations[0].note,
+            "original address anchor"
+        );
+        app.workspace
+            .actions
+            .push(Action::PatchHistory("undo", None));
+        app.process_actions();
+        pump(&mut app, |a| {
+            !a.workspace.opening
+                && a.workspace.analysis.as_ref().is_some_and(|p| {
+                    p.function_by_start(0x140001020)
+                        .is_some_and(|f| f.instruction_count > 1)
+                })
+        });
+        assert_eq!(app.workspace.binary.as_ref().unwrap().bytes()[0x220], 0x55);
+        assert_eq!(
+            ura_project::read_project(&path)
+                .unwrap()
+                .patch_state
+                .unwrap()
+                .cursor,
+            0
+        );
+        let mut invalid = app
+            .workspace
+            .patches
+            .as_ref()
+            .unwrap()
+            .preview(
+                ura_core::patch::Address::FileOffset(0x220),
+                &[0x55],
+                &[0xc3],
+                "",
+            )
+            .unwrap();
+        invalid.edits[0].before[0] = 0;
+        app.workspace.actions.push(Action::PatchApply(invalid));
+        app.process_actions();
+        pump(&mut app, |a| {
+            !a.workspace.opening
+                && a.workspace.analysis.as_ref().is_some_and(|p| {
+                    p.function_by_start(0x140001020)
+                        .is_some_and(|f| f.instruction_count > 1)
+                })
+        });
+        assert_eq!(app.workspace.binary.as_ref().unwrap().bytes()[0x220], 0x55);
+    }
+    #[test]
+    fn unrelated_worker_completion_does_not_clear_export_busy_state() {
+        let mut app = test_app();
+        app.workspace.opening = true;
+        app.workspace
+            .worker
+            .submit(app.workspace.generation, || Ok(Event::Done));
+        app.workspace.worker.submit(app.workspace.generation, || {
+            Ok(Event::Message("unrelated complete".into()))
+        });
+        pump(&mut app, |a| {
+            a.workspace
+                .messages
+                .iter()
+                .any(|(_, s)| s == "unrelated complete")
+        });
+        assert!(app.workspace.opening);
+    }
+    #[test]
+    fn patch_manager_large_history_virtualizes_and_renders_at_both_scales() {
+        let mut app = test_app();
+        let mut doc =
+            ura_core::patch::PatchDocument::raw(vec![0x90; 16384], Some(0x1000), 64).unwrap();
+        for offset in (0..8192).step_by(2) {
+            let p = doc
+                .preview(
+                    ura_core::patch::Address::FileOffset(offset),
+                    &[0x90],
+                    &[0xc3],
+                    "history row",
+                )
+                .unwrap();
+            doc.apply(&p).unwrap();
+        }
+        app.workspace.patch_conflicts = doc.revert_conflicts();
+        app.workspace.patches = Some(doc);
+        let ctx = app.workspace.ctx.clone();
+        let mut measurements = Vec::new();
+        for theme in [Theme::Classic, Theme::Dark] {
+            for scale in [1.0, 1.5] {
+                app.workspace.settings.theme = theme;
+                design::apply(&ctx, &app.workspace.settings);
+                ctx.set_pixels_per_point(scale);
+                let mut samples = Vec::new();
+                for _ in 0..3 {
+                    let started = Instant::now();
+                    let mut output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                egui::vec2(1280.0 / scale, 720.0 / scale),
+                            )),
+                            ..Default::default()
+                        },
+                        |ui| {
+                            egui::CentralPanel::default()
+                                .show(ui, |ui| app.workspace.patch_manager(ui));
+                        },
+                    );
+                    assert!(!output.shapes.is_empty());
+                    assert!(output.shapes.len() < 3000, "patch rows must be virtualized");
+                    output.textures_delta.clear();
+                    ctx.tessellate(output.shapes, scale);
+                    samples.push(started.elapsed().as_secs_f64() * 1000.0);
+                }
+                measurements.push(serde_json::json!({"theme":format!("{theme:?}"),"scale":scale,"frameBuildAndTessellationMs":samples}));
+            }
+        }
+        println!(
+            "patch_manager_headless {}",
+            serde_json::json!({"transactions":4096,"measurements":measurements,"liveInteraction":false})
+        );
     }
     #[test]
     fn stale_open_results_do_not_replace_current_binary() {

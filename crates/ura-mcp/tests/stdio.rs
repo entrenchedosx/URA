@@ -103,6 +103,92 @@ fn fixture() -> PathBuf {
 }
 
 #[test]
+fn stdio_patching_preview_apply_history_export_and_permissions() {
+    let directory = tempfile::tempdir().unwrap();
+    let sample = directory.path().join("sample.exe");
+    std::fs::copy(fixture(), &sample).unwrap();
+    let original = std::fs::read(&sample).unwrap();
+    let project = directory.path().join("patches.ura");
+    let mut writer = Client::start(directory.path(), true);
+    let handle = writer.tool("ura_open_binary", json!({"binary":sample}))["handle"].clone();
+    writer.tool(
+        "ura_save_project",
+        json!({"handle":handle,"project":project}),
+    );
+    writer.tool("ura_analyze", json!({"handle":handle}));
+    let preview = writer.tool(
+        "ura_preview_instruction_patch",
+        json!({"handle":handle,"space":"va","address":"140001020","budget":1,"assembly":"ret"}),
+    );
+    assert_eq!(preview["patch"]["edits"][0]["after"], json!([195]));
+    let changed = writer.tool(
+        "ura_apply_patch",
+        json!({"handle":handle,"project":project,"preview":preview}),
+    );
+    assert_eq!(changed["analysisCurrent"], false);
+    let current = writer.tool(
+        "ura_read_effective_bytes",
+        json!({"handle":handle,"space":"offset","address":"220","length":1}),
+    );
+    assert_eq!(current["original"], json!([85]));
+    assert_eq!(current["current"], json!([195]));
+    let stale = writer.tool_result(
+        "ura_apply_patch",
+        json!({"handle":handle,"project":project,"preview":preview}),
+    );
+    assert_eq!(stale["isError"], true);
+    writer.tool(
+        "ura_patch_history",
+        json!({"handle":handle,"project":project,"action":"undo"}),
+    );
+    writer.tool(
+        "ura_patch_history",
+        json!({"handle":handle,"project":project,"action":"redo"}),
+    );
+    writer.tool("ura_analyze", json!({"handle":handle}));
+    let decompiled = writer.tool(
+        "ura_decompile_function",
+        json!({"handle":handle,"function":"140001020"}),
+    );
+    assert!(decompiled["total"].as_u64().unwrap() < 27);
+    let out = directory.path().join("patched.exe");
+    let exported = writer.tool(
+        "ura_export_patched_binary",
+        json!({"handle":handle,"destination":out}),
+    );
+    let bytes = std::fs::read(&out).unwrap();
+    assert_eq!(exported["sha256"], ura_core::sha256_hex(&bytes));
+    assert_eq!(&bytes[..0x220], &original[..0x220]);
+    assert_eq!(&bytes[0x221..], &original[0x221..]);
+    let manifest = directory.path().join("patches.json");
+    writer.tool(
+        "ura_export_patched_binary",
+        json!({"handle":handle,"destination":manifest,"manifest":true}),
+    );
+    assert!(
+        serde_json::from_slice::<Value>(&std::fs::read(manifest).unwrap()).unwrap()["transactions"]
+            .is_array()
+    );
+    let mut reader = Client::start(directory.path(), false);
+    let readonly = reader.tool(
+        "ura_open_binary",
+        json!({"binary":sample,"project":project}),
+    )["handle"]
+        .clone();
+    reader.tool("ura_list_patches", json!({"handle":readonly}));
+    let preview=reader.tool("ura_preview_byte_patch",json!({"handle":readonly,"space":"offset","address":"220","expected":"C3","replacement":"90"}));
+    let denied = reader.tool_result(
+        "ura_apply_patch",
+        json!({"handle":readonly,"project":project,"preview":preview}),
+    );
+    assert_eq!(
+        denied["structuredContent"]["error"]["code"],
+        "write_disabled"
+    );
+    assert_eq!(std::fs::read(sample).unwrap(), original);
+}
+
+#[test]
 fn stdio_queries_errors_and_read_only_permissions() {
     let directory = tempfile::tempdir().unwrap();
     let sample = directory.path().join("sample.exe");
@@ -110,7 +196,7 @@ fn stdio_queries_errors_and_read_only_permissions() {
     let mut client = Client::start(directory.path(), false);
     let tools = client.request("tools/list", json!({}));
     let listed = tools["result"]["tools"].as_array().unwrap();
-    assert_eq!(listed.len(), 32);
+    assert_eq!(listed.len(), 39);
     for tool in listed {
         let expected = !matches!(
             tool["name"].as_str().unwrap(),
@@ -123,6 +209,9 @@ fn stdio_queries_errors_and_read_only_permissions() {
                 | "ura_set_function_signature"
                 | "ura_set_variable_type"
                 | "ura_set_type_library"
+                | "ura_apply_patch"
+                | "ura_patch_history"
+                | "ura_export_patched_binary"
         );
         assert_eq!(tool["annotations"]["readOnlyHint"], expected, "{tool}");
     }

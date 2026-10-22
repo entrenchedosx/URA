@@ -1,0 +1,22 @@
+{
+  "version": "0.10.0-dev",
+  "mcpTools": 39,
+  "cliPatchWorkflow": true,
+  "mcpPatchWorkflow": true,
+  "readOnlyDenied": true,
+  "originalUnchanged": true,
+  "exactUntouchedBytes": true,
+  "reimportedExports": true,
+  "stalePreviewRejected": true,
+  "undoRedo": true,
+  "manifestExport": true,
+  "cliMcpByteEquality": true,
+  "elf32Workflow": true,
+  "rawProjectRoundTrip": true,
+  "nativeLaunched": false,
+  "executableSha256": {
+    "ura-native.exe": "3a4a2658adafd8d6f0457ad3604427b3a8a292e3badfc09383665d5d946fa3d0",
+    "ura-cli.exe": "1ed6ed37cb10f2c32767f5b135f4b22b6af7cd3dac229f361fe8f32a18acac56",
+    "ura-mcp.exe": "44e93318a4d5ba5358edd39f944e51d518693be8eb91e24ba51f0ef695332b53"
+  }
+}
