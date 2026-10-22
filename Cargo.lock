@@ -6142,6 +6142,7 @@ dependencies = [
  "egui_dock",
  "egui_extras",
  "image",
+ "raw-window-handle",
  "rfd 0.17.2",
  "serde",
  "serde_json",

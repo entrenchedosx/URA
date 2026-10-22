@@ -5,6 +5,38 @@ Verification date: 2026-10-22. This is a verified source continuation; public
 release acceptance still requires the current live gates. Existing tags and
 releases are preserved, and v0.10/patching has not started.
 
+### Code-only follow-up
+
+The window-placement continuation passed a locked workspace run of **263 tests,
+0 failures**, formatting, strict workspace/all-target Clippy and a workspace
+Release build. Review then moved the placement guard from `App::ui` to
+`App::logic`: eframe also runs this hook on requested hidden-window ticks, so an
+observed minimize state can be retained before restore. The native tests and
+strict workspace checks passed again after this adjustment. The adjusted native
+Release image was linked to a separate local output without launching it.
+
+The guard fits only URA's own window to the current monitor work area on startup,
+monitor/DPI/work-area changes and observed restore transitions. Valid placements
+are preserved, maximized/minimized windows are left alone, and it adds no repaint
+or polling loop. Geometry tests cover oversize restore bounds, taskbar work areas,
+negative monitor origins and invalid rectangles. Independent review identified
+and resolved a missing work-area cache trigger. Actual Windows event sequencing
+remains a live acceptance check.
+
+Fresh headless Release checks passed **32-tool MCP discovery**,
+typed/semantic/C-like AST queries, pagination, exports and project/type round trips. Repeated CLI
+C-like AST queries were deterministic. The local verification record is retained
+under `target/v09-final/codewise-headless-9ceea55e79cd4b5e807eb6afeecd484f/`.
+No desktop app was controlled during this code-only follow-up.
+
+Before the code-only restriction, the user manually selected real 150% Windows
+scale. Editor edits and project reopen were checked; the initial restored window
+was partly off screen. The rebuilt guard then passed startup and maximize/restore
+bounds checks at 150%. The later logic-hook adjustment has not been retested live.
+This partial evidence does not complete the full DPI checklist or establish live
+in-flight cancellation. The existing package audit below predates the placement
+fix; a fresh package and live qualification are still required for release.
+
 ## Readability and semantics
 
 Source reconstruction counts uses after the observable slice, consumes constants

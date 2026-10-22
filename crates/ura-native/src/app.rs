@@ -1228,6 +1228,7 @@ pub struct NativeApp {
     pub display_check: Option<crate::diagnostics::DisplayCheck>,
     applied_style: Option<(Theme, u32, u32)>,
     idle_metrics: Option<crate::diagnostics::IdleMetrics>,
+    window_placement: crate::window_placement::WindowPlacementGuard,
 }
 impl NativeApp {
     pub fn new(cc: &eframe::CreationContext<'_>, startup: Option<PathBuf>) -> Self {
@@ -1253,6 +1254,7 @@ impl NativeApp {
             display_check: None,
             applied_style: None,
             idle_metrics: crate::diagnostics::IdleMetrics::from_env(),
+            window_placement: Default::default(),
         };
         if let Some(path) = startup {
             app.workspace.actions.push(Action::Open(path));
@@ -1690,6 +1692,11 @@ impl NativeApp {
 }
 
 impl eframe::App for NativeApp {
+    fn logic(&mut self, _ctx: &egui::Context, frame: &mut eframe::Frame) {
+        // eframe also calls logic on hidden-window ticks. Keep placement state
+        // current there without adding a repaint or an idle polling loop.
+        self.window_placement.update(frame);
+    }
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         if let Some(metrics) = &mut self.idle_metrics {
             metrics.record(ui.ctx(), frame.info().cpu_usage);
@@ -1822,6 +1829,7 @@ mod tests {
             display_check: None,
             applied_style: None,
             idle_metrics: crate::diagnostics::IdleMetrics::from_env(),
+            window_placement: Default::default(),
         }
     }
     fn pump(app: &mut NativeApp, condition: impl Fn(&NativeApp) -> bool) {

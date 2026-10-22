@@ -7,4 +7,5 @@ mod graph_view;
 mod menus;
 pub mod navigation;
 mod views;
+mod window_placement;
 pub mod worker;

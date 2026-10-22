@@ -20,5 +20,8 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 [dev-dependencies]
 tempfile.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+raw-window-handle = "0.6.2"
+
 [target.'cfg(windows)'.build-dependencies]
 tauri-winres = "0.3.7"
