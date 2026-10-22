@@ -197,7 +197,7 @@ impl UraServer {
     #[tool(
         name = "ura_get_call_graph",
         annotations(title = "Get call graph", read_only_hint = true),
-        description = "Return a bounded directed call graph of direct calls and direct tail calls. Unresolved indirect transfers are counted, never invented. Optionally focus on one function and expand by depth."
+        description = "Return a bounded graph of internal calls/tail calls and verified PE IAT or ELF GOT/PLT memory transfers. External nodes carry exact import identity, optional curated signature and uncertainty; edges preserve instruction sites. Unproved indirect transfers stay unresolved."
     )]
     fn ura_get_call_graph(
         &self,
@@ -224,19 +224,30 @@ impl UraServer {
     #[tool(
         name = "ura_get_high_level_ir",
         annotations(title = "Get high-level IR", read_only_hint = true),
-        description = "Return a bounded page of recovered high-level IR with source addresses, unresolved markers and interprocedural parameter demands. Set ast=true for the self-contained typed tree and original SSA semantics (2 MiB maximum; addresses are hex strings)."
+        description = "Return paged diagnostic C-like lines plus bounded argument/return type constraints. Set semantic=true for executable semantic HIR, or semanticBlock to select one block with global IDs and explicit external definitions. ast=true retains the legacy presentation tree. Each optional HIR payload has a 2 MiB limit; addresses are hex strings."
     )]
     fn ura_get_high_level_ir(
         &self,
         Parameters(p): Parameters<DecompFunctionParams>,
     ) -> Result<CallToolResult, ErrorData> {
-        respond(self.service().high_level_with_ast(
+        let response = self.service().high_level_with_ast(
             &p.handle,
             &p.function,
             p.offset.unwrap_or(0),
             p.limit.unwrap_or(200),
             p.ast.unwrap_or(false),
-        ))
+        );
+        let response = response.and_then(|mut response| {
+            if p.semantic.unwrap_or(false) || p.semantic_block.is_some() {
+                response.semantic = Some(self.service().semantic_hir(
+                    &p.handle,
+                    &p.function,
+                    p.semantic_block.as_deref(),
+                )?);
+            }
+            Ok(response)
+        });
+        respond(response)
     }
     #[tool(
         name = "ura_set_function_signature",

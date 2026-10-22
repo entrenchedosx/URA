@@ -426,6 +426,8 @@ pub struct HighLevelResponse {
     pub program: ura_core::decomp::program::ProgramTypes,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ast: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub semantic: Option<ura_core::decomp::semantic::Page>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -440,6 +442,8 @@ pub struct CallGraphNodeView {
     pub recursive: bool,
     pub component: Option<usize>,
     pub depth: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub import: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize)]

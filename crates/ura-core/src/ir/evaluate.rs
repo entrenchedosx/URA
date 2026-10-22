@@ -71,6 +71,7 @@ pub fn pure(op: &Operation, ty: Type, args: &[Constant]) -> Option<Constant> {
 pub struct Machine {
     pub values: BTreeMap<String, u64>,
     pub memory: BTreeMap<u64, u8>,
+    pub trace: Vec<Address>,
 }
 impl Machine {
     pub fn run(&mut self, function: &Function, max_blocks: usize) -> Result<Option<u64>, String> {
@@ -89,11 +90,17 @@ impl Machine {
             .collect();
         let index: BTreeMap<_, _> = function.blocks.iter().map(|b| (b.address, b)).collect();
         let mut current = function.entry;
-        for _ in 0..max_blocks {
+        let mut operations = 0usize;
+        for _ in 0..max_blocks.min(100_000) {
             let block = index
                 .get(&current)
                 .ok_or("IR control flow leaves this function")?;
+            self.trace.push(current);
             for stmt in &block.statements {
+                operations += 1;
+                if operations > 100_000 {
+                    return Err("IR interpreter operation budget exceeded".into());
+                }
                 let arg = |i: usize| {
                     operand(stmt.args[i], &values)
                         .ok_or_else(|| format!("unknown input at {}", stmt.source))
@@ -128,7 +135,17 @@ impl Machine {
                             stmt.source
                         ))
                     }
-                    Operation::Unknown { .. } => None,
+                    Operation::Unknown { .. } => {
+                        if stmt
+                            .output
+                            .map_or(true, |id| function.variables[id].ty == Type::Memory)
+                        {
+                            return Err(
+                                "unknown memory effects cannot be concretely executed".into()
+                            );
+                        }
+                        None
+                    }
                     _ => {
                         let args: Option<Vec<_>> =
                             stmt.args.iter().map(|a| operand(*a, &values)).collect();

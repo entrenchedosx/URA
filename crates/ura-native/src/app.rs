@@ -761,13 +761,20 @@ impl Workspace {
         let Some(analysis) = self.analysis.clone() else {
             return;
         };
+        let Some(binary) = self.binary.clone() else {
+            return;
+        };
         self.call_graph_loading = true;
         self.call_graph_error = None;
         self.worker
             .submit_typed(self.generation, TaskKind::CallGraph(revision), move || {
                 Ok(Event::CallGraph {
                     key: revision,
-                    graph: Arc::new(ura_core::decomp::build_call_graph(&analysis)),
+                    graph: Arc::new(ura_core::decomp::callgraph::build_with_imports(
+                        &binary,
+                        &analysis,
+                        &(),
+                    )?),
                 })
             });
     }

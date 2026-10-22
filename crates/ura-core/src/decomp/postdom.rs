@@ -387,6 +387,68 @@ pub fn must_reach(target: u64, graph: &BTreeMap<u64, Vec<u64>>) -> BTreeSet<u64>
     proven
 }
 
+/// Indexed adjacency and lazy proofs shared by candidate join. The bounded
+/// CFG needs at most V*V bools; unknown/external edges still prevent proofs.
+pub(crate) struct JoinProofs {
+    ids: BTreeMap<u64, usize>,
+    reverse: Vec<Vec<usize>>,
+    counts: Vec<usize>,
+    cache: BTreeMap<u64, Vec<bool>>,
+}
+impl JoinProofs {
+    pub fn new(graph: &BTreeMap<u64, Vec<u64>>) -> Self {
+        let ids: BTreeMap<_, _> = graph
+            .keys()
+            .enumerate()
+            .map(|(id, address)| (*address, id))
+            .collect();
+        let mut reverse = vec![Vec::new(); ids.len()];
+        let mut counts = vec![0; ids.len()];
+        for (address, edges) in graph {
+            let unique: BTreeSet<_> = edges.iter().copied().collect();
+            counts[ids[address]] = unique.len();
+            for target in unique {
+                if let Some(id) = ids.get(&target) {
+                    reverse[*id].push(ids[address]);
+                }
+            }
+        }
+        Self {
+            ids,
+            reverse,
+            counts,
+            cache: BTreeMap::new(),
+        }
+    }
+    pub fn proves(&mut self, target: u64, a: u64, b: u64) -> bool {
+        let (Some(&target_id), Some(&a), Some(&b)) =
+            (self.ids.get(&target), self.ids.get(&a), self.ids.get(&b))
+        else {
+            return false;
+        };
+        let proven = self.cache.entry(target).or_insert_with(|| {
+            let mut remaining = self.counts.clone();
+            let mut proven = vec![false; self.ids.len()];
+            proven[target_id] = true;
+            let mut queue = VecDeque::from([target_id]);
+            while let Some(block) = queue.pop_front() {
+                for &predecessor in &self.reverse[block] {
+                    if proven[predecessor] {
+                        continue;
+                    }
+                    remaining[predecessor] -= 1;
+                    if remaining[predecessor] == 0 {
+                        proven[predecessor] = true;
+                        queue.push_back(predecessor);
+                    }
+                }
+            }
+            proven
+        });
+        proven[a] && proven[b]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -511,5 +573,35 @@ mod tests {
         let graph = successors(&[(0, 1), (1, 0)]);
         let error = over_graph_with_control(0, &graph, &Cancel).unwrap_err();
         assert!(error.contains("cancelled"), "{error}");
+    }
+
+    #[test]
+    fn cached_indexed_proofs_match_all_path_fixed_points() {
+        for bits in 0..4096u32 {
+            let graph: BTreeMap<u64, Vec<u64>> = (0..3)
+                .map(|from| {
+                    (
+                        from,
+                        (0..4)
+                            .filter(|to| bits & (1 << (from * 4 + to)) != 0)
+                            .map(|to| if to == 3 { 99 } else { to })
+                            .collect(),
+                    )
+                })
+                .collect();
+            let mut cached = JoinProofs::new(&graph);
+            for target in 0..3 {
+                let expected = must_reach(target, &graph);
+                for a in 0..3 {
+                    for b in 0..3 {
+                        assert_eq!(
+                            cached.proves(target, a, b),
+                            expected.contains(&a) && expected.contains(&b)
+                        );
+                    }
+                }
+            }
+            assert!(cached.cache.len() <= 3);
+        }
     }
 }

@@ -277,6 +277,7 @@ impl Workspace {
                         .max_height(320.0)
                         .show(ui, |ui| {
                             egui::Grid::new("edit-signature-parameters")
+                                .num_columns(4)
                                 .striped(true)
                                 .show(ui, |ui| {
                                     for label in ["Name", "Location", "Type", ""] {
@@ -286,15 +287,15 @@ impl Workspace {
                                     for (index, parameter) in parameters.iter_mut().enumerate() {
                                         ui.add(
                                             egui::TextEdit::singleline(&mut parameter.name)
-                                                .desired_width(130.0),
+                                                .min_size(egui::vec2(130.0, 0.0)),
                                         );
                                         ui.add(
                                             egui::TextEdit::singleline(&mut parameter.location)
-                                                .desired_width(110.0),
+                                                .min_size(egui::vec2(110.0, 0.0)),
                                         );
                                         ui.add(
                                             egui::TextEdit::singleline(&mut parameter.ty)
-                                                .desired_width(150.0),
+                                                .min_size(egui::vec2(150.0, 0.0)),
                                         );
                                         if ui.small_button("Remove").clicked() {
                                             remove = Some(index);
@@ -336,14 +337,18 @@ impl Workspace {
                     offset, name, ty, ..
                 } => {
                     ui.label(format!("Physical stack offset {offset:+} bytes"));
-                    egui::Grid::new("edit-stack-variable").show(ui, |ui| {
-                        ui.label("Name");
-                        ui.add(egui::TextEdit::singleline(name).desired_width(400.0));
-                        ui.end_row();
-                        ui.label("Type");
-                        ui.add(egui::TextEdit::singleline(ty).desired_width(400.0));
-                        ui.end_row();
-                    });
+                    egui::Grid::new("edit-stack-variable")
+                        .num_columns(2)
+                        .show(ui, |ui| {
+                            ui.label("Name");
+                            ui.add(
+                                egui::TextEdit::singleline(name).min_size(egui::vec2(400.0, 0.0)),
+                            );
+                            ui.end_row();
+                            ui.label("Type");
+                            ui.add(egui::TextEdit::singleline(ty).min_size(egui::vec2(400.0, 0.0)));
+                            ui.end_row();
+                        });
                     ui.small("Leave a field empty to retain only the other override.");
                 }
                 EditValue::Alias { name, ty, .. } => {
@@ -383,6 +388,7 @@ impl Workspace {
                         .max_height(320.0)
                         .show(ui, |ui| {
                             egui::Grid::new("edit-structure-fields")
+                                .num_columns(4)
                                 .striped(true)
                                 .show(ui, |ui| {
                                     for label in ["Field", "Offset", "Type", ""] {
@@ -392,15 +398,15 @@ impl Workspace {
                                     for (index, field) in fields.iter_mut().enumerate() {
                                         ui.add(
                                             egui::TextEdit::singleline(&mut field.name)
-                                                .desired_width(140.0),
+                                                .min_size(egui::vec2(140.0, 0.0)),
                                         );
                                         ui.add(
                                             egui::TextEdit::singleline(&mut field.offset)
-                                                .desired_width(70.0),
+                                                .min_size(egui::vec2(70.0, 0.0)),
                                         );
                                         ui.add(
                                             egui::TextEdit::singleline(&mut field.ty)
-                                                .desired_width(170.0),
+                                                .min_size(egui::vec2(170.0, 0.0)),
                                         );
                                         if ui.small_button("Remove").clicked() {
                                             remove = Some(index);

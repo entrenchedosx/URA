@@ -69,6 +69,22 @@ pub fn recover(
     recover_with_control(binary, analysis, bundle, frame, hints, &())
 }
 
+pub(crate) fn observed_registers(
+    ssa: &SsaFunction,
+    control: &dyn crate::AnalysisControl,
+) -> Result<(BTreeSet<String>, bool), String> {
+    let roots = collect_roots(ssa, control)?;
+    Ok((
+        roots
+            .use_counts
+            .keys()
+            .filter_map(|id| ssa.variables.get(*id))
+            .map(|variable| variable.name.clone())
+            .collect(),
+        roots.truncated,
+    ))
+}
+
 pub fn recover_with_control(
     binary: &LoadedBinary,
     analysis: &ProgramAnalysis,

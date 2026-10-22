@@ -19,6 +19,40 @@ const MAX_CACHED_DECOMPILATIONS: usize = 4;
 const MAX_CALL_GRAPH_EDGES: usize = 20_000;
 const MAX_STACK_OFFSET: i64 = 1 << 30;
 
+fn json_bound(value: &impl serde::Serialize, limit: usize) -> ServiceResult<()> {
+    struct Counter {
+        bytes: usize,
+        limit: usize,
+        exceeded: bool,
+    }
+    impl std::io::Write for Counter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if bytes.len() > self.limit.saturating_sub(self.bytes) {
+                self.exceeded = true;
+                return Err(std::io::Error::other("JSON response bound exceeded"));
+            }
+            self.bytes += bytes.len();
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut counter = Counter {
+        bytes: 0,
+        limit,
+        exceeded: false,
+    };
+    match serde_json::to_writer(&mut counter, value) {
+        Ok(()) => Ok(()),
+        Err(_) if counter.exceeded => Err(ServiceError::LimitExceeded(format!(
+            "typed HIR exceeds the {} MiB response limit; use paged lines, IR, or a semantic block",
+            limit / (1024 * 1024)
+        ))),
+        Err(error) => Err(ServiceError::InvalidArgument(error.to_string())),
+    }
+}
+
 /// The typed AST retains the core's legacy u64 addresses in memory. Project
 /// its address fields to hex strings at the protocol boundary, including
 /// nested statements, signatures and evidence, before a JS client sees them.
@@ -254,22 +288,25 @@ impl Service {
         }
         let decompilation = self.decompiled(handle, address)?;
         let ast = if include_ast {
+            json_bound(&decompilation.ast, 2 * 1024 * 1024)?;
             let mut value = serde_json::to_value(&decompilation.ast)
                 .map_err(|error| ServiceError::InvalidArgument(error.to_string()))?;
             lossless_hir_addresses(&mut value);
-            let bytes = serde_json::to_vec(&value)
-                .map_err(|error| ServiceError::InvalidArgument(error.to_string()))?;
-            if bytes.len() > 2 * 1024 * 1024 {
-                return Err(ServiceError::LimitExceeded(
-                    "typed HIR exceeds the 2 MiB response limit; use paged lines or IR".into(),
-                ));
-            }
+            json_bound(&value, 2 * 1024 * 1024)?;
             Some(value)
         } else {
             None
         };
         let session = self.session(handle)?;
         let total = decompilation.high_level.lines.len();
+        let mut program = decompilation.program.protocol_view(decompilation.function);
+        if json_bound(&program, 1024 * 1024).is_err() {
+            program.flow.facts.clear();
+            program.parameters.clear();
+            program.flow.facts_omitted = true;
+            program.notes.push("Detailed type facts omitted at the 1 MiB transport budget; use semantic block queries.".into());
+            json_bound(&program, 1024 * 1024)?;
+        }
         let offset = offset.min(total);
         let lines = decompilation
             .high_level
@@ -297,9 +334,27 @@ impl Service {
             truncated: decompilation.high_level.truncated,
             notes: decompilation.high_level.notes.clone(),
             diagnostics: decompilation.diagnostics.clone(),
-            program: decompilation.program.clone(),
+            program,
             ast,
+            semantic: None,
         })
+    }
+
+    pub fn semantic_hir(
+        &mut self,
+        handle: &str,
+        address: &str,
+        block: Option<&str>,
+    ) -> ServiceResult<ura_core::decomp::semantic::Page> {
+        let result = self.decompiled(handle, address)?;
+        let block = block
+            .map(parse_address)
+            .transpose()?
+            .map(ura_core::ir::Address);
+        let page = ura_core::decomp::semantic::page(&result.semantic, block)
+            .map_err(ServiceError::InvalidArgument)?;
+        json_bound(&page, 2 * 1024 * 1024)?;
+        Ok(page)
     }
 
     pub fn call_graph(
@@ -334,7 +389,8 @@ impl Service {
                     .ok_or_else(|| ServiceError::FunctionNotFound(format_address(address)))
             })
             .transpose()?;
-        let graph = decomp::build_call_graph(analysis);
+        let graph = decomp::callgraph::build_with_imports(&session.binary, analysis, &())
+            .map_err(ServiceError::InvalidArgument)?;
         let mut selected = BTreeSet::new();
         let mut distances: BTreeMap<u64, usize> = BTreeMap::new();
         if let Some(focus) = focus {
@@ -399,6 +455,12 @@ impl Service {
                 recursive: node.recursive,
                 component: node.component,
                 depth: distances.get(&node.address).copied().unwrap_or(0),
+                import: node.import.as_ref().map(|metadata| {
+                    let mut value =
+                        serde_json::to_value(metadata).expect("import metadata is serializable");
+                    lossless_hir_addresses(&mut value);
+                    value
+                }),
             });
         }
         let cycles = graph

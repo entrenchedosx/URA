@@ -604,6 +604,10 @@ pub struct InferredType {
 #[serde(rename_all = "camelCase")]
 pub struct TypeInference {
     pub variables: Vec<InferredType>,
+    /// Authoritative per-definition evidence. `variables` remains a legacy
+    /// display summary and must not be applied to every SSA version.
+    #[serde(default)]
+    pub values: Vec<SsaInferredType>,
     pub conflicts: usize,
     pub truncated: bool,
     pub notes: Vec<String>,
@@ -613,6 +617,13 @@ const MAX_INFERRED_VARIABLES: usize = 5_000;
 
 /// Derive only constraints that the lifted semantics actually justify.
 pub fn infer_types(bundle: &crate::ir::inspect::Bundle) -> TypeInference {
+    infer_types_with_control(bundle, &()).unwrap_or_default()
+}
+
+pub fn infer_types_with_control(
+    bundle: &crate::ir::inspect::Bundle,
+    control: &dyn crate::AnalysisControl,
+) -> Result<TypeInference, String> {
     use crate::ir::ssa::{SsaFunction, Use};
     let ssa: &SsaFunction = &bundle.ssa;
     let mut constraints: BTreeMap<usize, Vec<TypeConstraint>> = BTreeMap::new();
@@ -631,6 +642,9 @@ pub fn infer_types(bundle: &crate::ir::inspect::Bundle) -> TypeInference {
         }
     };
     for block in &ssa.blocks {
+        if control.is_cancelled() {
+            return Err("type inference cancelled".into());
+        }
         for statement in &block.statements {
             match &statement.op {
                 crate::ir::Operation::Load => {
@@ -777,16 +791,198 @@ pub fn infer_types(bundle: &crate::ir::inspect::Bundle) -> TypeInference {
             .cmp(&b.variable)
             .then(a.variable_id.cmp(&b.variable_id))
     });
-    TypeInference {
+    let (values, values_partial) = infer_ssa_types(ssa, control)?;
+    Ok(TypeInference {
         variables,
+        values,
         conflicts: total_conflicts,
-        truncated,
+        truncated: truncated || values_partial,
         notes: vec![
-            "Signedness, pointee types and floating-point use are not inferred from scalar IR."
+            "Legacy summaries do not establish source signedness or pointee layout. Version-specific evidence is reported separately in values."
                 .into(),
             "A value used as an address is evidence, not proof of a valid pointer.".into(),
         ],
+    })
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SsaInferredType {
+    pub value: crate::ir::ssa::Value,
+    pub storage: crate::ir::Type,
+    pub ty: TypeRef,
+    pub confidence: Confidence,
+    pub constraints: Vec<TypeConstraint>,
+    pub conflicts: Vec<String>,
+}
+
+/// Separate machine storage widths from use-derived types, keyed by exact SSA
+/// definition. Unknown effects cannot become a known value merely from a use.
+pub fn infer_ssa_types(
+    ssa: &crate::ir::ssa::SsaFunction,
+    control: &dyn crate::AnalysisControl,
+) -> Result<(Vec<SsaInferredType>, bool), String> {
+    use crate::ir::{ssa::Use, Operation, Type};
+    const MAX_VALUES: usize = 20_000;
+    let mut records = BTreeMap::new();
+    let mut unknown = BTreeSet::new();
+    let mut evidence: BTreeMap<_, Vec<TypeConstraint>> = BTreeMap::new();
+    let mut truncated = false;
+    let mut remember = |value: crate::ir::ssa::Value| {
+        if records.len() < MAX_VALUES {
+            if let Some(variable) = ssa.variables.get(value.variable) {
+                records.insert(value, variable.ty);
+            }
+        } else if !records.contains_key(&value) {
+            truncated = true;
+        }
+    };
+    for block in &ssa.blocks {
+        if control.is_cancelled() {
+            return Err("SSA type inference cancelled".into());
+        }
+        for phi in &block.phis {
+            remember(phi.output);
+            for value in phi.incoming.values().chain(phi.initial.iter()) {
+                remember(*value);
+            }
+        }
+        for statement in &block.statements {
+            if let Some(output) = statement.output {
+                remember(output);
+                if matches!(statement.op, Operation::Unknown { .. }) {
+                    unknown.insert(output);
+                }
+            }
+            for operand in &statement.args {
+                if let Use::Value(value) = operand {
+                    remember(*value);
+                }
+            }
+            let address_operand = match statement.op {
+                Operation::Load | Operation::Store => statement.args.get(1),
+                Operation::ToAddress | Operation::Call => statement.args.first(),
+                _ => None,
+            };
+            if let Some(Use::Value(value)) = address_operand {
+                let claims = evidence.entry(*value).or_default();
+                if claims.len() < 8 {
+                    claims.push(TypeConstraint {
+                        kind: "addressUse".into(),
+                        source: Some(statement.source.0),
+                        detail:
+                            "exact SSA value interpreted as an address; pointee validity is unknown"
+                                .into(),
+                    });
+                }
+            }
+        }
+        for operand in block
+            .terminator
+            .state
+            .iter()
+            .chain(block.terminator.value.iter())
+        {
+            if let Use::Value(value) = operand {
+                remember(*value);
+            }
+        }
     }
+    let definitions: BTreeMap<_, _> = ssa
+        .blocks
+        .iter()
+        .flat_map(|block| &block.statements)
+        .filter_map(|statement| statement.output.map(|value| (value, statement)))
+        .collect();
+    let initial_evidence: Vec<_> = evidence
+        .iter()
+        .map(|(value, claims)| (*value, claims.clone()))
+        .collect();
+    for (mut value, claims) in initial_evidence {
+        for _ in 0..16 {
+            let Some(definition) = definitions.get(&value) else {
+                break;
+            };
+            let input = match definition.op {
+                Operation::Copy | Operation::ToAddress | Operation::ToBits => {
+                    definition.args.first()
+                }
+                Operation::Add | Operation::Sub
+                    if matches!(definition.args.get(1), Some(Use::Constant(_))) =>
+                {
+                    definition.args.first()
+                }
+                _ => None,
+            };
+            let Some(Use::Value(parent)) = input else {
+                break;
+            };
+            if ssa.variables[parent.variable].ty.width() != ssa.variables[value.variable].ty.width()
+            {
+                break;
+            }
+            value = *parent;
+            let entry = evidence.entry(value).or_default();
+            for claim in &claims {
+                if entry.len() < 8 && !entry.iter().any(|old| old.source == claim.source) {
+                    entry.push(claim.clone());
+                }
+            }
+        }
+    }
+    let values = records
+        .into_iter()
+        .map(|(value, storage)| {
+            let constraints = evidence.remove(&value).unwrap_or_default();
+            let width = storage.width();
+            let mut conflicts = Vec::new();
+            let (ty, confidence) = if unknown.contains(&value) {
+                (
+                    TypeRef::unknown(width, "definition has unknown machine effects"),
+                    Confidence::Unknown,
+                )
+            } else if !constraints.is_empty() && width == Some(ssa.address_width) {
+                (
+                    TypeRef::pointer_to(
+                        TypeRef::unknown(None, "pointee type not established"),
+                        ssa.address_width,
+                    ),
+                    Confidence::Low,
+                )
+            } else if !constraints.is_empty() {
+                conflicts.push("address-use width differs from target width".into());
+                (
+                    TypeRef::unknown(width, "conflicting address width"),
+                    Confidence::Unknown,
+                )
+            } else {
+                match storage {
+                    Type::Bits(1) => (TypeRef::Bool, Confidence::High),
+                    Type::Bits(bits) => (TypeRef::int(bits), Confidence::Low),
+                    Type::Address(bits) => (
+                        TypeRef::pointer_to(
+                            TypeRef::unknown(None, "pointee type not established"),
+                            bits,
+                        ),
+                        Confidence::Low,
+                    ),
+                    Type::Memory => (
+                        TypeRef::unknown(None, "memory state token"),
+                        Confidence::Unknown,
+                    ),
+                }
+            };
+            SsaInferredType {
+                value,
+                storage,
+                ty,
+                confidence,
+                constraints,
+                conflicts,
+            }
+        })
+        .collect();
+    Ok((values, truncated))
 }
 
 #[cfg(test)]

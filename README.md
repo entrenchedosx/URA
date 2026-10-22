@@ -16,6 +16,13 @@ type demands and trusted PE import binding. CLI `highlevel --json --ast` and MCP
 `ura_get_high_level_ir` with `ast: true` expose the tree. Full release acceptance
 remains pending; the existing public ZIP has not been replaced.
 
+The later [semantic engine continuation](docs/ENGINE-COMPLETION-0.8.md) adds
+executable semantic HIR, independent IR/HIR comparisons, version-specific type
+evidence, forward/return constraints and external import edges. Use `--semantic`
+or `--semantic-block` for semantic queries. Live editor/navigation and project
+reopening checks passed; current OS-level DPI acceptance remains unverified,
+so the corrected public prerelease remains withheld.
+
 ## Overview
 
 URA is a native Rust static-analysis workbench for executable files. The desktop,

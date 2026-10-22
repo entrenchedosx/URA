@@ -41,6 +41,86 @@ fn typed_hir_is_opt_in_self_contained_and_uses_lossless_addresses() {
 }
 
 #[test]
+fn semantic_queries_preserve_ids_types_provenance_and_partial_page_status() {
+    let mut service = Service::new(PathPolicy::allow_all(), false);
+    let handle = analyzed(&mut service);
+    let full = service.semantic_hir(&handle, "140001020", None).unwrap();
+    assert!(full.complete);
+    assert!(!full.nodes.is_empty());
+    assert!(full.signature.is_some());
+    assert!(full.blocks.iter().any(|block| matches!(
+        block.transfer.kind,
+        ura_core::decomp::semantic::TransferKind::Return {
+            result: Some(_),
+            ..
+        }
+    )));
+    let block = full.blocks[0].address.to_string();
+    let page = service
+        .semantic_hir(&handle, "140001020", Some(&block))
+        .unwrap();
+    assert!(!page.complete);
+    assert_eq!(page.total_nodes, full.total_nodes);
+    for node in &page.nodes {
+        assert_eq!(node.id, full.nodes[node.id].id);
+    }
+    let value = serde_json::to_value(&page).unwrap();
+    assert!(value["function"].is_string());
+    assert!(value["sources"][0]["source"]["block"].is_string());
+    assert!(service
+        .semantic_hir(&handle, "140001020", Some("deadbeef"))
+        .is_err());
+}
+
+#[test]
+fn semantic_cache_updates_after_signature_override_and_project_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("semantic.ura");
+    let mut service = Service::new(PathPolicy::allow_all(), true);
+    let handle = analyzed(&mut service);
+    service.save_project(&handle, &project, None).unwrap();
+    let before = service.high_level(&handle, "140001020", 0, 20).unwrap();
+    let override_signature = SignatureOverride {
+        convention: CallingConvention::Win64,
+        return_type: TypeRef::uint(16),
+        parameters: vec![],
+        variadic: Some(false),
+    };
+    service
+        .set_function_signature(&handle, &project, "140001020", &override_signature)
+        .unwrap();
+    let updated = service.function_signature(&handle, "140001020").unwrap();
+    assert_eq!(updated.signature.return_value.ty, TypeRef::uint(16));
+    let after = service.high_level(&handle, "140001020", 0, 20).unwrap();
+    assert_ne!(
+        serde_json::to_value(before.lines).unwrap(),
+        serde_json::to_value(after.lines).unwrap()
+    );
+    let reopened = service
+        .open_binary(&fixture(), Some(&project))
+        .unwrap()
+        .handle;
+    service
+        .analyze(&reopened, &AnalysisOptions::default())
+        .unwrap();
+    assert_eq!(
+        service
+            .function_signature(&reopened, "140001020")
+            .unwrap()
+            .signature
+            .return_value
+            .ty,
+        TypeRef::uint(16)
+    );
+    assert!(
+        service
+            .semantic_hir(&reopened, "140001020", None)
+            .unwrap()
+            .complete
+    );
+}
+
+#[test]
 fn override_writes_cannot_mix_two_projects_for_the_same_binary() {
     use ura_core::decomp::TypeDatabase;
     let dir = tempfile::tempdir().unwrap();

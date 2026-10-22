@@ -9,13 +9,16 @@
 - [x] Direct-call sites, SCCs, indirect-transfer counts and bounded graph queries.
 - [x] Shared CLI/MCP queries and explicit writes; 30 MCP tools.
 - [x] Independent adversarial review and regressions for the repaired subset.
-- [ ] Complete vector/aggregate ABI models and caller return-consumer evidence.
+- [ ] Complete vector/aggregate ABI models beyond scalar return-consumer evidence.
 - [x] Bind a narrow DLL/symbol-checked PE prototype subset; recover bounded PE/ELF slot identities.
-- [ ] Integrate imported call-graph nodes, sites and complete thunk/PLT identity.
+- [x] Integrate exact IAT/GOT call nodes, sites, verified import thunks and bounded SSA register-call proofs.
+- [ ] Extend delay/forwarded imports and general thunk/PLT ownership beyond the documented subset.
 - [x] Solve supplied native-width register parameter demands with a bounded monotone worklist.
-- [ ] Add forward, stack and return-consumer propagation with SSA-specific type conflicts.
+- [x] Add forward register-argument and return-consumer constraints, exact call-result definitions and SSA-specific conflicts.
+- [ ] Extend stack/vector/aggregate propagation and memory precision beyond the scalar subset.
 - [x] Retain a typed presentation AST with self-contained SSA types/operations and independently checked postdominator join proofs.
-- [ ] Complete high-level semantic types/provenance and interpreter-based region equivalence tests.
+- [x] Add independent indexed semantic HIR, exact provenance, SSA type evidence and bounded differential execution against raw IR, including compiled O0/O2 PE/ELF inputs.
+- [ ] Verify richer structured-source transformations; executable semantic control currently preserves explicit transfers.
 - [ ] Implement verified IR rewriting/alias refinements and semantic comparisons.
 - [ ] Broaden compiler/optimization/debug-metadata and malformed-input validation.
 - [ ] Resolve idle CPU and collect OS wakeup/GPU/presentation/latency measurements.
@@ -27,6 +30,10 @@ The earlier `v0.8.0-dev` public archive predates the audit repairs. See
 The later [finalisation checkpoint](FINALISATION-0.8.md) records the partial
 implementations, 213 tests and outstanding acceptance gates without rewriting
 historical audit results.
+The [semantic engine continuation](ENGINE-COMPLETION-0.8.md) records the later
+implementation, 237 tests and bounded semantic verification. Live native edits,
+address navigation and save/reopen passed; current OS-level DPI acceptance and
+publication remain pending. Historical checkpoints are not relabeled as done.
 
 ## v0.7 — development checkpoint, release blocked
 

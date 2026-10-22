@@ -503,6 +503,18 @@ fn decompiler_commands_match_the_shared_service_and_render_text() {
         )
         .unwrap()
     );
+    let semantic = run([
+        "highlevel",
+        text(&binary),
+        "--function",
+        "140001020",
+        "--semantic",
+        "--json",
+    ]);
+    assert!(semantic.status.success(), "{}", stderr(&semantic));
+    let result = json(&semantic);
+    assert_eq!(result["semantic"]["complete"], true);
+    assert!(result["semantic"]["nodes"].as_array().unwrap().len() > 10);
 
     let output = run([
         "callgraph",

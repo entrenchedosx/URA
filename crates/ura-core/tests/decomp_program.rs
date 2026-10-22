@@ -193,3 +193,200 @@ fn function_scope_budget_reports_partial_results_without_guessing() {
         .iter()
         .any(|note| note.contains("complete binary")));
 }
+
+#[test]
+fn actual_integer_argument_flows_forward_and_callee_return_flows_back() {
+    let mut code = vec![0xcc; 36];
+    code[..19].copy_from_slice(&[
+        0xb9, 7, 0, 0, 0, 0x48, 0x83, 0xec, 0x28, 0xe8, 18, 0, 0, 0, 0x48, 0x83, 0xc4, 0x28, 0xc3,
+    ]);
+    code[32..36].copy_from_slice(&[0x48, 0x89, 0xc8, 0xc3]);
+    let result = chain(&code, |_, _| {});
+    let formal=result.program.flow.facts.iter().find(|result|matches!(&result.key,decomp::flow::Key::Parameter {function,register} if function.0==0x140001020 && register=="rcx")).unwrap();
+    assert!(
+        matches!(formal.facts.resolved(), Some(TypeRef::Int { bits: 64, .. })),
+        "{formal:?}"
+    );
+    assert!(
+        matches!(
+            result.signature.return_value.ty,
+            TypeRef::Int { bits: 64, .. }
+        ),
+        "{:?}",
+        result.signature.return_value
+    );
+    assert!(result.program.flow.converged);
+    assert!(result.program.flow.calls[0].return_value.is_some());
+}
+
+#[test]
+fn exact_call_return_definition_receives_supplied_pointer_type() {
+    let result = chain(
+        &[0xe8, 0xfb, 0x0f, 0, 0, 0x48, 0x89, 0xc1, 0xc3],
+        |context, entry| {
+            context.hints.insert(decomp::signature::describe_override(
+                entry + 0x1000,
+                "supplied_external",
+                &SignatureOverride {
+                    convention: CallingConvention::Win64,
+                    return_type: TypeRef::pointer_to(TypeRef::uint(8), 64),
+                    parameters: vec![],
+                    variadic: Some(false),
+                },
+            ));
+        },
+    );
+    assert!(
+        matches!(result.signature.return_value.ty, TypeRef::Pointer { .. }),
+        "{:?}",
+        result.signature.return_value
+    );
+    let returned = result.program.flow.calls[0].return_value.unwrap();
+    let inferred = result
+        .types
+        .values
+        .iter()
+        .find(|ty| ty.value == returned)
+        .unwrap();
+    assert!(
+        matches!(inferred.ty, TypeRef::Pointer { .. }),
+        "{inferred:?}"
+    );
+    // The semantic operation remains unknown; type information never invents
+    // a concrete value or removes the IR's register/memory clobbers.
+    assert!(result
+        .semantic
+        .values
+        .iter()
+        .any(|value| value.ssa == returned
+            && value.definition.is_some_and(|id| matches!(
+                result.semantic.nodes[id].kind,
+                decomp::semantic::NodeKind::UnknownEffect
+            ))));
+}
+
+#[test]
+fn caller_dereference_constrains_an_internal_return_without_fabricating_a_value() {
+    let mut code = vec![0xcc; 36];
+    code[..9].copy_from_slice(&[0xe8, 27, 0, 0, 0, 0x48, 0x8b, 0x10, 0xc3]);
+    code[32..36].copy_from_slice(&[0x48, 0x89, 0xc8, 0xc3]);
+    let result = chain(&code, |_, _| {});
+    let returned=result.program.flow.facts.iter().find(|result|matches!(result.key,decomp::flow::Key::Return {function,..} if function.0==0x140001020)).unwrap();
+    assert!(
+        matches!(returned.facts.resolved(), Some(TypeRef::Pointer { .. })),
+        "{returned:?}"
+    );
+    assert!(returned
+        .facts
+        .claims
+        .iter()
+        .any(|claim| claim.origin.0 == 0x140001000 && claim.instruction.is_some()));
+}
+
+#[test]
+fn one_unestablished_return_path_remains_unknown() {
+    // If RCX is zero, RET uses the incoming untouched RAX; the other path sets it.
+    let result = chain(
+        &[0x48, 0x85, 0xc9, 0x74, 5, 0xb8, 1, 0, 0, 0, 0xc3],
+        |_, _| {},
+    );
+    assert!(matches!(
+        result.signature.return_value.ty,
+        TypeRef::Unknown { .. }
+    ));
+    assert!(result
+        .program
+        .flow
+        .facts
+        .iter()
+        .any(|fact| matches!(fact.key, decomp::flow::Key::Return { .. }) && fact.facts.unknown));
+}
+
+#[test]
+fn conflicting_supplied_caller_uses_are_not_silently_selected() {
+    let result = chain(
+        &[
+            0xe8, 0xfb, 0x0f, 0, 0, 0x48, 0x89, 0xc1, 0xe8, 0xf3, 0x1f, 0, 0, 0xc3,
+        ],
+        |context, entry| {
+            context.hints.insert(decomp::signature::describe_override(
+                entry + 0x1000,
+                "pointer_source",
+                &SignatureOverride {
+                    convention: CallingConvention::Win64,
+                    return_type: TypeRef::pointer_to(TypeRef::uint(8), 64),
+                    parameters: vec![],
+                    variadic: Some(false),
+                },
+            ));
+            hint(context, entry + 0x2000, TypeRef::uint(64));
+        },
+    );
+    assert!(
+        result
+            .program
+            .flow
+            .facts
+            .iter()
+            .any(|result| result.facts.conflicting()),
+        "{:?}",
+        result.program.flow
+    );
+    assert!(result
+        .types
+        .values
+        .iter()
+        .any(|value| !value.conflicts.is_empty()));
+}
+
+#[test]
+fn narrow_formal_does_not_falsely_type_or_conflict_the_whole_register() {
+    let result = chain(
+        &[0xb9, 7, 0, 0, 0, 0xe8, 0xf6, 0x0f, 0, 0, 0xc3],
+        |context, entry| hint(context, entry + 0x1000, TypeRef::uint(32)),
+    );
+    let formal=result.program.flow.facts.iter().find(|result|matches!(&result.key,decomp::flow::Key::Parameter {function,register} if function.0==0x140002000 && register=="rcx")).unwrap();
+    assert_eq!(formal.facts.resolved(), Some(TypeRef::uint(32)));
+    assert!(!formal.facts.conflicting());
+    assert!(result
+        .program
+        .flow
+        .facts
+        .iter()
+        .filter(|result| result.key.function() == 0x140001000)
+        .all(|result| !result.facts.conflicting()));
+}
+
+#[test]
+fn void_call_result_cannot_become_a_known_pointer_from_a_dereference() {
+    let result = chain(
+        &[0xe8, 0xfb, 0x0f, 0, 0, 0x48, 0x8b, 0x08, 0xc3],
+        |context, entry| {
+            context.hints.insert(decomp::signature::describe_override(
+                entry + 0x1000,
+                "void_external",
+                &SignatureOverride {
+                    convention: CallingConvention::Win64,
+                    return_type: TypeRef::Void,
+                    parameters: vec![],
+                    variadic: Some(false),
+                },
+            ));
+        },
+    );
+    assert!(matches!(
+        result.signature.return_value.ty,
+        TypeRef::Unknown { .. }
+    ));
+    let returned = result.program.flow.calls[0].return_value.unwrap();
+    assert!(matches!(
+        result
+            .types
+            .values
+            .iter()
+            .find(|value| value.value == returned)
+            .unwrap()
+            .ty,
+        TypeRef::Unknown { .. }
+    ));
+}

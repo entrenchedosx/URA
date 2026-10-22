@@ -1,0 +1,23 @@
+{
+  "version": "0.8.0-dev",
+  "archive": "URA-0.8.0-dev-windows-x64.zip",
+  "sha256": "30f21b7378bf79f5779ed8669e3d827861ac5717c8a4131eb92f3cea21de40c5",
+  "bytes": 16073145,
+  "zipCrcPassed": true,
+  "checkedFiles": 567,
+  "allFilesListed": true,
+  "binarySha256": {
+    "ura-native.exe": "9a8af2a0571212754a415a2f16c0e5616e56afbbe584e989a09aa6f37d4ff044",
+    "ura-cli.exe": "edeb7409ece4525aa62670c5c68fc7372f7448d7215cb149a0d48193ab5ff6e5",
+    "ura-mcp.exe": "a51e244cc2f81d1cf4628122adca1417e8b5e004dbad7f99c9f7a7ea79f671c5"
+  },
+  "binaryIdentityMatchesTestedRelease": true,
+  "iconMatches": true,
+  "missingLicenseTexts": 0,
+  "cliVersionAndJsonPassed": true,
+  "mcpVersionAndStdioPassed": true,
+  "mcpTools": 30,
+  "typeLibraryRoundTrip": true,
+  "nativeStartup": "Separate authorized live check: extracted desktop reached the Ready workspace.",
+  "liveNativeStartupPassed": true
+}

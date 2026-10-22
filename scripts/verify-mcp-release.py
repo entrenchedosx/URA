@@ -58,6 +58,10 @@ try:
     assert typed['ast']['source']['variables']
     assert typed['ast']['source']['blocks']
     assert typed['program']['converged']
+    semantic = tool('ura_get_high_level_ir', {'handle':handle,'function':'140001020','limit':5,'semantic':True})['semantic']
+    assert semantic['complete'] and semantic['nodes'] and semantic['values']
+    page = tool('ura_get_high_level_ir', {'handle':handle,'function':'140001020','limit':5,'semanticBlock':semantic['blocks'][0]['address']})['semantic']
+    assert not page['complete'] and page['totalNodes'] == semantic['totalNodes']
     graph = tool('ura_get_call_graph',{'handle':handle,'function':'140001000','depth':1,'maxNodes':50})
     assert graph['schemaVersion'] == 1
     project = folder/'fixture.ura'
@@ -67,7 +71,7 @@ try:
     tool('ura_set_type_library',{'handle':handle,'project':str(project),'database':library})
     assert tool('ura_get_structure',{'handle':handle,'name':'Header'})['structure']['fields'][0]['name'] == 'length'
     assert tool('ura_get_types',{'handle':handle})['database'] == library
-    result = {'tools':30,'irSchema':1,'decompilerSchema':decompiler,'callGraphNodes':graph['returnedNodes'],'fixtureQueryMs':timings,'projectPrepared':project.name,'typeLibraryRoundTrip':True,'typedAstRoundTrip':True,'programConverged':typed['program']['converged']}
+    result = {'tools':30,'irSchema':1,'decompilerSchema':decompiler,'callGraphNodes':graph['returnedNodes'],'fixtureQueryMs':timings,'projectPrepared':project.name,'typeLibraryRoundTrip':True,'typedAstRoundTrip':True,'semanticRoundTrip':True,'semanticBlockPage':True,'programConverged':typed['program']['converged']}
     (project.parent/'mcp-release.json').write_text(json.dumps(result,indent=2),encoding='utf-8')
     print(json.dumps(result,indent=2))
 finally:

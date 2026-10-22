@@ -304,6 +304,22 @@ pub fn hydrate(binary: &LoadedBinary, hints: &mut SignatureHints) -> (Vec<String
         .unwrap_or_else(|error| (vec![format!("import recovery unavailable: {error}")], 0))
 }
 
+pub fn prototype(
+    binary: &LoadedBinary,
+    binding: &ImportBinding,
+) -> Option<super::FunctionSignature> {
+    let convention = convention(binary, binding)?;
+    let mut signature =
+        super::imported_signature(&binding.name, convention, binary.analysis().bitness as u16)?
+            .ok()?;
+    signature.function = binding.address.0;
+    for evidence in &mut signature.evidence {
+        evidence.address = Some(binding.address.0);
+        evidence.detail = format!("{}!{} at {}: exact import identity and curated prototype; loaded implementation is not verified", binding.library.as_deref().unwrap_or("?"), binding.name, binding.address);
+    }
+    Some(signature)
+}
+
 pub fn hydrate_with_control(
     binary: &LoadedBinary,
     hints: &mut SignatureHints,

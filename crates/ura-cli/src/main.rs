@@ -265,6 +265,12 @@ enum Command {
         /// Include the typed tree, value types and original SSA semantics (2 MiB maximum)
         #[arg(long, requires = "json")]
         ast: bool,
+        /// Include executable semantic HIR (2 MiB maximum)
+        #[arg(long, requires = "json")]
+        semantic: bool,
+        /// Select one semantic block, preserving global IDs and external references
+        #[arg(long, requires = "json")]
+        semantic_block: Option<String>,
     },
     /// Read raw file bytes by virtual address or file offset
     Hex {
@@ -740,10 +746,17 @@ fn run(cli: Cli) -> Result<(), ServiceError> {
             offset,
             limit,
             ast,
+            semantic,
+            semantic_block,
         } => {
             let handle = open(&mut service, &common)?.handle;
             service.analyze(&handle, &analysis.options())?;
-            let response = service.high_level_with_ast(&handle, &function, offset, limit, ast)?;
+            let mut response =
+                service.high_level_with_ast(&handle, &function, offset, limit, ast)?;
+            if semantic || semantic_block.is_some() {
+                response.semantic =
+                    Some(service.semantic_hir(&handle, &function, semantic_block.as_deref())?);
+            }
             if common.json {
                 print_json(&response)
             } else {

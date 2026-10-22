@@ -94,7 +94,7 @@ report = {
     'mcpVersionAndStdioPassed': True,
     'mcpTools': mcp['tools'],
     'typeLibraryRoundTrip': mcp['typeLibraryRoundTrip'],
-    'nativeStartup': 'Not repeated: user requested no desktop interaction or launches. Image matches the previously tested Release executable.',
+    'nativeStartup': 'Not exercised by this headless verifier. Image matches the tested Release executable; consult the separate live desktop verification record.',
 }
 (archive.parent / 'package-verification.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
 print(json.dumps(report, indent=2))

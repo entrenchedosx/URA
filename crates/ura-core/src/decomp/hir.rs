@@ -296,7 +296,7 @@ struct Structurer<'a> {
     predecessors: BTreeMap<u64, Vec<u64>>,
     latches: BTreeMap<u64, Vec<u64>>,
     postdominators: Option<PostDominators>,
-    successors: BTreeMap<u64, Vec<u64>>,
+    join_proofs: super::postdom::JoinProofs,
     constants: BTreeMap<Value, Constant>,
     dead: BTreeSet<Value>,
     hints: &'a SignatureHints,
@@ -359,7 +359,7 @@ pub fn build_with_ast(
         predecessors,
         latches,
         postdominators,
-        successors,
+        join_proofs: super::postdom::JoinProofs::new(&successors),
         constants: dataflow.constants.iter().copied().collect(),
         dead: dataflow.dead_definitions.iter().copied().collect(),
         hints,
@@ -1213,13 +1213,14 @@ impl<'a> Structurer<'a> {
             .is_some_and(|frame| !frame.nodes.contains(&target))
     }
 
-    fn join_point(&self, a: u64, b: u64) -> Option<u64> {
+    fn join_point(&mut self, a: u64, b: u64) -> Option<u64> {
         if a == b {
             return Some(a);
         }
-        self.postdominators
-            .as_ref()?
-            .first_common_on_all_paths(a, b, &self.successors)
+        let candidate = self.postdominators.as_ref()?.first_common(a, b)?;
+        self.join_proofs
+            .proves(candidate, a, b)
+            .then_some(candidate)
     }
 
     fn return_shape(&mut self, block: &'a SsaBlock) -> HirReturnShape {

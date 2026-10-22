@@ -205,6 +205,10 @@ pub struct DecompFunctionParams {
     pub limit: Option<usize>,
     /// Include the self-contained typed tree and original SSA semantics (2 MiB maximum); high-level IR queries only.
     pub ast: Option<bool>,
+    /// Include executable semantic HIR, independently of the legacy presentation AST (2 MiB maximum).
+    pub semantic: Option<bool>,
+    /// Select one semantic block by exact address. Partial pages preserve global IDs and list external definitions.
+    pub semantic_block: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

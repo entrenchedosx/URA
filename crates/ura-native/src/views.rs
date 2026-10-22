@@ -648,6 +648,52 @@ impl Workspace {
             return;
         };
         let inference = &data.types;
+        egui::CollapsingHeader::new(format!("SSA definitions ({})", inference.values.len()))
+            .id_salt(("ssa-types", function))
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .max_height(220.0)
+                    .id_salt(("ssa-type-rows", function))
+                    .show_rows(
+                        ui,
+                        self.settings.row_height,
+                        inference.values.len(),
+                        |ui, range| {
+                            for value in &inference.values[range] {
+                                let name = data
+                                    .ast
+                                    .as_ref()
+                                    .and_then(|ast| ast.source.as_ref())
+                                    .and_then(|source| source.variables.get(value.value.variable))
+                                    .map(|variable| variable.name.clone())
+                                    .unwrap_or_else(|| format!("v{}", value.value.variable));
+                                ui.label(format!(
+                                    "{}.{} : {} · {}",
+                                    name,
+                                    value.value.version,
+                                    value.ty.display(),
+                                    value.confidence.name()
+                                ))
+                                .on_hover_ui(|ui| {
+                                    for claim in &value.constraints {
+                                        ui.label(format!(
+                                            "{} · {} · {}",
+                                            claim.kind,
+                                            claim
+                                                .source
+                                                .map(format_address)
+                                                .unwrap_or_else(|| "synthetic".into()),
+                                            claim.detail
+                                        ));
+                                    }
+                                    for conflict in &value.conflicts {
+                                        ui.label(format!("Conflict: {conflict}"));
+                                    }
+                                });
+                            }
+                        },
+                    );
+            });
         ui.horizontal(|ui| {
             ui.label(RichText::new(name).strong());
             ui.label(

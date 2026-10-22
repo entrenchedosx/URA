@@ -306,6 +306,22 @@ pub fn apply_override(
     result.convention = override_signature.convention;
     result.convention_confidence = Confidence::High;
     result.return_value.ty = override_signature.return_type.clone();
+    let bits = if matches!(
+        override_signature.convention,
+        CallingConvention::Win64 | CallingConvention::SysV64
+    ) {
+        64
+    } else {
+        32
+    };
+    let width = result
+        .return_value
+        .ty
+        .bits(&super::types::TypeDatabase::new(bits));
+    result.return_value.location = width
+        .filter(|width| *width > 0 && *width <= u64::from(bits))
+        .and_then(|_| override_signature.convention.return_register(bits))
+        .map(|name| Location::Register { name: name.into() });
     if matches!(
         result.return_value.ty,
         TypeRef::Void

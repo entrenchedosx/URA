@@ -7,10 +7,13 @@
 pub mod abi;
 pub mod api;
 pub mod callgraph;
+pub mod execute;
+pub mod flow;
 pub mod hir;
 pub mod imports;
 pub mod postdom;
 pub mod program;
+pub mod semantic;
 pub mod signature;
 pub mod stack;
 pub mod types;
@@ -71,6 +74,7 @@ pub struct FunctionDecompilation {
     #[serde(default)]
     pub ast: Option<hir::HirFunction>,
     pub program: program::ProgramTypes,
+    pub semantic: semantic::SemanticFunction,
     pub diagnostics: Vec<String>,
 }
 
@@ -98,6 +102,7 @@ pub fn analyze_function(
         Err(error) if control.is_cancelled() => return Err(error),
         Err(error) => vec![format!("import recovery unavailable: {error}")],
     };
+    callgraph::hydrate_thunks(binary, analysis, &mut hints, control)?;
     // The current function's explicit signature must also be a solver seed.
     if let Some(override_signature) = &context.override_signature {
         let errors = override_signature.validate_for_width(binary.analysis().bitness as u16);
@@ -148,10 +153,24 @@ pub fn analyze_function(
     }
     frame = stack::recover_with_control(binary, analysis, address, Some(&signature), control)?;
     stack::apply_overrides(&mut frame, &context.stack_overrides);
-    let mut inferred = types::infer_types(&bundle);
+    let mut inferred = types::infer_types_with_control(&bundle, control)?;
     abi::merge_value_constraints(&mut inferred, &recovery.value_constraints);
+    flow::apply_values(address, &mut inferred.values, &program.flow);
+    inferred.conflicts += inferred
+        .values
+        .iter()
+        .map(|value| value.conflicts.len())
+        .sum::<usize>();
+    if program.truncated || !program.converged {
+        inferred.truncated = true;
+        inferred.notes.push("Interprocedural facts cover a bounded partial scope; missing information remains unknown.".into());
+    }
+    let mut semantic = semantic::lower(&bundle.ssa, &inferred.values, control)?;
+    semantic.types_partial |= inferred.truncated;
+    semantic.attach_signature(&signature);
     let mut diagnostics = recovery.notes;
     diagnostics.extend(import_notes);
+    diagnostics.push(format!("SSA argument/return constraints: {} facts, {} call sites, {} updates; converged={}, partial={}",program.flow.total_facts,program.flow.calls.len(),program.flow.updates,program.flow.converged,program.flow.truncated));
     diagnostics.push(format!("interprocedural parameter demands: {} function(s), {} register-copy edge(s), {} update(s), converged={}, partial={}", program.functions.len(), program.edges.len(), program.updates, program.converged, program.truncated));
     let (high_level, ast) = hir::build_with_ast(
         &bundle.ssa,
@@ -191,6 +210,7 @@ pub fn analyze_function(
         high_level,
         ast: Some(ast),
         program,
+        semantic,
         diagnostics,
     })
 }

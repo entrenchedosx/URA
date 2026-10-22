@@ -129,6 +129,81 @@ fn pe_import_slots_bind_to_their_tables() {
 }
 
 #[test]
+fn external_graph_has_exact_site_identity_and_trusted_signature() {
+    let (binary, analysis, entry, crafted) = analyze();
+    let graph = decomp::callgraph::build_with_imports(&binary, &analysis, &()).unwrap();
+    let external = graph.node(crafted.slot).unwrap();
+    assert!(external.external);
+    let import = external.import.as_ref().unwrap();
+    assert_eq!(import.binding.library.as_deref(), Some("USER32.dll"));
+    assert_eq!(
+        import.signature.as_ref().unwrap().convention,
+        CallingConvention::Win64
+    );
+    let sites: Vec<_> = graph
+        .edges
+        .iter()
+        .filter(|edge| edge.to == crafted.slot)
+        .collect();
+    assert_eq!(sites.len(), 1);
+    assert_eq!(sites[0].from, entry);
+    assert_eq!(sites[0].instruction, Some(entry + 4));
+    assert_eq!(graph.unresolved_indirect, 0);
+}
+
+#[test]
+fn import_thunk_keeps_internal_call_and_separate_external_jump() {
+    let mut crafted = image();
+    // caller: sub rsp,28; call entry+40; add rsp,28; ret
+    crafted.bytes[0x204..0x209].copy_from_slice(&[0xe8, 0x37, 0, 0, 0]);
+    crafted.bytes[0x209..0x20e].copy_from_slice(&[0x48, 0x83, 0xc4, 0x28, 0xc3]);
+    crafted.bytes[0x20e..0x240].fill(0xcc);
+    crafted.bytes[0x240..0x242].copy_from_slice(&[0xff, 0x25]);
+    crafted.bytes[0x242..0x246].copy_from_slice(&(0x2090u32 - 0x1046).to_le_bytes());
+    let binary = analyze_bytes(Path::new("thunk.exe"), crafted.bytes).unwrap();
+    let (analysis, entry) = model(&binary);
+    let graph = decomp::callgraph::build_with_imports(&binary, &analysis, &()).unwrap();
+    assert!(graph
+        .edges
+        .iter()
+        .any(|edge| edge.from == entry && edge.to == entry + 0x40));
+    assert!(graph.edges.iter().any(|edge| edge.from == entry + 0x40
+        && edge.to == crafted.slot
+        && edge.kind == "importThunk"));
+    assert_eq!(
+        graph
+            .edges
+            .iter()
+            .filter(|edge| edge.instruction == Some(entry + 4))
+            .count(),
+        1
+    );
+    let result =
+        decomp::analyze_function(&binary, &analysis, entry, &DecompContext::new(64), &()).unwrap();
+    assert!(result
+        .high_level
+        .lines
+        .iter()
+        .any(|line| line.text.starts_with("MessageBoxA(")));
+}
+
+#[test]
+fn register_call_uses_the_shared_ssa_import_proof_and_exact_call_address() {
+    let mut crafted = image();
+    crafted.bytes[0x204..0x207].copy_from_slice(&[0x48, 0x8b, 0x05]);
+    crafted.bytes[0x207..0x20b].copy_from_slice(&(0x2090u32 - 0x100b).to_le_bytes());
+    crafted.bytes[0x20b..0x212].copy_from_slice(&[0xff, 0xd0, 0x48, 0x83, 0xc4, 0x28, 0xc3]);
+    let binary = analyze_bytes(Path::new("register-import.exe"), crafted.bytes).unwrap();
+    let (analysis, entry) = model(&binary);
+    let graph = decomp::callgraph::build_with_imports(&binary, &analysis, &()).unwrap();
+    assert!(graph
+        .edges
+        .iter()
+        .any(|edge| edge.to == crafted.slot && edge.instruction == Some(entry + 11)));
+    assert_eq!(graph.unresolved_indirect, 0);
+}
+
+#[test]
 fn hydrate_has_precedence_for_user_hints() {
     let (binary, _, _, _) = analyze();
     let bound = imports::bindings(&binary).unwrap();
@@ -360,7 +435,7 @@ fn dynamic_elf(relocation_type: u32) -> LoadedBinary {
     let names = b"\0.text\0.dynstr\0.dynsym\0.rela.plt\0.shstrtab\0";
     bytes[0x380..0x380 + names.len()].copy_from_slice(names);
     for (index, (name, kind, address, offset, size, link, entry)) in [
-        (1, 1, 0x401000, 0x100, 1, 0, 0),
+        (1, 1, 0x401000, 0x100, 64, 0, 0),
         (7, 3, 0x402000, 0x200, 12, 0, 0),
         (15, 11, 0x402100, 0x240, 72, 2, 24),
         (23, 4, 0x402200, 0x300, 48, 3, 24),
@@ -396,4 +471,23 @@ fn elf_undefined_symbol_slots_use_actual_indices_and_do_not_guess_library_owners
         0
     );
     assert!(imports::bindings(&dynamic_elf(1026)).unwrap().is_empty());
+}
+
+#[test]
+fn elf_got_call_is_an_external_identity_without_an_unproved_libc_signature() {
+    let mut bytes = dynamic_elf(7).bytes().to_vec();
+    bytes[0x100..0x107].copy_from_slice(&[0xff, 0x15, 0xfa, 0x1f, 0, 0, 0xc3]);
+    let binary = analyze_bytes(Path::new("got-call.elf"), bytes).unwrap();
+    let (analysis, entry) = model(&binary);
+    let graph = decomp::callgraph::build_with_imports(&binary, &analysis, &()).unwrap();
+    let node = graph.node(0x403000).unwrap();
+    let imported = node.import.as_ref().unwrap();
+    assert!(node.external);
+    assert_eq!(imported.binding.name, "puts");
+    assert!(imported.signature.is_none());
+    assert!(graph
+        .edges
+        .iter()
+        .any(|edge| edge.from == entry && edge.instruction == Some(entry) && edge.to == 0x403000));
+    assert_eq!(graph.unresolved_indirect, 0);
 }

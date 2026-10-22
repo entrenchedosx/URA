@@ -89,6 +89,51 @@ pub struct ProgramTypes {
     pub converged: bool,
     pub truncated: bool,
     pub notes: Vec<String>,
+    #[serde(default)]
+    pub flow: super::flow::FlowReport,
+}
+impl ProgramTypes {
+    /// Bounded transport projection, not a change to the retained analysis.
+    pub fn protocol_view(&self, function: u64) -> Self {
+        let facts: Vec<_> = self
+            .flow
+            .facts
+            .iter()
+            .filter(|result| {
+                !matches!(result.key, super::flow::Key::Value { .. })
+                    || (result.key.function() == function && !result.facts.claims.is_empty())
+            })
+            .take(256)
+            .cloned()
+            .collect();
+        let omitted = facts.len() < self.flow.facts.len()
+            || self.edges.len() > 256
+            || self.parameters.len() > 128
+            || self.flow.calls.len() > 64;
+        let mut notes = self.notes.clone();
+        if omitted {
+            notes.push(format!("Transport view omits details: {} total flow facts, {} total argument edges, {} total call sites. Fetch a semantic block for exact SSA types/provenance.",self.flow.facts.len(),self.edges.len(),self.flow.calls.len()));
+        }
+        Self {
+            functions: self.functions.clone(),
+            edges: self.edges.iter().take(256).cloned().collect(),
+            parameters: self.parameters.iter().take(128).cloned().collect(),
+            updates: self.updates,
+            converged: self.converged,
+            truncated: self.truncated,
+            notes,
+            flow: super::flow::FlowReport {
+                facts,
+                calls: self.flow.calls.iter().take(64).cloned().collect(),
+                updates: self.flow.updates,
+                converged: self.flow.converged,
+                truncated: self.flow.truncated,
+                notes: self.flow.notes.clone(),
+                total_facts: self.flow.facts.len(),
+                facts_omitted: omitted,
+            },
+        }
+    }
 }
 
 fn check(control: &dyn AnalysisControl) -> Result<(), String> {
@@ -165,18 +210,12 @@ pub fn enrich(
 ) -> Result<ProgramTypes, String> {
     check(control)?;
     let mut report = ProgramTypes::default();
-    report.notes.push("Backward parameter demands follow exact native-width register copies. Container ABI defaults are assumptions. Return consumers, stack/variadic arguments, casts, phis and forward argument inference are not propagated.".into());
+    report.notes.push("Exact-copy parameter demands and combined SSA argument/return constraints use a bounded scope. Container ABI defaults remain assumptions; convergence is not whole-program coverage.".into());
     if entry.ssa.address_width != 64 || !matches!(binary.analysis().format.as_str(), "PE" | "ELF") {
         report.converged = true;
         report
             .notes
             .push("Cross-function propagation currently supports PE/ELF x86-64 only.".into());
-        return Ok(report);
-    }
-    if hints.by_address.is_empty() {
-        report.functions.push(entry.ssa.entry);
-        report.converged = true;
-        report.notes.push("No supplied parameter types; the empty demand set is already at a fixed point, so callee bodies were not lifted.".into());
         return Ok(report);
     }
     let default = if binary.analysis().format == "PE" {
@@ -319,6 +358,10 @@ pub fn enrich(
             {
                 continue;
             }
+            if !super::flow::supported_type(&parameter.ty) {
+                report.truncated = true;
+                continue;
+            }
             value.merge(&ParameterFacts {
                 claims: vec![TypeClaim {
                     ty: parameter.ty.clone(),
@@ -339,8 +382,11 @@ pub fn enrich(
         .into_iter()
         .map(|(parameter, facts)| ParameterResult { parameter, facts })
         .collect();
+    report.flow = super::flow::solve(&bodies, hints, default, &report.edges, control)?;
+    report.converged &= report.flow.converged;
+    report.truncated |= report.flow.truncated;
     // No provisional facts escape if the update budget prevented convergence.
-    if converged {
+    if report.converged {
         let mut recovered = BTreeMap::new();
         for result in &report.parameters {
             let function = result.parameter.function.0;
@@ -361,6 +407,34 @@ pub fn enrich(
                 );
             }
             apply_fact(recovered.get_mut(&function).unwrap(), result, &report.edges);
+        }
+        for function in report
+            .flow
+            .facts
+            .iter()
+            .filter(|result| {
+                !matches!(result.key, super::flow::Key::Value { .. })
+                    && (result.facts.resolved().is_some() || result.facts.conflicting())
+            })
+            .map(|result| result.key.function())
+            .collect::<BTreeSet<_>>()
+        {
+            if hints.get(function).is_some() || recovered.contains_key(&function) {
+                continue;
+            }
+            let Some(bundle) = bodies.get(&function) else {
+                continue;
+            };
+            let frame =
+                super::stack::recover_with_control(binary, analysis, function, None, control)?;
+            recovered.insert(
+                function,
+                super::abi::recover_with_control(binary, analysis, bundle, &frame, hints, control)?
+                    .signature,
+            );
+        }
+        for signature in recovered.values_mut() {
+            super::flow::apply(signature, &report.flow);
         }
         for (_, signature) in recovered {
             hints.insert(signature);
@@ -465,6 +539,7 @@ pub fn apply_to_signature(signature: &mut FunctionSignature, report: &ProgramTyp
             apply_fact(signature, result, &report.edges);
         }
     }
+    super::flow::apply(signature, &report.flow);
 }
 
 #[cfg(test)]

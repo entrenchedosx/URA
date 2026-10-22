@@ -1,5 +1,11 @@
 # Decompiler foundations (v0.8)
 
+Current semantic execution, SSA typing, bidirectional argument/return constraints,
+external graph integration and block transport are described in the
+[semantic engine continuation](ENGINE-COMPLETION-0.8.md). The C-like presentation
+tree below remains a compatibility diagnostic; executable semantics use the
+indexed model with explicit transfers.
+
 The later [finalisation checkpoint](FINALISATION-0.8.md) describes the new typed
 tree/source metadata, postdominator join proof, bounded parameter-demand solver,
 import binding and AST protocol option. It supersedes the corresponding missing
