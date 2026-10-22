@@ -26,6 +26,7 @@ use crate::RESPONSE_SCHEMA_VERSION;
 const MAX_FUNCTION_REFS: usize = 1_000;
 
 pub struct Service {
+    pub debugger: crate::DebugService,
     pub(crate) policy: PathPolicy,
     writes_enabled: bool,
     next_handle: u64,
@@ -58,6 +59,9 @@ pub(crate) struct Session {
 impl Service {
     pub fn new(policy: PathPolicy, writes_enabled: bool) -> Self {
         Self {
+            debugger: crate::DebugService::new(policy.clone(), crate::DebugPermissions::default())
+                .expect("empty debug policy")
+                .with_project_writes(writes_enabled),
             policy,
             writes_enabled,
             next_handle: 1,

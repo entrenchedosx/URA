@@ -42,6 +42,15 @@ impl egui_dock::TabViewer for Workspace {
             Panel::CallGraph => self.call_graph_view(ui),
             Panel::HighLevel => self.high_level_view(ui),
             Panel::Patches => self.patch_manager(ui),
+            Panel::Debugger
+            | Panel::Registers
+            | Panel::Threads
+            | Panel::DebugStack
+            | Panel::Memory
+            | Panel::Modules
+            | Panel::DebugEvents
+            | Panel::Breakpoints
+            | Panel::Runtime => self.debugger_panel(ui, *tab),
         }
     }
     fn scroll_bars(&self, _tab: &Panel) -> [bool; 2] {
@@ -763,6 +772,7 @@ impl Workspace {
         }
     }
     fn high_level_view(&mut self, ui: &mut egui::Ui) {
+        self.runtime_evidence_banner(ui);
         let Some((function, name)) = self.decomp_target(ui, "pseudocode") else {
             return;
         };
@@ -1487,6 +1497,8 @@ impl Workspace {
     }
 
     fn disassembly(&mut self, ui: &mut egui::Ui) {
+        self.runtime_evidence_banner(ui);
+        let runtime_ip = self.paused_static_ip();
         if ui
             .add_enabled(
                 self.patches.as_ref().is_some_and(|p| p.supports_assembly())
@@ -1630,7 +1642,11 @@ impl Workspace {
                                         .as_ref()
                                         .map(|a| a.xrefs_to(address).count())
                                         .unwrap_or(0);
-                                    if boundary.is_some() {
+                                    if runtime_ip == Some(address) {
+                                        ui.colored_label(self.colors().accent, "▶").on_hover_text(
+                                            "Paused runtime instruction in identity-matched image",
+                                        );
+                                    } else if boundary.is_some() {
                                         ui.colored_label(self.colors().accent, "ƒ")
                                             .on_hover_text("Function start");
                                     } else if incoming > 0 {

@@ -35,3 +35,18 @@ does not imply a transport cancellation feature. The transaction/history and JSO
 budgets are detailed in [BINARY-PATCHING.md](BINARY-PATCHING.md). No inspected file
 is executed or uploaded. Actual stdio regression and Release audits cover writes,
 denials, reopens, exact export bytes and matching CLI results.
+
+## v0.11 debugger tools (55 total)
+
+The prior 39 tools are preserved. Sixteen `ura_debug_*` tools route to the real
+Windows backend: launch, attach, status, continue, pause, step, detach, terminate,
+threads, registers, read_memory, breakpoints, call_stack, modules, disassembly,
+events. Responses use `{schemaVersion:1,result:...}`; failures keep the existing
+structured error. `breakpoints` additionally supports explicit project save/restore.
+
+Debugging is disabled by default, independently of `--enable-writes`. Launch and
+attach need separate flags, exact target files and allowed PIDs; terminating an
+attached target needs its own flag. There is no arbitrary runtime memory-write
+endpoint. Command waits are bounded; poll status for asynchronous execution stops.
+Target data/debug output never changes policy. Full scope and examples are in
+[DEBUGGER.md](DEBUGGER.md). Static analysis remains non-executing.

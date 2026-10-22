@@ -8,6 +8,9 @@ use std::{
     time::Duration,
 };
 
+#[cfg(all(windows, target_arch = "x86_64"))]
+#[path = "../../../tests/support/debug_fixture.rs"]
+mod debug_fixture;
 struct Client {
     child: Child,
     input: ChildStdin,
@@ -16,11 +19,15 @@ struct Client {
 }
 impl Client {
     fn start(root: &Path, writes: bool) -> Self {
+        Self::start_options(root, writes, &[])
+    }
+    fn start_options(root: &Path, writes: bool, extra: &[String]) -> Self {
         let mut command = Command::new(env!("CARGO_BIN_EXE_ura-mcp"));
         command.args(["--allow", root.to_str().unwrap(), "--log", "off"]);
         if writes {
             command.arg("--enable-writes");
         }
+        command.args(extra);
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -100,6 +107,59 @@ impl Drop for Client {
 }
 fn fixture() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/ura64.exe")
+}
+
+#[cfg(all(windows, target_arch = "x86_64"))]
+#[test]
+fn stdio_debugger_launch_step_and_separate_permission_boundary() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .unwrap();
+    let target = debug_fixture::fixture();
+    let mut denied = Client::start(&root, true);
+    let result = denied.tool_result("ura_debug_launch", json!({"executable":target}));
+    assert_eq!(
+        result["isError"], true,
+        "ordinary writes must not enable execution"
+    );
+    let mut client = Client::start_options(
+        &root,
+        false,
+        &[
+            "--enable-debug-launch".into(),
+            "--debug-target".into(),
+            target.display().to_string(),
+        ],
+    );
+    let launched = client.tool("ura_debug_launch", json!({"executable":target}))["result"].clone();
+    let session = launched["session"].clone();
+    assert!(session.is_string(), "{launched}");
+    let wait = |client: &mut Client, state: &str| {
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let status =
+                client.tool("ura_debug_status", json!({"session":session}))["result"].clone();
+            if status["state"] == state {
+                break status;
+            }
+            assert!(std::time::Instant::now() < deadline, "{status}");
+            std::thread::sleep(Duration::from_millis(15));
+        }
+    };
+    let paused = wait(&mut client, "paused");
+    let memory = client.tool(
+        "ura_debug_read_memory",
+        json!({"session":session,"address":paused["registers"]["values"]["rip"],"length":16}),
+    );
+    assert_eq!(memory["result"]["read"], 16);
+    client.tool("ura_debug_step", json!({"session":session}));
+    let stepped = wait(&mut client, "paused");
+    assert_eq!(stepped["reason"], "singleStep");
+    let denied = client.tool_result("ura_debug_attach", json!({"pid":4,"executable":target}));
+    assert_eq!(denied["isError"], true);
+    client.tool("ura_debug_terminate", json!({"session":session}));
+    wait(&mut client, "exited");
 }
 
 #[test]
@@ -196,7 +256,7 @@ fn stdio_queries_errors_and_read_only_permissions() {
     let mut client = Client::start(directory.path(), false);
     let tools = client.request("tools/list", json!({}));
     let listed = tools["result"]["tools"].as_array().unwrap();
-    assert_eq!(listed.len(), 39);
+    assert_eq!(listed.len(), 55);
     for tool in listed {
         let expected = !matches!(
             tool["name"].as_str().unwrap(),
@@ -212,6 +272,14 @@ fn stdio_queries_errors_and_read_only_permissions() {
                 | "ura_apply_patch"
                 | "ura_patch_history"
                 | "ura_export_patched_binary"
+                | "ura_debug_launch"
+                | "ura_debug_attach"
+                | "ura_debug_continue"
+                | "ura_debug_pause"
+                | "ura_debug_step"
+                | "ura_debug_detach"
+                | "ura_debug_terminate"
+                | "ura_debug_breakpoints"
         );
         assert_eq!(tool["annotations"]["readOnlyHint"], expected, "{tool}");
     }

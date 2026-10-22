@@ -7,6 +7,22 @@ multi-release requirement. Update [FEATURE-PARITY.md](FEATURE-PARITY.md) on ever
 milestone, with source, automated/manual evidence, coverage and remaining gaps.
 No release may equate a panel/API with verified feature parity.
 
+## v0.11 — native Windows debugger source checkpoint; acceptance pending
+
+- [x] Real Windows x64 event-owner backend and explicit launch/attach lifecycle.
+- [x] Software breakpoint restoration/rearm, CPU step, supported direct-call step-over.
+- [x] Paused contexts, bounded runtime memory/disassembly, threads, modules and local unwind stacks.
+- [x] Separate launch/attach/termination permissions, exact target hashes/PIDs and stale-session guards.
+- [x] Shared service, interactive CLI and 16 MCP debugger tools (55 total).
+- [x] Native runtime controls/panels, identity/ASLR static navigation and schema7 breakpoint definitions.
+- [x] Owned real Windows process fixtures, adversarial review and failure regressions.
+- [ ] Real native interaction/cancellation and current OS DPI acceptance.
+- [ ] Accepted public tag/package with re-download verification.
+- [ ] WOW64 contexts, broader stepping, symbols and additional backends.
+
+The v0.10 checkpoint remains at `5dc489c`; its release remains unaccepted.
+See [debugger design](DEBUGGER.md) and [verification](VERIFICATION-0.11.md).
+
 ## v0.9 — C-like decompiler source checkpoint; acceptance incomplete
 
 - [x] Independent typed C-like AST from existing semantic HIR.
@@ -32,9 +48,9 @@ See [scope](C-DECOMPILER-0.9.md), [verification](VERIFICATION-0.9.md) and
 - **v0.10 — binary patching:** transactional byte overlays, instruction encoding,
   previews, history/undo/redo, project persistence, verified new-file export,
   conservative analysis invalidation, Desktop/CLI/MCP integration.
-- **v0.11 — Windows debugging:** explicit process launch/attach, breakpoints,
-  stepping, registers, memory, threads and call stacks through a real backend.
-- **v0.12 — advanced debugging:** conditions, hardware watchpoints, execution
+- **v0.11 — Windows debugging:** real native x64 launch/attach, software breakpoints,
+  stepping and runtime inspection implemented within documented scope; native acceptance pending.
+- **v0.12 — advanced debugging:** WOW64 contexts, interruption/step coverage, conditions, hardware watchpoints, execution
   tracing, snapshots, persistence, remote foundations and scripting interfaces.
 - **v0.13 — emulation/dynamic analysis:** controlled emulation, trace-assisted
   analysis, memory-image reconstruction and supported unpacking workflows.

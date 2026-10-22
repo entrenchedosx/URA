@@ -44,9 +44,18 @@ pub enum Panel {
     CallGraph,
     HighLevel,
     Patches,
+    Debugger,
+    Registers,
+    Threads,
+    DebugStack,
+    Memory,
+    Modules,
+    DebugEvents,
+    Breakpoints,
+    Runtime,
 }
 impl Panel {
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 27] = [
         Self::Explorer,
         Self::Disassembly,
         Self::Functions,
@@ -65,6 +74,15 @@ impl Panel {
         Self::CallGraph,
         Self::HighLevel,
         Self::Patches,
+        Self::Debugger,
+        Self::Registers,
+        Self::Threads,
+        Self::DebugStack,
+        Self::Memory,
+        Self::Modules,
+        Self::DebugEvents,
+        Self::Breakpoints,
+        Self::Runtime,
     ];
     pub fn title(self) -> &'static str {
         match self {
@@ -86,6 +104,15 @@ impl Panel {
             Self::CallGraph => "Call graph",
             Self::HighLevel => "Pseudocode",
             Self::Patches => "Patch Manager",
+            Self::Debugger => "Debugger",
+            Self::Registers => "Registers",
+            Self::Threads => "Threads",
+            Self::DebugStack => "Call Stack",
+            Self::Memory => "Runtime Memory",
+            Self::Modules => "Runtime Modules",
+            Self::DebugEvents => "Debug Events",
+            Self::Breakpoints => "Breakpoints",
+            Self::Runtime => "Runtime Disassembly",
         }
     }
     fn legacy(self) -> &'static str {
@@ -108,6 +135,15 @@ impl Panel {
             Self::CallGraph => "callgraph",
             Self::HighLevel => "highlevel",
             Self::Patches => "patches",
+            Self::Debugger => "debugger",
+            Self::Registers => "registers",
+            Self::Threads => "threads",
+            Self::DebugStack => "debugStack",
+            Self::Memory => "runtimeMemory",
+            Self::Modules => "runtimeModules",
+            Self::DebugEvents => "debugEvents",
+            Self::Breakpoints => "breakpoints",
+            Self::Runtime => "runtimeDisassembly",
         }
     }
     fn from_legacy(s: &str) -> Option<Self> {
@@ -254,6 +290,7 @@ pub enum Action {
     Save,
 }
 pub struct Workspace {
+    pub debugger: crate::debugger::DebugUi,
     pub patches: Option<ura_core::patch::PatchDocument>,
     pub patch_conflicts: std::collections::BTreeSet<u64>,
     pub patch_editor: Option<crate::patches::PatchEditor>,
@@ -349,6 +386,7 @@ impl Workspace {
             Default::default(),
         );
         Self {
+            debugger: Default::default(),
             patches: None,
             patch_conflicts: Default::default(),
             patch_editor: None,
@@ -878,6 +916,7 @@ impl Workspace {
             });
     }
     fn poll(&mut self) {
+        self.debugger.poll(&self.ctx);
         while let Ok(reply) = self.worker.receiver.try_recv() {
             if reply.generation != self.generation {
                 continue;
@@ -1137,6 +1176,8 @@ impl Workspace {
             // Identity was verified at open. Refresh only mutable project data;
             // hashing a 500 MiB image for every note would be unnecessary work.
             let snapshot = ura_project::ProjectSnapshot {
+                debug_breakpoints: ura_project::load_debug_breakpoints_for_path(&path)
+                    .map_err(|e| e.to_string())?,
                 patch_state: None,
                 project,
                 binary_status,
@@ -1765,6 +1806,15 @@ impl eframe::App for NativeApp {
             self.applied_style = Some(style_key);
         }
         self.workspace.poll();
+        if ui.ctx().input(|i| i.viewport().close_requested())
+            && (self.workspace.debugger.snapshot.state.active() || self.workspace.debugger.busy)
+        {
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.workspace.debugger.error =
+                Some("Detach or explicitly terminate the debug session before closing URA.".into());
+            self.show_panel(Panel::Debugger);
+        }
         self.restore_project();
         self.workspace.keyboard();
         self.process_actions();
@@ -2167,7 +2217,7 @@ mod tests {
             app.workspace.history.step(-1).unwrap().address,
             Some(0x140001000)
         );
-        assert_eq!(ura_project::SCHEMA_VERSION, 6);
+        assert_eq!(ura_project::SCHEMA_VERSION, 7);
     }
     #[test]
     fn patch_worker_reopens_effective_bytes_invalidates_analysis_and_preserves_annotations() {

@@ -40,3 +40,8 @@ encoder and decoder (1.21.0); it does not introduce a separate assembler runtime
 new-file-only temporary exports and is now a runtime core dependency. Controlled
 patch32 PE/ELF fixtures are assembled from repository-owned source with LLVM,
 then parsed only. LLVM is a fixture-build tool, not a packaged runtime.
+
+The v0.11 native debugger uses the already-locked Microsoft `windows-sys` 0.61.2
+bindings (MIT OR Apache-2.0) for documented Windows APIs. DbgHelp and kernel32 are
+OS components and are not copied into the package. No debugger driver, third-party
+debugger executable, symbol-server client or new assembler runtime is bundled.

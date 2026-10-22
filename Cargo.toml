@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/ura-debugger",
     "crates/ura-core",
     "crates/ura-project",
     "crates/ura-native",
@@ -12,7 +13,7 @@ members = [
 default-members = ["crates/ura-native"]
 
 [workspace.package]
-version = "0.10.0-dev"
+version = "0.11.0-dev"
 edition = "2021"
 license = "MIT"
 rust-version = "1.80"

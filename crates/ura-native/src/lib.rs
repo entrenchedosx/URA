@@ -1,4 +1,5 @@
 pub mod app;
+mod debugger;
 pub mod design;
 pub mod diagnostics;
 mod editors;

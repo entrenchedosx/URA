@@ -28,3 +28,10 @@ history and original identity. No command executes the inspected/exported binary
 
 See [design, examples and exact assembler scope](BINARY-PATCHING.md). Full textual
 x86 assembly, relocation rebuilding and live-memory patches are not implemented.
+
+## v0.11 debugger
+
+The static/patch commands remain available. `debug` runs one interactive JSON-line
+controller with schemaVersion/result replies; another CLI invocation cannot access
+its in-memory session. Separate launch/attach flags and exact targets/PIDs are
+required. See [commands, ownership, shutdown and permissions](DEBUGGER.md).

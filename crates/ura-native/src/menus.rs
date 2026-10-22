@@ -229,7 +229,27 @@ impl Workspace {
                 );
             });
             root_menu(ui, "Debugger", egui::Key::D, |ui| {
-                ui.add_enabled(false, egui::Label::new("No debugger backend implemented"));
+                for panel in [
+                    Panel::Debugger,
+                    Panel::Registers,
+                    Panel::Threads,
+                    Panel::DebugStack,
+                    Panel::Memory,
+                    Panel::Modules,
+                    Panel::DebugEvents,
+                    Panel::Breakpoints,
+                    Panel::Runtime,
+                ] {
+                    command(
+                        ui,
+                        true,
+                        panel.title(),
+                        Action::Show(panel),
+                        &mut self.actions,
+                    );
+                }
+                ui.separator();
+                self.debugger.execution_controls(ui);
             });
             root_menu(ui, "Options", egui::Key::O, |ui| {
                 command(

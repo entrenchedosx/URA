@@ -7,6 +7,7 @@ rust-version.workspace = true
 
 [dependencies]
 ura-core = { path = "../ura-core" }
+ura-debugger = { path = "../ura-debugger" }
 ura-project = { path = "../ura-project" }
 serde.workspace = true
 serde_json.workspace = true

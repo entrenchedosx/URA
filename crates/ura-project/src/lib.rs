@@ -1,3 +1,5 @@
+mod debugger;
+pub use debugger::{load_debug_breakpoints_for_path, save_debug_breakpoints, DebugBreakpoint};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -6,7 +8,7 @@ use ura_core::decomp::signature::SignatureOverride;
 use ura_core::decomp::types::{TypeDatabase, TypeRef};
 use ura_core::{format_address, parse_address, sha256_hex};
 
-pub const SCHEMA_VERSION: i64 = 6;
+pub const SCHEMA_VERSION: i64 = 7;
 pub const MAX_VIEW_STATE_BYTES: usize = 512 * 1024;
 
 #[derive(Debug, Error)]
@@ -119,6 +121,7 @@ pub struct StackVariableOverride {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectSnapshot {
+    pub debug_breakpoints: Vec<DebugBreakpoint>,
     pub project: ProjectInfo,
     pub annotations: Vec<Annotation>,
     pub function_names: Vec<FunctionNameEntry>,
@@ -227,6 +230,7 @@ pub fn open_project(project_path: &Path) -> ProjectResult<ProjectSnapshot> {
     let view_state = load_view_state(&connection)?;
     let binary_status = binary_status(&project);
     Ok(ProjectSnapshot {
+        debug_breakpoints: debugger::load_debug_breakpoints(&connection)?,
         project,
         annotations,
         function_names,
@@ -266,6 +270,11 @@ pub fn read_project(project_path: &Path) -> ProjectResult<ProjectSnapshot> {
     let mut project = load_project(&connection)?;
     project.schema_version = version;
     Ok(ProjectSnapshot {
+        debug_breakpoints: if version >= 7 {
+            debugger::load_debug_breakpoints(&connection)?
+        } else {
+            vec![]
+        },
         project,
         annotations: load_annotations(&connection)?,
         function_names: if version >= 2 {
@@ -919,6 +928,10 @@ fn migrate_schema(connection: &Connection) -> ProjectResult<()> {
         connection.execute_batch("BEGIN; CREATE TABLE IF NOT EXISTS patch_state (id INTEGER PRIMARY KEY CHECK (id = 1), state_json TEXT NOT NULL); PRAGMA user_version = 6; COMMIT;")?;
     }
     let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    if version == 6 {
+        connection.execute_batch("BEGIN; CREATE TABLE IF NOT EXISTS debug_breakpoints (id INTEGER PRIMARY KEY CHECK (id=1), definitions_json TEXT NOT NULL); PRAGMA user_version=7; COMMIT;")?;
+    }
+    let version: i64 = connection.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if version != SCHEMA_VERSION {
         return Err(ProjectError::InvalidProject(format!(
             "expected schema version {}, found {}",
@@ -980,7 +993,8 @@ fn initialize_schema(connection: &Connection) -> ProjectResult<()> {
          );
          CREATE TABLE type_library (id INTEGER PRIMARY KEY CHECK (id = 1), library_json TEXT NOT NULL);
          CREATE TABLE patch_state (id INTEGER PRIMARY KEY CHECK (id = 1), state_json TEXT NOT NULL);
-         PRAGMA user_version = 6;
+         CREATE TABLE debug_breakpoints (id INTEGER PRIMARY KEY CHECK (id=1), definitions_json TEXT NOT NULL);
+         PRAGMA user_version = 7;
          COMMIT;",
     )?;
     Ok(())

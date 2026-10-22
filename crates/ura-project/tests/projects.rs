@@ -33,6 +33,51 @@ fn setup() -> (TempDir, PathBuf) {
 }
 
 #[test]
+fn v6_debug_definition_migration_is_explicit_bounded_and_preserves_data() {
+    let (_dir, path) = setup();
+    let sample = fixture("ura64.exe");
+    let identity = identity(&sample);
+    create_project(&path, "debug definitions", &identity).unwrap();
+    save_annotation(&path, "140001020", None, "retained").unwrap();
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection
+        .execute_batch("DROP TABLE debug_breakpoints; PRAGMA user_version=6;")
+        .unwrap();
+    let old = ura_project::read_project(&path).unwrap();
+    assert_eq!(old.project.schema_version, 6);
+    assert!(old.debug_breakpoints.is_empty());
+    assert_eq!(
+        connection
+            .query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        6
+    );
+    let migrated = open_project(&path).unwrap();
+    assert_eq!(migrated.project.schema_version, 7);
+    assert_eq!(migrated.annotations[0].note, "retained");
+    let definition = ura_project::DebugBreakpoint {
+        module_sha256: identity.binary_hash.clone(),
+        rva: "0x1020".into(),
+        enabled: true,
+    };
+    ura_project::save_debug_breakpoints(&path, std::slice::from_ref(&definition)).unwrap();
+    assert_eq!(
+        ura_project::read_project(&path).unwrap().debug_breakpoints[0].rva,
+        "0x1020"
+    );
+    let mut invalid = definition;
+    invalid.module_sha256 = "0".repeat(64);
+    assert!(ura_project::save_debug_breakpoints(&path, &[invalid]).is_err());
+    connection
+        .execute(
+            "UPDATE debug_breakpoints SET definitions_json=?1",
+            ["x".repeat(256 * 1024 + 1)],
+        )
+        .unwrap();
+    assert!(ura_project::read_project(&path).is_err());
+}
+
+#[test]
 fn v5_patch_migration_revision_history_and_corrupt_metadata_are_checked() {
     use ura_core::patch::{Address, PatchDocument};
     let (_dir, path) = setup();
@@ -49,7 +94,7 @@ fn v5_patch_migration_revision_history_and_corrupt_metadata_are_checked() {
         .patch_state
         .is_none());
     assert_eq!(before, std::fs::read(&path).unwrap());
-    assert_eq!(open_project(&path).unwrap().project.schema_version, 6);
+    assert_eq!(open_project(&path).unwrap().project.schema_version, 7);
     let mut doc = PatchDocument::new(std::fs::read(sample).unwrap()).unwrap();
     let p = doc
         .preview(Address::FileOffset(0x220), &[0x55], &[0xc3], "return early")
@@ -89,7 +134,7 @@ fn migrates_v4_and_persists_validated_type_libraries_without_losing_user_data() 
         .is_none());
     assert_eq!(before, std::fs::read(&path).unwrap());
     let migrated = open_project(&path).unwrap();
-    assert_eq!(migrated.project.schema_version, 6);
+    assert_eq!(migrated.project.schema_version, 7);
     assert_eq!(migrated.annotations[0].note, "keep me");
     let mut db = TypeDatabase::new(64);
     db.structures.insert(

@@ -15,7 +15,7 @@ import zipfile
 
 parser = argparse.ArgumentParser()
 parser.add_argument('archive', type=Path)
-parser.add_argument('--version', default='0.10.0-dev')
+parser.add_argument('--version', default='0.11.0-dev')
 args = parser.parse_args()
 root = Path(__file__).resolve().parent.parent
 archive = args.archive.resolve()
@@ -57,12 +57,17 @@ for name in ['ura-native.exe', 'ura-cli.exe', 'ura-mcp.exe']:
     binary_hashes[name] = digest(extraction / name)
     assert binary_hashes[name] == digest(root / 'target/release' / name)
 for name in ['README.md', 'LICENSE', 'THIRD_PARTY.md', 'docs/AUDIT-0.8.md', 'docs/VERIFICATION-0.8.md',
-             'docs/BINARY-PATCHING.md', 'docs/CLI.md', 'docs/MCP.md', 'docs/VERIFICATION-0.10.md',
-             'docs/FEATURE-PARITY.md', 'docs/ROADMAP.md', 'docs/benchmarks/0.10-headless-release.json']:
+             'docs/BINARY-PATCHING.md', 'docs/DEBUGGER.md', 'docs/CLI.md', 'docs/MCP.md', 'docs/VERIFICATION-0.11.md',
+             'docs/FEATURE-PARITY.md', 'docs/ROADMAP.md', 'docs/benchmarks/0.11-headless-release.json',
+             'docs/benchmarks/0.11-debugger-release.json']:
     assert (extraction / name).is_file()
-patch_evidence = json.loads((extraction / 'docs/benchmarks/0.10-headless-release.json').read_text(encoding='utf-8'))
+patch_evidence = json.loads((extraction / 'docs/benchmarks/0.11-headless-release.json').read_text(encoding='utf-8'))
 assert patch_evidence['version'] == args.version
 assert patch_evidence['executableSha256'] == binary_hashes
+debug_evidence = json.loads((extraction / 'docs/benchmarks/0.11-debugger-release.json').read_text(encoding='utf-8'))
+assert debug_evidence['version'] == args.version
+assert debug_evidence['controlledFixturesExecuted'] and not debug_evidence['nativeDesktopLaunched']
+assert debug_evidence['executableSha256'] == binary_hashes
 
 def run(executable, *arguments):
     return subprocess.run([str(extraction / executable), *map(str, arguments)], cwd=extraction,
@@ -84,7 +89,7 @@ mcp_process = subprocess.run([sys.executable, str(root / 'scripts/verify-mcp-rel
                              capture_output=True, text=True, check=True, timeout=60,
                              creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
 mcp = json.loads(mcp_process.stdout)
-assert mcp['tools'] == 39 and mcp['typeLibraryRoundTrip']
+assert mcp['tools'] == 55 and mcp['typeLibraryRoundTrip']
 report = {
     'version': args.version,
     'archive': archive.name,
@@ -104,7 +109,7 @@ report = {
     'typeLibraryRoundTrip': mcp['typeLibraryRoundTrip'],
     'cDecompileRoundTrip': mcp['cDecompileRoundTrip'],
     'cExportRoundTrip': mcp['cExportRoundTrip'],
-    'nativeStartup': 'Not exercised. The image matches the compiled Release executable; no live v0.10 native acceptance is claimed.',
+    'nativeStartup': 'Not exercised. The image matches the compiled Release executable; no live v0.11 native acceptance is claimed.',
 }
 (archive.parent / 'package-verification.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
 print(json.dumps(report, indent=2))

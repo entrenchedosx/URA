@@ -4,7 +4,7 @@
 
 `crates/ura-native` is the default workspace member. Its eframe entry point
 renders egui directly through OpenGL and winit; no browser engine or IPC is
-involved. It depends on `ura-core` and `ura-project` directly. Schema v6 adds patch history; prior schemas remain readable and migrate on explicit writes. A separate read-only
+involved. It depends on `ura-core` and `ura-project` directly. Schema v7 adds debugger definitions after v6 patch history; prior schemas remain readable and migrate on explicit writes. A separate read-only
 snapshot API supports headless attachment without migration or binary-path IO.
 
 - `app.rs`: shared workspace, navigation/selection, project actions, settings,
@@ -45,15 +45,15 @@ worker drains them on shutdown. Samples remain read-only.
 `ura-service` owns sessions, normalized analysis options, schema-versioned DTOs,
 path restrictions and explicit write permissions. It invokes the same core
 analysis and project functions used by the desktop. `ura-cli` is a synchronous
-text/JSON adapter; `ura-mcp` routes 39 stdio tools to the service. Neither starts
+text/JSON adapter; `ura-mcp` routes 55 stdio tools to the service. Neither starts
 the desktop. MCP uses rmcp and stderr logging; there is no network listener.
 Query pages and byte reads have explicit limits. Address-based byte reads must
-fit one file-backed section. Read-only project snapshots support v1-v6 and
+fit one file-backed section. Read-only project snapshots support v1-v7 and
 compare the supplied binary's hash, without reading a recorded external path.
 Service calls are serialized per process; cancellation/progress notifications and
 persisted analysis caches are not implemented in MCP. Verified IR bundles are
 cached in memory, at most two per handle and eight handles. Normalized options
-and binary identity accompany IR pages; reanalysis invalidates the cache. SQLite is schema v5; v3-to-v4 adds signature/stack overrides and v4-to-v5 adds the validated user type library. Strings are rescanned per
+and binary identity accompany IR pages; reanalysis invalidates the cache. SQLite is schema v7 (v6 adds patch state; v7 debugger definitions); v3-to-v4 adds signature/stack overrides and v4-to-v5 adds the validated user type library. Strings are rescanned per
 query; future caching should be keyed by binary identity and scan options.
 
 ## Semantic analysis
@@ -347,3 +347,25 @@ iced-x86 instruction encoding and verified new-file export. Schema6 stores patch
 state independently of annotations/types. Accepted mutations invalidate the entire
 analysis snapshot. Generation checks reject old worker results; patch changes and
 exports run in workers. See [BINARY-PATCHING.md](BINARY-PATCHING.md).
+
+## Native debugger (v0.11)
+
+`ura-debugger` owns a bounded controller and backend interface. Windows x64 is the
+only implemented backend. `windows/mod.rs` owns process/session lifecycle and
+command routing; `events.rs` handles actual Windows events; `breakpoints.rs` owns
+bytes, displaced instruction stepping and cleanup; `os.rs` contains documented
+Windows bindings, aligned context storage, bounded memory and local DbgHelp unwind.
+
+`ura-service::DebugService` is the shared policy boundary. Exact image hashes are
+pinned and rechecked with held file handles, including the Windows creation event.
+Execution and PID attachment have separate deny-by-default permissions. A failed
+authorization allows cleanup only. Controller/session state is separate from file
+handles, patch overlays and static caches. Schema7 stores main-module identity/RVA
+breakpoint definitions without runtime memory or environment contents.
+
+`ura-native/debugger.rs` dispatches service calls on background threads, uses
+nonblocking snapshot access, clears capture caches on stop/thread changes, and
+renders the native runtime panels. The event owner waits for commands while paused.
+CLI `debug` owns a single local JSON-line session; MCP adds 16 bounded debugger
+tools to the existing 39. Neither frontend provides a cross-process controller.
+See [DEBUGGER.md](DEBUGGER.md) for exact lifecycle, permissions and limitations.

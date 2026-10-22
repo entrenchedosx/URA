@@ -16,11 +16,21 @@ use crate::server::UraServer;
     version,
     about = "URA static analysis MCP server (stdio)",
     long_about = "URA static analysis MCP server. Samples are parsed and analysed locally and are \
-                  never executed. The server speaks MCP over stdin/stdout; logs are written to \
+                  never executed by static analysis. Debugger execution/attachment require separate explicit flags and exact targets. The server speaks MCP over stdin/stdout; logs are written to \
                   stderr. Paths must resolve inside an allowed root (--allow, default: the current \
                   directory). Project and export writes stay disabled unless --enable-writes is set."
 )]
 struct Cli {
+    #[arg(long)]
+    enable_debug_launch: bool,
+    #[arg(long)]
+    enable_debug_attach: bool,
+    #[arg(long)]
+    enable_debug_terminate_attached: bool,
+    #[arg(long = "debug-target")]
+    debug_targets: Vec<PathBuf>,
+    #[arg(long = "debug-pid")]
+    debug_pids: Vec<u32>,
     /// Directory that binary, project and export paths must resolve inside (repeatable)
     #[arg(long = "allow", value_name = "DIR")]
     allow: Vec<PathBuf>,
@@ -42,7 +52,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let policy = PathPolicy::new(cli.allow)?;
-    let service = Service::new(policy, cli.enable_writes);
+    let mut service = Service::new(policy.clone(), cli.enable_writes);
+    service.debugger = ura_service::DebugService::new(
+        policy,
+        ura_service::DebugPermissions {
+            launch: cli.enable_debug_launch,
+            attach: cli.enable_debug_attach,
+            terminate_attached: cli.enable_debug_terminate_attached,
+            targets: cli.debug_targets,
+            attach_pids: cli.debug_pids,
+        },
+    )?
+    .with_project_writes(cli.enable_writes);
     let server = UraServer::new(service);
 
     tracing::info!(

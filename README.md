@@ -4,12 +4,16 @@
 
 Ultimate Reverse Engineer
 
-Current development is **0.10.0-dev** on `v0.10-binary-patching`: a shared
-transactional binary-patching engine, explicit instruction previews, history,
-project persistence and new-file export across the native Desktop, CLI and MCP.
-See [patching design](docs/BINARY-PATCHING.md) for exact scope and limitations,
-and [v0.10 verification](docs/VERIFICATION-0.10.md) for test evidence and release gates.
-This development source is not an accepted public binary release.
+Current development is **0.11.0-dev** on `v0.11-windows-debugger`: a real native
+Windows x64 debugger with explicit launch/attach, software breakpoints, CPU stepping,
+registers, runtime memory, modules and bounded call stacks, shared across Desktop,
+CLI and MCP. See [debugger scope and permissions](docs/DEBUGGER.md) and
+[v0.11 verification](docs/VERIFICATION-0.11.md). Native interaction acceptance is
+pending; this source is not an accepted public binary release.
+
+The verified v0.10 patching checkpoint is preserved at `5dc489c` on
+`v0.10-binary-patching`, including its [local package audit](docs/VERIFICATION-0.10.md).
+Its outstanding live acceptance has not been relabelled as passed.
 
 The verified 263-test v0.9 checkpoint is preserved at `61ee8a4` on
 `v0.9-c-decompiler`; its remaining live checks are recorded in
@@ -34,9 +38,10 @@ so the corrected public prerelease remains withheld.
 
 ## Overview
 
-URA is a native Rust static-analysis workbench for executable files. The desktop,
+URA is a native Rust reverse-engineering workbench for executable files and explicitly selected Windows processes. The desktop,
 CLI and MCP server use the same analysis engine. Samples are read locally and
-are never executed by the static or patching workflows. Original files stay unchanged;
+are never executed by the static or patching workflows. Debugging executes or
+attaches only through explicit actions and separate permissions. Original files stay unchanged;
 modified images are exported only through explicit operations. This is an early engineering release, with explicit
 analysis limits; it is not a replacement for the full feature sets of IDA or Ghidra.
 
@@ -55,13 +60,23 @@ analysis limits; it is not a replacement for the full feature sets of IDA or Ghi
 - Narrow guarded absolute/relative jump-table patterns and tail/thunk candidates.
 - Evidence-based ABI/signature recovery, physical stack frames and conservative types.
 - Bounded interprocedural call graph and experimental C-like high-level rendering.
+- Native Windows x64 debugger with explicit launch/attach, software breakpoints, stepping and runtime inspection.
 - Transactional byte/instruction patches, project history, undo/redo and verified new-file export.
-- Native CLI with text/JSON output and a local stdio MCP server with 39 tools.
+- Native CLI with text/JSON output and a local stdio MCP server with 55 tools.
 
-CLI `decompile` and MCP `ura_decompile_function` reconstruct a separate C-like AST from semantic HIR: bounded expressions, edge-specific phi copies, proved nested regions/loops, ordered memory operations and explicit unknowns. The legacy `highlevel` view remains a diagnostic SSA representation. Reconstructed pseudocode uses explicit machine helpers and is not guaranteed to compile; see [decompiler scope](docs/C-DECOMPILER-0.9.md). There is no debugger, PDB/C++ loader or public
+CLI `decompile` and MCP `ura_decompile_function` reconstruct a separate C-like AST from semantic HIR: bounded expressions, edge-specific phi copies, proved nested regions/loops, ordered memory operations and explicit unknowns. The legacy `highlevel` view remains a diagnostic SSA representation. Reconstructed pseudocode uses explicit machine helpers and is not guaranteed to compile; see [decompiler scope](docs/C-DECOMPILER-0.9.md). There is no remote/kernel debugger, PDB/C++ loader or public
 plugin API. Indirect transfers remain open, including transfers with heuristic
 recovered edges. Discovery is conservative and can miss code, reject ambiguous
 seeds or stop at limits.
+
+## Debugging
+
+Desktop has a Debugger menu and native runtime panels. Launch/attach is explicit;
+file overlays and live memory remain separate. CLI `debug` owns one interactive
+JSON-line session. MCP debugging is disabled by default and needs separate
+`--enable-debug-launch`/`--enable-debug-attach`, exact `--debug-target` files and,
+for attach, explicit `--debug-pid` values. Ordinary `--enable-writes` grants neither.
+See [supported workflows, limits and examples](docs/DEBUGGER.md).
 
 ## C-like decompilation
 
@@ -102,7 +117,7 @@ and exports. Imports without mapped addresses are informational.
 The Function signature, Stack frame, Types, Call graph and Pseudocode
 panels follow the selected function. They show evidence, confidence, conflicts
 and hard-bound truncation, and addresses navigate back to disassembly.
-The desktop edits signatures, physical stack-slot names/types and user structures/unions/aliases. Open a project to save edits; double-click a stack name or right-click for references. Schema v6 preserves these overrides separately from inference and stores patch history. CLI and MCP expose matching guarded writes. Press F5 for Pseudocode. Line numbers, syntax colors, instruction links, variable-use menus, existing signature/stack/type editors and whole-function export share the cached analysis. Pseudocode is reconstructed and partial effects remain visible. Current 150% OS DPI acceptance is still unverified.
+The desktop edits signatures, physical stack-slot names/types and user structures/unions/aliases. Open a project to save edits; double-click a stack name or right-click for references. Schema v7 preserves these overrides separately from inference and stores patch history plus identity/RVA debugger breakpoint definitions. CLI and MCP expose matching guarded writes. Press F5 for Pseudocode. Line numbers, syntax colors, instruction links, variable-use menus, existing signature/stack/type editors and whole-function export share the cached analysis. Pseudocode is reconstructed and partial effects remain visible. Current 150% OS DPI acceptance is still unverified.
 
 Open the optional **IR** panel from Windows or search `IR` in Ctrl+K. It follows
 the selected function, offers Raw IR / SSA IR, and links operation addresses back
@@ -135,7 +150,7 @@ python scripts/generate_icons.py
 ```
 
 Create the portable Windows archive after the Release build with
-`./scripts/package-windows.ps1 -Version 0.10.0-dev`. It checks all three executable
+`./scripts/package-windows.ps1 -Version 0.11.0-dev`. It checks all three executable
 version/product resources, writes per-file checksums, collects dependency license
 texts (including bundled font notices) and emits a SHA-256 sidecar for the ZIP.
 Publishing the archive is a separate release step.
