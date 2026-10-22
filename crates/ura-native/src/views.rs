@@ -758,93 +758,192 @@ impl Workspace {
         }
     }
     fn high_level_view(&mut self, ui: &mut egui::Ui) {
-        let Some((function, name)) = self.decomp_target(ui, "high-level IR") else {
+        let Some((function, name)) = self.decomp_target(ui, "pseudocode") else {
             return;
         };
         let Some(data) = self.decomp_data(ui, function) else {
             return;
         };
-        let high_level = &data.high_level;
-        ui.horizontal(|ui| {
+        let output = &data.pseudocode;
+        ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(name).strong());
             ui.label(
                 RichText::new(format_address(function))
                     .monospace()
                     .color(self.colors().muted),
             );
-            ui.separator();
-            ui.label(high_level.syntax.clone());
-            ui.colored_label(self.colors().gold, high_level.status.clone());
+            ui.colored_label(self.colors().gold, &output.status);
             if ui.button("Copy").clicked() {
-                ui.ctx().copy_text(high_level.text());
+                ui.ctx().copy_text(output.text());
+            }
+            if ui.button("Export…").clicked() {
+                self.actions.push(Action::ExportPseudocode);
+            }
+            if ui
+                .add_enabled(
+                    self.project.is_some(),
+                    egui::Button::new("Signature / types…"),
+                )
+                .clicked()
+            {
+                self.edit_signature(&data);
             }
         });
         ui.label(
             RichText::new(
-                "Structural rendering of verified SSA. It is not source code and is not claimed to compile.",
+                "Reconstructed C-like pseudocode · explicit machine widths and unresolved effects",
             )
             .small()
             .color(self.colors().muted),
         );
-        if high_level.unresolved > 0 {
+        if output.unresolved > 0 {
             ui.colored_label(
                 self.colors().gold,
-                format!(
-                    "{} unresolved call(s) or construct(s) are marked instead of guessed",
-                    high_level.unresolved
-                ),
+                format!("{} unresolved effects or transfers", output.unresolved),
             );
         }
-        ui.separator();
+        egui::CollapsingHeader::new("Stack names / types")
+            .id_salt(("pseudocode-stack", function))
+            .show(ui, |ui| {
+                for slot in &data.frame.slots {
+                    ui.horizontal(|ui| {
+                        ui.label(format!(
+                            "{} · {} · stack{:+}",
+                            slot.user_name.as_ref().unwrap_or(&slot.name),
+                            slot.user_type.as_ref().unwrap_or(&slot.ty).display(),
+                            slot.offset
+                        ));
+                        if ui
+                            .add_enabled(self.project.is_some(), egui::Button::new("Edit…"))
+                            .clicked()
+                        {
+                            self.edit_stack_slot(function, slot);
+                        }
+                    });
+                }
+            });
+        egui::CollapsingHeader::new("Reconstruction diagnostics")
+            .id_salt(("pseudocode-diagnostics", function))
+            .show(ui, |ui| {
+                for diagnostic in &output.diagnostics {
+                    ui.label(diagnostic);
+                }
+            });
         let mut navigate = None;
-        egui::ScrollArea::both()
-            .id_salt(("high-level-lines", function))
-            .auto_shrink([false, false])
-            .show_rows(
-                ui,
-                self.settings.row_height,
-                high_level.lines.len(),
-                |ui, range| {
-                    for line in &high_level.lines[range] {
-                        ui.horizontal(|ui| {
-                            match line.address {
-                                Some(address) => {
-                                    if ui
-                                        .selectable_label(
-                                            self.location.address == Some(address),
-                                            RichText::new(format_address(address))
-                                                .monospace()
-                                                .color(self.colors().accent),
-                                        )
-                                        .clicked()
-                                    {
-                                        navigate = Some(address);
+        let mut area = egui::ScrollArea::both()
+            .id_salt(("pseudocode-lines", function))
+            .auto_shrink([false, false]);
+        if self.pseudocode_scroll_address != self.location.address {
+            self.pseudocode_scroll_address = self.location.address;
+            if let Some(index) = output.lines.iter().position(|l| {
+                self.location
+                    .address
+                    .is_some_and(|a| l.addresses.iter().any(|p| p.0 == a))
+            }) {
+                area = area.vertical_scroll_offset(
+                    index.saturating_sub(3) as f32 * self.settings.row_height,
+                );
+            }
+        }
+        area.show_rows(
+            ui,
+            self.settings.row_height,
+            output.lines.len(),
+            |ui, range| {
+                for line in &output.lines[range] {
+                    let selected = self
+                        .location
+                        .address
+                        .is_some_and(|a| line.addresses.iter().any(|p| p.0 == a));
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(format!("{:>5}", line.number))
+                                .monospace()
+                                .color(self.colors().muted),
+                        );
+                        let text = format!("{}{}", "    ".repeat(line.indent), line.text);
+                        let response = ui.selectable_label(
+                            selected,
+                            pseudocode_job(&text, self.settings.font_size, self.colors()),
+                        );
+                        if response.clicked() {
+                            navigate = line.addresses.first().map(|a| a.0);
+                        }
+                        response
+                            .on_hover_text(if line.addresses.is_empty() {
+                                "Synthetic reconstruction; no invented instruction address".into()
+                            } else {
+                                line.addresses
+                                    .iter()
+                                    .map(|a| format_address(a.0))
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            })
+                            .context_menu(|ui| {
+                                if let Some(callee) = line.callee
+                                    && ui.button("Go to callee").clicked()
+                                {
+                                    navigate = Some(callee.0);
+                                    ui.close();
+                                }
+                                if ui.button("Cross references").clicked() {
+                                    self.actions.push(Action::Show(Panel::Xrefs));
+                                    ui.close();
+                                }
+                                if ui
+                                    .add_enabled(
+                                        self.project.is_some(),
+                                        egui::Button::new("Edit signature / parameter types…"),
+                                    )
+                                    .clicked()
+                                {
+                                    self.edit_signature(&data);
+                                    ui.close();
+                                }
+                                for id in &line.variables {
+                                    if let Some(variable) = output.ast.variables.get(*id) {
+                                        ui.menu_button(
+                                            format!(
+                                                "{} · {}",
+                                                variable.name,
+                                                variable.inferred_type.display()
+                                            ),
+                                            |ui| {
+                                                ui.label(format!(
+                                                    "Storage: {:?}; SSA: {:?}",
+                                                    variable.storage, variable.ssa
+                                                ));
+                                                for reference in output
+                                                    .lines
+                                                    .iter()
+                                                    .filter(|l| l.variables.contains(id))
+                                                    .take(32)
+                                                {
+                                                    if ui
+                                                        .button(format!(
+                                                            "Line {}: {}",
+                                                            reference.number, reference.text
+                                                        ))
+                                                        .clicked()
+                                                    {
+                                                        navigate = reference
+                                                            .addresses
+                                                            .first()
+                                                            .map(|a| a.0);
+                                                        ui.close();
+                                                    }
+                                                }
+                                            },
+                                        );
                                     }
                                 }
-                                None => {
-                                    ui.label(
-                                        RichText::new("            ")
-                                            .monospace()
-                                            .color(self.colors().muted),
-                                    );
-                                }
-                            }
-                            ui.label(
-                                RichText::new(format!("{}{}", "  ".repeat(line.indent), line.text))
-                                    .monospace(),
-                            );
-                        });
-                    }
-                },
-            );
+                            });
+                    });
+                }
+            },
+        );
         if let Some(address) = navigate {
             self.navigate_address(address);
-        }
-        if !high_level.notes.is_empty() {
-            ui.separator();
-            for note in &high_level.notes {
-                ui.colored_label(self.colors().muted, note);
-            }
         }
     }
     fn call_graph_view(&mut self, ui: &mut egui::Ui) {
@@ -2795,6 +2894,50 @@ pub(crate) fn assembly_job(
                 | "r14"
                 | "r15"
         ) || word.starts_with("xmm")
+        {
+            colors.register
+        } else {
+            colors.text
+        };
+        job.append(
+            token,
+            0.0,
+            egui::TextFormat {
+                font_id: FontId::monospace(size),
+                color,
+                ..Default::default()
+            },
+        );
+    }
+    job
+}
+
+fn pseudocode_job(text: &str, size: f32, colors: crate::design::Palette) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::default();
+    let comment = text.trim_start().starts_with("/*");
+    for token in text.split_inclusive(|c: char| !c.is_alphanumeric() && c != '_') {
+        let word = token.trim_matches(|c: char| !c.is_alphanumeric() && c != '_');
+        let color = if comment {
+            colors.muted
+        } else if matches!(
+            word,
+            "if" | "else"
+                | "while"
+                | "for"
+                | "do"
+                | "switch"
+                | "case"
+                | "goto"
+                | "break"
+                | "continue"
+                | "return"
+        ) {
+            colors.branch
+        } else if word.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+            colors.gold
+        } else if word.starts_with("uint")
+            || word.starts_with("int")
+            || matches!(word, "bool" | "void" | "struct")
         {
             colors.register
         } else {

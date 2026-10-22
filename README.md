@@ -5,7 +5,7 @@
 Ultimate Reverse Engineer
 
 Public prerelease: [`v0.8.0-dev`](https://github.com/entrenchedosx/URA/releases/tag/v0.8.0-dev)
-from commit `1194403`. Current `v0.8-decompiler-foundations` source contains later audit repairs that are not in that ZIP. The complete v0.8 checklist remains unfinished; see the [checklist audit](docs/AUDIT-0.8.md).
+from commit `1194403`. Current development is `0.9.0-dev` on `v0.9-c-decompiler`; that source is ahead of the public ZIP. See [v0.9 verification](docs/VERIFICATION-0.9.md) and the permanent [feature-parity ledger](docs/FEATURE-PARITY.md). The complete v0.8 checklist remains unfinished; see the [checklist audit](docs/AUDIT-0.8.md).
 High-level output is experimental and variable idle CPU remains an unexplained
 known limitation; see [v0.8 verification](docs/VERIFICATION-0.8.md) and
 [decompiler design](docs/DECOMPILER.md).
@@ -45,13 +45,27 @@ analysis limits; it is not a replacement for the full feature sets of IDA or Ghi
 - Narrow guarded absolute/relative jump-table patterns and tail/thunk candidates.
 - Evidence-based ABI/signature recovery, physical stack frames and conservative types.
 - Bounded interprocedural call graph and experimental C-like high-level rendering.
-- Native CLI with text/JSON output and a local stdio MCP server with 30 tools.
+- Native CLI with text/JSON output and a local stdio MCP server with 32 tools.
 
-High-level output is a structural view of verified SSA, not reconstructed source,
-and is not claimed to compile. There is no debugger, PDB/C++ loader or public
+CLI `decompile` and MCP `ura_decompile_function` reconstruct a separate C-like AST from semantic HIR: bounded expressions, edge-specific phi copies, proved nested regions/loops, ordered memory operations and explicit unknowns. The legacy `highlevel` view remains a diagnostic SSA representation. Reconstructed pseudocode uses explicit machine helpers and is not guaranteed to compile; see [decompiler scope](docs/C-DECOMPILER-0.9.md). There is no debugger, PDB/C++ loader or public
 plugin API. Indirect transfers remain open, including transfers with heuristic
 recovered edges. Discovery is conservative and can miss code, reject ambiguous
 seeds or stop at limits.
+
+## C-like decompilation
+
+```powershell
+ura-cli decompile sample.exe --function 140001020
+ura-cli decompile sample.exe --function 140001020 --json --ast
+ura-cli --enable-writes decompile sample.exe --function 140001020 --output recovered.c
+```
+
+`--offset` and `--limit` page lines; `--ast` is opt-in and limited to 2 MiB.
+Export writes a new file containing the entire bounded function and preserves
+existing files. MCP offers `ura_decompile_function` and
+`ura_export_decompiled_function` with the same core and write policy. Floating/vector
+semantics, general structure-field syntax, complete switch reconstruction and
+full C++ recovery remain incomplete. This checkpoint is not an accepted prerelease.
 
 ## Supported architectures and executable formats
 
@@ -71,14 +85,13 @@ The default application uses eframe, egui and OpenGL. It has no WebView dependen
 Compact native menus and docking provide Functions, Project structure,
 Disassembly, Graph, Hex View, Strings, Xrefs, Overview, Inspector, Output,
 Graph overview, Function signature, Stack frame, Types, Call graph and
-Analysis inspector panels. Project structure includes sections, symbols, imports
+Pseudocode panels. Project structure includes sections, symbols, imports
 and exports. Imports without mapped addresses are informational.
 
-The Function signature, Stack frame, Types, Call graph and Analysis inspector
+The Function signature, Stack frame, Types, Call graph and Pseudocode
 panels follow the selected function. They show evidence, confidence, conflicts
 and hard-bound truncation, and addresses navigate back to disassembly.
-The desktop edits signatures, physical stack-slot names/types and user structures/unions/aliases. Open a project to save edits; double-click a stack name or right-click for references. Schema v5 preserves these overrides separately from inference. CLI and MCP expose matching guarded writes. Recovered high-level text is
-explicitly labelled experimental and is not source code.
+The desktop edits signatures, physical stack-slot names/types and user structures/unions/aliases. Open a project to save edits; double-click a stack name or right-click for references. Schema v5 preserves these overrides separately from inference. CLI and MCP expose matching guarded writes. Press F5 for Pseudocode. Line numbers, syntax colors, instruction links, variable-use menus, existing signature/stack/type editors and whole-function export share the cached analysis. Pseudocode is reconstructed and partial effects remain visible. Current 150% OS DPI acceptance is still unverified.
 
 Open the optional **IR** panel from Windows or search `IR` in Ctrl+K. It follows
 the selected function, offers Raw IR / SSA IR, and links operation addresses back

@@ -31,6 +31,8 @@ pub struct SemanticFunction {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SemanticSignature {
+    #[serde(default)]
+    pub variadic: Option<bool>,
     pub convention: super::CallingConvention,
     pub parameters: Vec<SemanticParameter>,
     pub return_type: TypeRef,
@@ -51,6 +53,7 @@ pub struct SemanticParameter {
 impl SemanticFunction {
     pub fn attach_signature(&mut self, signature: &super::FunctionSignature) {
         self.signature = Some(SemanticSignature {
+            variadic: signature.variadic,
             convention: signature.convention,
             parameters: signature
                 .parameters

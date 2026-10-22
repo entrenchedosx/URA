@@ -4,7 +4,7 @@ $uraRoot = Split-Path -Parent $PSScriptRoot
 Push-Location -LiteralPath $uraRoot
 try {
     New-Item -ItemType Directory -Path target -Force | Out-Null
-    foreach ($level in 0, 2) {
+    foreach ($level in 0, 1, 2, 3) {
         & "$Llvm\clang.exe" --target=x86_64-pc-windows-msvc "-O$level" -fno-builtin -fno-stack-protector -c tests/samples/semantic.c -o "target/semantic-O$level.obj"
         if ($LASTEXITCODE -ne 0) { throw 'PE fixture compilation failed' }
         & "$Llvm\lld-link.exe" /entry:semantic_sum /subsystem:console /nodefaultlib /timestamp:0 "/implib:target/semantic-O$level.lib" "/out:tests/fixtures/semantic-O$level.exe" "target/semantic-O$level.obj"

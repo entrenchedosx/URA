@@ -39,7 +39,7 @@ def tool(name,args):
 try:
     request('initialize',{'protocolVersion':'2025-03-26','capabilities':{},'clientInfo':{'name':'ura-release-check','version':'1'}})
     child.stdin.write(json.dumps({'jsonrpc':'2.0','method':'notifications/initialized'})+'\n');child.stdin.flush()
-    assert len(request('tools/list',{})['tools']) == 30
+    assert len(request('tools/list',{})['tools']) == 32
     opened = tool('ura_open_binary',{'binary':str(root/'tests/fixtures/ura64.exe')})
     handle = opened['handle'];tool('ura_analyze',{'handle':handle})
     timings = {}
@@ -62,6 +62,18 @@ try:
     assert semantic['complete'] and semantic['nodes'] and semantic['values']
     page = tool('ura_get_high_level_ir', {'handle':handle,'function':'140001020','limit':5,'semanticBlock':semantic['blocks'][0]['address']})['semantic']
     assert not page['complete'] and page['totalNodes'] == semantic['totalNodes']
+    source = tool('ura_decompile_function', {'handle':handle,'function':'140001020','limit':3,'ast':True})
+    assert source['syntax'] == 'c-like' and source['ast']['version'] == 1
+    assert source['ast']['address'] == '0x140001020' and source['returned'] == 3
+    tail = tool('ura_decompile_function', {'handle':handle,'function':'140001020','offset':3,'limit':2000})
+    assert source['returned'] + tail['returned'] == source['total']
+    destination = folder/'decompiled.c'
+    exported = tool('ura_export_decompiled_function', {'handle':handle,'function':'140001020','destination':str(destination)})
+    text = destination.read_text(encoding='utf-8')
+    expected = ''.join('    '*line['indent']+line['text']+'\n' for line in source['lines']+tail['lines'])
+    assert text == expected and exported['bytes'] == len(text.encode('utf-8'))
+    repeated = request('tools/call',{'name':'ura_export_decompiled_function','arguments':{'handle':handle,'function':'140001020','destination':str(destination)}})
+    assert repeated['isError'] and destination.read_text(encoding='utf-8') == expected
     graph = tool('ura_get_call_graph',{'handle':handle,'function':'140001000','depth':1,'maxNodes':50})
     assert graph['schemaVersion'] == 1
     project = folder/'fixture.ura'
@@ -71,7 +83,7 @@ try:
     tool('ura_set_type_library',{'handle':handle,'project':str(project),'database':library})
     assert tool('ura_get_structure',{'handle':handle,'name':'Header'})['structure']['fields'][0]['name'] == 'length'
     assert tool('ura_get_types',{'handle':handle})['database'] == library
-    result = {'tools':30,'irSchema':1,'decompilerSchema':decompiler,'callGraphNodes':graph['returnedNodes'],'fixtureQueryMs':timings,'projectPrepared':project.name,'typeLibraryRoundTrip':True,'typedAstRoundTrip':True,'semanticRoundTrip':True,'semanticBlockPage':True,'programConverged':typed['program']['converged']}
+    result = {'tools':32,'irSchema':1,'decompilerSchema':decompiler,'callGraphNodes':graph['returnedNodes'],'fixtureQueryMs':timings,'projectPrepared':project.name,'typeLibraryRoundTrip':True,'cDecompileRoundTrip':True,'cExportRoundTrip':True,'typedAstRoundTrip':True,'semanticRoundTrip':True,'semanticBlockPage':True,'programConverged':typed['program']['converged']}
     (project.parent/'mcp-release.json').write_text(json.dumps(result,indent=2),encoding='utf-8')
     print(json.dumps(result,indent=2))
 finally:

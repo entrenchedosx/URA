@@ -82,6 +82,99 @@ fn lossless_hir_addresses(value: &mut serde_json::Value) {
 }
 
 impl Service {
+    /// The same cached C-like AST used by the native client. Pages carry all
+    /// contributing instruction addresses and variable IDs; AST is opt-in.
+    pub fn decompile(
+        &mut self,
+        handle: &str,
+        address: &str,
+        offset: usize,
+        limit: usize,
+        include_ast: bool,
+    ) -> ServiceResult<crate::dto::DecompileResponse> {
+        if !(1..=2_000).contains(&limit) {
+            return Err(ServiceError::LimitExceeded(
+                "pseudocode line limit must be 1..2000".into(),
+            ));
+        }
+        let data = self.decompiled(handle, address)?;
+        let output = &data.pseudocode;
+        let ast = if include_ast {
+            json_bound(&output.ast, 2 * 1024 * 1024)?;
+            let value = serde_json::to_value(&output.ast)
+                .map_err(|e| ServiceError::InvalidArgument(e.to_string()))?;
+            json_bound(&value, 2 * 1024 * 1024)?;
+            Some(value)
+        } else {
+            None
+        };
+        let total = output.lines.len();
+        let offset = offset.min(total);
+        let lines: Vec<_> = output
+            .lines
+            .iter()
+            .skip(offset)
+            .take(limit)
+            .cloned()
+            .collect();
+        let session = self.session(handle)?;
+        let mut diagnostics = output.diagnostics.clone();
+        diagnostics.extend(data.diagnostics.iter().cloned());
+        Ok(crate::dto::DecompileResponse {
+            schema_version: RESPONSE_SCHEMA_VERSION,
+            handle: handle.into(),
+            binary_hash: session.info.sha256.clone(),
+            function: format_address(data.function),
+            name: data.name.clone(),
+            analysis_partial: analysis_partial(session),
+            syntax: output.syntax.clone(),
+            status: output.status.clone(),
+            total,
+            offset,
+            returned: lines.len(),
+            lines,
+            unresolved: output.unresolved,
+            truncated: output.truncated,
+            diagnostics,
+            ast,
+        })
+    }
+
+    /// Exports the full bounded rendering, never just the current page. Existing
+    /// files are preserved, and writes require the server's explicit opt-in.
+    pub fn export_decompiled_function(
+        &mut self,
+        handle: &str,
+        address: &str,
+        destination: &Path,
+    ) -> ServiceResult<crate::dto::DecompileExportResponse> {
+        use std::io::Write;
+        self.require_writes()?;
+        let destination = self.policy.allow_write(destination)?;
+        let data = self.decompiled(handle, address)?;
+        if data.pseudocode.truncated {
+            return Err(ServiceError::LimitExceeded(
+                "cannot export truncated pseudocode as a complete function".into(),
+            ));
+        }
+        let text = data.pseudocode.text();
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&destination)
+            .map_err(|e| ServiceError::Io(e.to_string()))?;
+        file.write_all(text.as_bytes())
+            .and_then(|()| file.sync_all())
+            .map_err(|e| ServiceError::Io(e.to_string()))?;
+        Ok(crate::dto::DecompileExportResponse {
+            schema_version: RESPONSE_SCHEMA_VERSION,
+            function: format_address(data.function),
+            destination: destination.to_string_lossy().into_owned(),
+            bytes: text.len(),
+            status: data.pseudocode.status.clone(),
+        })
+    }
+
     fn require_override_project(&self, handle: &str, resolved: &Path) -> ServiceResult<()> {
         let attached = self.session(handle)?.project.as_deref().ok_or_else(|| {
             ServiceError::InvalidArgument(
@@ -683,6 +776,9 @@ fn decomp_context(
 ) -> decomp::DecompContext {
     let address_bits = session.binary.analysis().bitness as u16;
     let mut context = decomp::DecompContext::new(address_bits);
+    context.function_name = analysis
+        .function_by_start(function)
+        .map(|f| display_name(session, f));
     context.type_database = session.type_library.clone();
     let mut hints = SignatureHints::default();
     for (address, signature_override) in &session.signature_overrides {

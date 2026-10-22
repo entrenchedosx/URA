@@ -55,6 +55,39 @@ impl UraServer {
 #[tool_router]
 impl UraServer {
     #[tool(
+        name = "ura_decompile_function",
+        annotations(title = "Decompile function", read_only_hint = true),
+        description = "Reconstruct bounded deterministic C-like pseudocode from semantic HIR. Returns paged lines with instruction addresses and variable IDs, explicit unresolved diagnostics, and optional independent C-like AST (2 MiB). This is reconstructed pseudocode, not original source. Requires ura_analyze."
+    )]
+    fn ura_decompile_function(
+        &self,
+        Parameters(p): Parameters<DecompFunctionParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        respond(self.service().decompile(
+            &p.handle,
+            &p.function,
+            p.offset.unwrap_or(0),
+            p.limit.unwrap_or(200),
+            p.ast.unwrap_or(false),
+        ))
+    }
+    #[tool(
+        name = "ura_export_decompiled_function",
+        annotations(title = "Export pseudocode", read_only_hint = false),
+        description = "Export the entire bounded C-like function to a new file inside an allowed root. Requires --enable-writes. Refuses existing files and truncated output. Partial unknown effects remain explicitly labelled."
+    )]
+    fn ura_export_decompiled_function(
+        &self,
+        Parameters(p): Parameters<crate::params::ExportDecompiledParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        respond(self.service().export_decompiled_function(
+            &p.handle,
+            &p.function,
+            Path::new(&p.destination),
+        ))
+    }
+
+    #[tool(
         name = "ura_get_ir",
         annotations(title = "Get raw IR", read_only_hint = true),
         description = "Get a bounded page of verified raw bit-vector IR, with typed operations and source instruction addresses. Requires ura_analyze. Unsupported semantics are explicit barriers."

@@ -18,6 +18,41 @@ fn fixture(name: &str) -> PathBuf {
 }
 
 #[test]
+fn decompile_json_matches_service_and_plain_output_is_c_like() {
+    let sample = fixture("ura64.exe");
+    let output = run([
+        "decompile",
+        sample.to_str().unwrap(),
+        "--function",
+        "140001020",
+        "--ast",
+        "--json",
+    ]);
+    assert!(output.status.success(), "{}", stderr(&output));
+    let value = json(&output);
+    assert_eq!(value["syntax"], "c-like");
+    assert_eq!(value["ast"]["address"], "0x140001020");
+    let mut service = Service::new(PathPolicy::allow_all(), false);
+    let handle = service.open_binary(&sample, None).unwrap().handle;
+    service.analyze(&handle, &Default::default()).unwrap();
+    let expected = serde_json::to_value(
+        service
+            .decompile(&handle, "140001020", 0, 200, true)
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(value, expected);
+    let plain = run([
+        "decompile",
+        sample.to_str().unwrap(),
+        "--function",
+        "140001020",
+    ]);
+    assert!(plain.status.success());
+    assert!(stdout(&plain).contains("Reconstructed C-like"));
+}
+
+#[test]
 fn cli_type_library_writes_are_explicit_and_persist_for_structure_queries() {
     let directory = tempfile::tempdir().unwrap();
     let project = directory.path().join("types.ura");

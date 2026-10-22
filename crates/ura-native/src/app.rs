@@ -82,7 +82,7 @@ impl Panel {
             Self::Stack => "Stack frame",
             Self::Types => "Types",
             Self::CallGraph => "Call graph",
-            Self::HighLevel => "Analysis inspector",
+            Self::HighLevel => "Pseudocode",
         }
     }
     fn legacy(self) -> &'static str {
@@ -113,6 +113,7 @@ impl Panel {
 pub fn default_dock() -> DockState<Panel> {
     let mut dock = DockState::new(vec![
         Panel::Disassembly,
+        Panel::HighLevel,
         Panel::Graph,
         Panel::Hex,
         Panel::Strings,
@@ -135,7 +136,6 @@ pub fn default_dock() -> DockState<Panel> {
             Panel::Stack,
             Panel::Types,
             Panel::CallGraph,
-            Panel::HighLevel,
         ],
     );
     dock.main_surface_mut()
@@ -242,6 +242,7 @@ pub enum Action {
     DeleteAnnotation(i64),
     Manual(bool),
     Export,
+    ExportPseudocode,
     Save,
 }
 pub struct Workspace {
@@ -273,6 +274,7 @@ pub struct Workspace {
     pub decomp_key: Option<DecompKey>,
     pub decomp_loading: Option<DecompKey>,
     pub decomp_error: Option<String>,
+    pub pseudocode_scroll_address: Option<u64>,
     pub call_graph: Option<Arc<CallGraph>>,
     pub call_graph_key: Option<u64>,
     pub call_graph_loading: bool,
@@ -364,6 +366,7 @@ impl Workspace {
             decomp_key: None,
             decomp_loading: None,
             decomp_error: None,
+            pseudocode_scroll_address: None,
             call_graph: None,
             call_graph_key: None,
             call_graph_loading: false,
@@ -706,6 +709,11 @@ impl Workspace {
             .map(|binary| binary.analysis().bitness as u16)
             .unwrap_or(0);
         let mut context = DecompContext::new(address_bits);
+        context.function_name = self
+            .analysis
+            .as_ref()
+            .and_then(|a| a.function_by_start(function))
+            .map(|f| self.name(f));
         let Some((_, snapshot)) = &self.project else {
             return context;
         };
@@ -1130,6 +1138,7 @@ impl Workspace {
             (Modifiers::CTRL, Key::Num2, Action::Show(Panel::Hex)),
             (Modifiers::CTRL, Key::Num3, Action::Show(Panel::Strings)),
             (Modifiers::CTRL, Key::Num4, Action::Show(Panel::Overview)),
+            (Modifiers::NONE, Key::F5, Action::Show(Panel::HighLevel)),
             (Modifiers::ALT, Key::ArrowLeft, Action::Back),
             (Modifiers::ALT, Key::ArrowRight, Action::Forward),
             (Modifiers::CTRL, Key::Enter, Action::SaveAnnotation),
@@ -1601,6 +1610,50 @@ impl NativeApp {
                                     }
                                 }
                             }
+                        });
+                    }
+                    Action::ExportPseudocode => {
+                        let w = &mut self.workspace;
+                        let Some(data) = w
+                            .decomp
+                            .clone()
+                            .filter(|d| w.function().is_some_and(|f| f.address == d.function))
+                        else {
+                            w.log(
+                                true,
+                                "Open Pseudocode and wait for reconstruction before exporting",
+                            );
+                            continue;
+                        };
+                        if data.pseudocode.truncated {
+                            w.log(
+                                true,
+                                "Cannot export truncated pseudocode as a complete function",
+                            );
+                            continue;
+                        }
+                        w.worker.submit(w.generation, move || {
+                            use std::io::Write;
+                            let Some(destination) = rfd::FileDialog::new()
+                                .set_title("Export reconstructed pseudocode")
+                                .add_filter("C-like pseudocode", &["c"])
+                                .set_file_name(format!("{}.c", data.pseudocode.ast.name))
+                                .save_file()
+                            else {
+                                return Ok(Event::Done);
+                            };
+                            let mut file = std::fs::OpenOptions::new()
+                                .write(true)
+                                .create_new(true)
+                                .open(&destination)
+                                .map_err(|e| e.to_string())?;
+                            file.write_all(data.pseudocode.text().as_bytes())
+                                .and_then(|()| file.sync_all())
+                                .map_err(|e| e.to_string())?;
+                            Ok(Event::Message(format!(
+                                "Exported reconstructed pseudocode to {}",
+                                destination.display()
+                            )))
                         });
                     }
                     Action::Export => {

@@ -110,7 +110,7 @@ fn stdio_queries_errors_and_read_only_permissions() {
     let mut client = Client::start(directory.path(), false);
     let tools = client.request("tools/list", json!({}));
     let listed = tools["result"]["tools"].as_array().unwrap();
-    assert_eq!(listed.len(), 30);
+    assert_eq!(listed.len(), 32);
     for tool in listed {
         let expected = !matches!(
             tool["name"].as_str().unwrap(),
@@ -118,6 +118,7 @@ fn stdio_queries_errors_and_read_only_permissions() {
                 | "ura_add_comment"
                 | "ura_save_project"
                 | "ura_export_analysis"
+                | "ura_export_decompiled_function"
                 | "ura_close_binary"
                 | "ura_set_function_signature"
                 | "ura_set_variable_type"
@@ -133,6 +134,22 @@ fn stdio_queries_errors_and_read_only_permissions() {
     let mut shared = ura_service::Service::new(ura_service::PathPolicy::allow_all(), false);
     let shared_handle = shared.open_binary(&sample, None).unwrap().handle;
     shared.analyze(&shared_handle, &Default::default()).unwrap();
+    let source = client.tool(
+        "ura_decompile_function",
+        json!({"handle":handle,"function":"140001020","ast":true,"limit":200}),
+    );
+    assert_eq!(
+        source,
+        serde_json::to_value(
+            shared
+                .decompile(&shared_handle, "140001020", 0, 200, true)
+                .unwrap()
+        )
+        .unwrap()
+    );
+    let denied=client.request("tools/call",json!({"name":"ura_export_decompiled_function","arguments":{"handle":handle,"function":"140001020","destination":directory.path().join("denied.c")}}));
+    assert_eq!(denied["result"]["isError"], true);
+    assert!(!directory.path().join("denied.c").exists());
     let functions = client.tool("ura_get_functions", json!({"handle":handle}));
     assert_eq!(functions["total"], 2);
     for (name, arguments) in [

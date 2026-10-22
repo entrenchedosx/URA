@@ -1,0 +1,25 @@
+{
+  "version": "0.9.0-dev",
+  "method": "Final Release build; owned PE loop project open, Pseudocode and Types visible, dark theme, normal window. Eight-second settle, 12-second read-only process CPU sample per condition; no Cargo/UI polling during intervals. Focused/unfocused/minimized selected through native controls. CPU is percentage of one core. Baseline v0.8 qualification used an empty workspace, so these are not matched regression measurements. No accessibility or system settings disabled.",
+  "nativeSha256": "64ea41d7e16ae208949a5b323b0efb7ff8110cdd952498c4ce0c4488cac81c2a",
+  "observations": [
+    {
+      "condition": "focused",
+      "seconds": 12.000322400010191,
+      "cpuOneCorePercent": 1.8228676922864524,
+      "workingSetMiB": 94.09765625
+    },
+    {
+      "condition": "unfocused",
+      "seconds": 12.000047900015488,
+      "cpuOneCorePercent": 0.0,
+      "workingSetMiB": 94.12890625
+    },
+    {
+      "condition": "minimized",
+      "seconds": 12.000305599998683,
+      "cpuOneCorePercent": 0.0,
+      "workingSetMiB": 93.890625
+    }
+  ]
+}

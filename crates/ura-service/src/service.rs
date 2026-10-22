@@ -724,6 +724,9 @@ impl Service {
             .get_mut(handle)
             .ok_or_else(|| ServiceError::UnknownHandle(handle.to_string()))?;
         session.names.insert(function_address, entry.name);
+        // Names are also embedded in recovered declarations and call hints.
+        session.decomp_cache.clear();
+        session.decomp_cache_order.clear();
         session.project = Some(resolved.clone());
         let summary = {
             let analysis = session

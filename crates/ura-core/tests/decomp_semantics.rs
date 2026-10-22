@@ -58,9 +58,27 @@ fn compare_raw(
         memory: reference.memory.clone(),
         trace: Vec::new(),
     };
+    let reconstructed =
+        ura_core::decomp::source::build(&hir, "fixture", &Default::default(), None, &()).unwrap();
+    let mut source_state = ura_core::decomp::source::evaluate::State::default();
+    source_state.registers = reference.values.clone();
+    source_state.memory = reference.memory.clone();
+    let source_result = source_state.run(&reconstructed.ast, 100_000);
     let expected = reference.run(&raw, limit);
+    let reference_exit = expected.clone();
     let result = actual.run(&hir, limit);
     let complete = expected.is_ok() && result.is_ok();
+    if let Err(error) = &expected {
+        let source_error = source_result
+            .as_ref()
+            .expect_err("C-like output must preserve a non-concrete exit");
+        if error.contains("budget") {
+            assert!(source_error.contains("budget"));
+        }
+        if error.contains("unknown") {
+            assert!(source_error.contains("unknown"));
+        }
+    }
     if !code.starts_with(&[0xff, 0xd0]) && code != [0xeb, 0xfe] {
         assert!(
             complete,
@@ -85,6 +103,38 @@ fn compare_raw(
     // Compare state only after successful termination; an unknown effect stops
     // before either interpreter has a concrete complete state.
     if complete {
+        match source_result {
+            Ok(ura_core::decomp::source::evaluate::Exit::Return {
+                result,
+                destination,
+            }) => {
+                assert_eq!(
+                    destination,
+                    *reference_exit.as_ref().unwrap(),
+                    "C-like return destination"
+                );
+                assert_eq!(
+                    result,
+                    reference.values.get("rax").copied(),
+                    "C-like ABI result"
+                );
+            }
+            Ok(ura_core::decomp::source::evaluate::Exit::External(address)) => {
+                assert_eq!(Some(address.0), *reference_exit.as_ref().unwrap())
+            }
+            Ok(ura_core::decomp::source::evaluate::Exit::Indirect(destination)) => {
+                assert_eq!(destination, *reference_exit.as_ref().unwrap())
+            }
+            other => panic!("C-like reconstruction failed: {other:?}; bytes={code:x?}"),
+        }
+        assert_eq!(
+            source_state.memory, reference.memory,
+            "C-like memory for {code:x?}"
+        );
+        assert_eq!(
+            source_state.trace, reference.trace,
+            "C-like control path for {code:x?}"
+        );
         assert_eq!(
             actual.registers, reference.values,
             "registers for {code:x?} inputs={inputs:?}"
@@ -228,9 +278,25 @@ fn stable_ids_exact_operands_synthetic_provenance_and_ssa_types() {
 }
 
 #[test]
-fn clang_pe_and_elf_o0_o2_match_reference_execution_and_known_c_results() {
+fn clang_pe_and_elf_o0_o1_o2_o3_match_reference_execution_and_known_c_results() {
     use std::path::Path;
     for (name, bytes) in [
+        (
+            "semantic-O1.exe",
+            include_bytes!("../../../tests/fixtures/semantic-O1.exe").as_slice(),
+        ),
+        (
+            "semantic-O3.exe",
+            include_bytes!("../../../tests/fixtures/semantic-O3.exe").as_slice(),
+        ),
+        (
+            "semantic-O1.elf",
+            include_bytes!("../../../tests/fixtures/semantic-O1.elf").as_slice(),
+        ),
+        (
+            "semantic-O3.elf",
+            include_bytes!("../../../tests/fixtures/semantic-O3.elf").as_slice(),
+        ),
         (
             "semantic-O0.exe",
             include_bytes!("../../../tests/fixtures/semantic-O0.exe").as_slice(),
@@ -304,6 +370,75 @@ fn cancellation_is_observed_by_semantic_lowering_and_ssa_type_passes() {
     assert!(types::infer_ssa_types(&ssa, &Cancel)
         .unwrap_err()
         .contains("cancelled"));
+}
+
+#[test]
+fn clang_cpp_corpus_checks_known_behavior_and_honest_partial_classes_at_all_levels() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures");
+    for level in 0..=3 {
+        for extension in ["exe", "elf"] {
+            let path = root.join(format!("decompiler-O{level}.{extension}"));
+            let binary = ura_core::analyze_path(&path).unwrap();
+            let analysis = ura_core::analyze_functions(&binary, &AnalysisOptions::default(), &());
+            let (a, b) = if extension == "exe" {
+                ("rcx", "rdx")
+            } else {
+                ("rdi", "rsi")
+            };
+            for name in [
+                "cpp_scalar",
+                "cpp_record",
+                "cpp_branch",
+                "cpp_nested",
+                "cpp_switch",
+                "cpp_member",
+            ] {
+                let function = analysis
+                    .functions
+                    .iter()
+                    .find(|f| analysis.function_name(f.address).as_deref() == Some(name))
+                    .unwrap();
+                let raw = ir::lift_function(&binary, &analysis, function.address, &()).unwrap();
+                let ssa = ssa::construct(&raw).unwrap();
+                let (types, _) = types::infer_ssa_types(&ssa, &()).unwrap();
+                let hir = semantic::lower(&ssa, &types, &()).unwrap();
+                let output =
+                    ura_core::decomp::source::build(&hir, name, &Default::default(), None, &())
+                        .unwrap();
+                assert!(!output.lines.is_empty());
+                if raw.blocks.iter().flat_map(|b| &b.statements).any(|o| {
+                    matches!(o.op, ir::Operation::Barrier { .. })
+                        || matches!(o.op, ir::Operation::Unknown { .. })
+                            && o.output
+                                .map_or(true, |v| raw.variables[v].ty == ir::Type::Memory)
+                }) {
+                    assert!(output.unresolved > 0, "{name} O{level}.{extension}");
+                }
+                if matches!(name, "cpp_scalar" | "cpp_record") {
+                    for value in [0, 1, 127, u64::MAX] {
+                        let first = if name == "cpp_record" { 0x9000 } else { value };
+                        let second = value.rotate_left(17) ^ 7;
+                        let actual = compare_raw(
+                            raw.clone(),
+                            &[],
+                            &[(a.into(), first), (b.into(), second)],
+                            1024,
+                        );
+                        let expected = if name == "cpp_scalar" {
+                            (value ^ second).wrapping_add(7) & 255
+                        } else {
+                            u64::from_le_bytes([56, 63, 70, 77, 84, 91, 98, 105])
+                                .wrapping_add(second)
+                        };
+                        assert_eq!(
+                            actual.registers["rax"], expected,
+                            "{name} O{level}.{extension}"
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[test]

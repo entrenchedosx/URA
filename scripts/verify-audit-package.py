@@ -15,7 +15,7 @@ import zipfile
 
 parser = argparse.ArgumentParser()
 parser.add_argument('archive', type=Path)
-parser.add_argument('--version', default='0.8.0-dev')
+parser.add_argument('--version', default='0.9.0-dev')
 args = parser.parse_args()
 root = Path(__file__).resolve().parent.parent
 archive = args.archive.resolve()
@@ -70,13 +70,16 @@ sample = root / 'tests/fixtures/ura64.exe'
 cli = json.loads(run('ura-cli.exe', '--allow', root, 'signature', sample,
                      '--function', '140001020', '--json'))
 assert cli['schemaVersion'] == 1 and cli['function'] == '0x140001020'
+decompiled = json.loads(run('ura-cli.exe', '--allow', root, 'decompile', sample,
+                            '--function', '140001020', '--json', '--ast'))
+assert decompiled['syntax'] == 'c-like' and decompiled['ast']['address'] == '0x140001020'
 mcp_process = subprocess.run([sys.executable, str(root / 'scripts/verify-mcp-release.py'),
                               '--exe', str(extraction / 'ura-mcp.exe'),
                               '--output', str(extraction / 'headless-check')], cwd=root,
                              capture_output=True, text=True, check=True, timeout=60,
                              creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
 mcp = json.loads(mcp_process.stdout)
-assert mcp['tools'] == 30 and mcp['typeLibraryRoundTrip']
+assert mcp['tools'] == 32 and mcp['typeLibraryRoundTrip']
 report = {
     'version': args.version,
     'archive': archive.name,
@@ -94,6 +97,8 @@ report = {
     'mcpVersionAndStdioPassed': True,
     'mcpTools': mcp['tools'],
     'typeLibraryRoundTrip': mcp['typeLibraryRoundTrip'],
+    'cDecompileRoundTrip': mcp['cDecompileRoundTrip'],
+    'cExportRoundTrip': mcp['cExportRoundTrip'],
     'nativeStartup': 'Not exercised by this headless verifier. Image matches the tested Release executable; consult the separate live desktop verification record.',
 }
 (archive.parent / 'package-verification.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')

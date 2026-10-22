@@ -1,0 +1,26 @@
+{
+  "version": "0.9.0-dev",
+  "archive": "URA-0.9.0-dev-windows-x64.zip",
+  "sha256": "75976cb1cd1d9ddd0a537dd9c26079c63716561bbd640ca67eaa74b926cb7c09",
+  "bytes": 16398140,
+  "zipCrcPassed": true,
+  "checkedFiles": 576,
+  "allFilesListed": true,
+  "binarySha256": {
+    "ura-native.exe": "64ea41d7e16ae208949a5b323b0efb7ff8110cdd952498c4ce0c4488cac81c2a",
+    "ura-cli.exe": "9859ffc1c7f310e5611230dd851ffdb4e14a399e6b8b7cf3925521375490dbf9",
+    "ura-mcp.exe": "c3d5861e135e8774794dc73796165a7056b455704cbc8b5df2affe118ca87cd8"
+  },
+  "binaryIdentityMatchesTestedRelease": true,
+  "iconMatches": true,
+  "missingLicenseTexts": 0,
+  "cliVersionAndJsonPassed": true,
+  "mcpVersionAndStdioPassed": true,
+  "mcpTools": 32,
+  "typeLibraryRoundTrip": true,
+  "cDecompileRoundTrip": true,
+  "cExportRoundTrip": true,
+  "nativeStartup": "Not exercised by this headless verifier. Image matches the tested Release executable; consult the separate live desktop verification record.",
+  "published": false,
+  "releaseDecision": "Withheld: current 150% OS DPI and remaining live acceptance incomplete"
+}

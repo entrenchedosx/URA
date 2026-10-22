@@ -15,6 +15,7 @@ pub mod postdom;
 pub mod program;
 pub mod semantic;
 pub mod signature;
+pub mod source;
 pub mod stack;
 pub mod types;
 
@@ -44,6 +45,7 @@ use std::collections::BTreeMap;
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DecompContext {
+    pub function_name: Option<String>,
     pub hints: SignatureHints,
     pub type_database: TypeDatabase,
     pub override_signature: Option<SignatureOverride>,
@@ -75,6 +77,7 @@ pub struct FunctionDecompilation {
     pub ast: Option<hir::HirFunction>,
     pub program: program::ProgramTypes,
     pub semantic: semantic::SemanticFunction,
+    pub pseudocode: source::Output,
     pub diagnostics: Vec<String>,
 }
 
@@ -168,6 +171,43 @@ pub fn analyze_function(
     let mut semantic = semantic::lower(&bundle.ssa, &inferred.values, control)?;
     semantic.types_partial |= inferred.truncated;
     semantic.attach_signature(&signature);
+    if let Some(name) = &context.function_name {
+        signature.name = name.clone();
+    }
+    let constants = bundle.dataflow.constants.iter().copied().collect();
+    let mut call_bindings = BTreeMap::new();
+    for node in &semantic.nodes {
+        if !matches!(node.kind, semantic::NodeKind::Invoke) {
+            continue;
+        }
+        let source = &semantic.sources[node.source];
+        if let Some((block, statement)) = bundle
+            .ssa
+            .blocks
+            .iter()
+            .find(|b| b.address == source.block)
+            .and_then(|b| {
+                source
+                    .ordinal
+                    .and_then(|ordinal| b.statements.get(ordinal))
+                    .map(|s| (b, s))
+            })
+        {
+            if let Some(slot) = imports::slot_for_call(block, statement, &constants)
+                .filter(|slot| hints.get(*slot).is_some())
+            {
+                call_bindings.insert(node.source, slot);
+            }
+        }
+    }
+    let pseudocode = source::build_with_calls(
+        &semantic,
+        &signature.name,
+        &hints,
+        Some(&frame),
+        &call_bindings,
+        control,
+    )?;
     let mut diagnostics = recovery.notes;
     diagnostics.extend(import_notes);
     diagnostics.push(format!("SSA argument/return constraints: {} facts, {} call sites, {} updates; converged={}, partial={}",program.flow.total_facts,program.flow.calls.len(),program.flow.updates,program.flow.converged,program.flow.truncated));
@@ -211,6 +251,7 @@ pub fn analyze_function(
         ast: Some(ast),
         program,
         semantic,
+        pseudocode,
         diagnostics,
     })
 }

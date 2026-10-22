@@ -249,7 +249,26 @@ enum Command {
         #[arg(long, default_value_t = 200)]
         max_nodes: usize,
     },
-    /// Render recovered high-level control structure as C-like lines
+    /// Reconstruct deterministic C-like pseudocode from semantic HIR
+    Decompile {
+        #[command(flatten)]
+        common: CommonArgs,
+        #[command(flatten)]
+        analysis: AnalysisArgs,
+        #[arg(long)]
+        function: String,
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+        #[arg(long, default_value_t = 200)]
+        limit: usize,
+        /// Include the independent C-like AST (2 MiB maximum)
+        #[arg(long, requires = "json")]
+        ast: bool,
+        /// Export the entire function to a new file; requires --enable-writes
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
+    /// Inspect the legacy high-level SSA representation
     Highlevel {
         #[command(flatten)]
         common: CommonArgs,
@@ -309,6 +328,7 @@ impl Command {
             | Command::Types { common, .. }
             | Command::Callgraph { common, .. }
             | Command::Highlevel { common, .. }
+            | Command::Decompile { common, .. }
             | Command::Hex { common, .. } => common.json,
         }
     }
@@ -737,6 +757,48 @@ fn run(cli: Cli) -> Result<(), ServiceError> {
             } else {
                 render_call_graph(&response);
                 Ok(())
+            }
+        }
+        Command::Decompile {
+            common,
+            analysis,
+            function,
+            offset,
+            limit,
+            ast,
+            output,
+        } => {
+            let handle = open(&mut service, &common)?.handle;
+            service.analyze(&handle, &analysis.options())?;
+            if let Some(destination) = output {
+                let response =
+                    service.export_decompiled_function(&handle, &function, &destination)?;
+                if common.json {
+                    print_json(&response)
+                } else {
+                    println!(
+                        "Exported {} bytes to {} ({})",
+                        response.bytes, response.destination, response.status
+                    );
+                    Ok(())
+                }
+            } else {
+                let response = service.decompile(&handle, &function, offset, limit, ast)?;
+                if common.json {
+                    print_json(&response)
+                } else {
+                    println!(
+                        "{} · {} · {}",
+                        response.name, response.function, response.status
+                    );
+                    for line in response.lines {
+                        println!("{}{}", "    ".repeat(line.indent), line.text);
+                    }
+                    if response.offset + response.returned < response.total {
+                        println!("/* page ends here; {} total lines */", response.total);
+                    }
+                    Ok(())
+                }
             }
         }
         Command::Highlevel {

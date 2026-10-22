@@ -17,6 +17,45 @@ fn service() -> Service {
 }
 
 #[test]
+fn c_decompile_pages_match_core_and_export_is_explicit_complete_and_non_overwriting() {
+    let mut reader = service();
+    let handle = analyzed(&mut reader, &fixture("ura64.exe"));
+    let first = reader.decompile(&handle, "140001020", 0, 3, true).unwrap();
+    assert_eq!(first.syntax, "c-like");
+    assert_eq!(first.returned, 3);
+    assert_eq!(first.ast.as_ref().unwrap()["address"], "0x140001020");
+    assert!(first.ast.as_ref().unwrap()["body"].is_array());
+    let second = reader
+        .decompile(&handle, "140001020", 3, 2000, false)
+        .unwrap();
+    assert_eq!(first.returned + second.returned, first.total);
+    assert!(second.ast.is_none());
+    assert!(reader.decompile(&handle, "140001020", 0, 0, false).is_err());
+    assert!(reader
+        .decompile(&handle, "140001020", 0, 2001, false)
+        .is_err());
+    let folder = tempfile::tempdir().unwrap();
+    let path = folder.path().join("function.c");
+    assert!(matches!(
+        reader.export_decompiled_function(&handle, "140001020", &path),
+        Err(ura_service::ServiceError::WriteDisabled)
+    ));
+    assert!(!path.exists());
+    let mut writer = writer_service();
+    let handle = analyzed(&mut writer, &fixture("ura64.exe"));
+    let exported = writer
+        .export_decompiled_function(&handle, "140001020", &path)
+        .unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(text.len(), exported.bytes);
+    assert!(text.contains("return"));
+    assert!(writer
+        .export_decompiled_function(&handle, "140001020", &path)
+        .is_err());
+    assert_eq!(text, std::fs::read_to_string(&path).unwrap());
+}
+
+#[test]
 fn handle_budget_rejects_excess_without_poisoning_existing_sessions() {
     let mut s = service();
     let mut handles = Vec::new();

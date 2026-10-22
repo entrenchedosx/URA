@@ -57,6 +57,7 @@ impl Workspace {
                     (loaded, "Create project…     Ctrl+N", Action::NewProject),
                     (project, "Save workspace     Ctrl+S", Action::Save),
                     (project, "Export annotations…", Action::Export),
+                    (function, "Export pseudocode…", Action::ExportPseudocode),
                     (loaded || project, "Close image", Action::Close),
                 ] {
                     command(ui, enabled, label, action, &mut self.actions);

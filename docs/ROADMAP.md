@@ -1,5 +1,46 @@
 # Roadmap
 
+## Permanent product objective
+
+Full IDA Pro, relevant Hex-Rays and Ghidra feature-set parity is an auditable
+multi-release requirement. Update [FEATURE-PARITY.md](FEATURE-PARITY.md) on every
+milestone, with source, automated/manual evidence, coverage and remaining gaps.
+No release may equate a panel/API with verified feature parity.
+
+## v0.9 — C-like decompiler source checkpoint; acceptance incomplete
+
+- [x] Independent typed C-like AST from existing semantic HIR.
+- [x] Edge-local parallel copies, cycle scratch values and safe pure inlining.
+- [x] Bounded nested-region/loop reductions; explicit fallback control.
+- [x] Shared native Pseudocode, F5, mapped lines, context actions and export.
+- [x] Shared CLI/MCP decompile, bounded AST and guarded whole-function export.
+- [x] Independent IR/HIR/AST semantic corpus including Clang C/C++ O0–O3 PE/ELF.
+- [x] Independent agent review and regression repairs.
+- [ ] Complete source local/lifetime coalescing and structure-field syntax.
+- [ ] Canonical for/do-while, proved complete switches and short-circuit syntax.
+- [ ] Broader call effects, scalar idioms, vector/floating and aggregate ABIs.
+- [ ] Current native workflow acceptance, including actual 150% Windows DPI.
+- [ ] Accepted public tag/ZIP with re-download verification after all gates pass.
+
+See [scope](C-DECOMPILER-0.9.md), [verification](VERIFICATION-0.9.md) and
+[explicit gates](PLAN-0.9.md). The earlier public v0.8 release is preserved.
+
+## Proposed subsequent stages
+
+- **v0.10:** refine the decompiler first: named locals/lifetimes, exact layout
+  accesses, alias analysis, call results/arguments, optimized compiler idioms,
+  switch proofs and readability; broaden MSVC/GCC/debug-symbol validation.
+- **v0.11:** verified native patch transactions, expected-byte guards, history,
+  undo/redo, executable export and analysis invalidation.
+- **v0.12:** native debugging/tracing foundations, process/thread/memory/register
+  models, breakpoints/stepping and trace persistence.
+- **v0.13:** proof-backed deobfuscation and symbolic/dataflow refinements.
+- **Later:** processor/loaders and debug metadata, emulation, comparison,
+  stable scripting/plugin SDK, managed batch analysis and collaboration.
+
+These are dependency-led proposals, not guaranteed release contents or dates.
+Debugging and patching were deliberately outside this decompiler milestone.
+
 ## v0.8 - foundations checkpoint, full checklist unfinished
 
 - [x] Tested scalar ABI evidence and conservative return/argument uncertainty.

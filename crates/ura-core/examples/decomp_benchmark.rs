@@ -57,6 +57,10 @@ fn main() {
         let mut semantic_bytes = 0;
         let mut lines = 0;
         let mut unresolved = 0;
+        let mut decompile_ms = 0.0;
+        let mut source_render_ms = 0.0;
+        let mut source_bytes = 0;
+        let mut source_lines = 0;
         for _ in 0..repeats {
             let timer = Instant::now();
             let frame = stack::recover(&binary, &analysis, function.address, None).expect("stack");
@@ -72,6 +76,23 @@ fn main() {
             let semantic =
                 decomp::semantic::lower(&bundle.ssa, &inferred.values, &()).expect("semantic HIR");
             semantic_ms += timer.elapsed().as_secs_f64() * 1000.0;
+            let timer = Instant::now();
+            let source = decomp::source::build(
+                &semantic,
+                &function.fallback_name(),
+                &context.hints,
+                Some(&frame),
+                &(),
+            )
+            .expect("C-like reconstruction");
+            decompile_ms += timer.elapsed().as_secs_f64() * 1000.0;
+            source_bytes = serde_json::to_vec(&source.ast)
+                .expect("C-like AST JSON")
+                .len();
+            source_lines = source.lines.len();
+            let timer = Instant::now();
+            black_box(decomp::source::render(source.ast, &()).expect("C-like formatting"));
+            source_render_ms += timer.elapsed().as_secs_f64() * 1000.0;
             let timer = Instant::now();
             let (high, ast) = hir::build_with_ast(
                 &bundle.ssa,
@@ -110,7 +131,7 @@ fn main() {
         }
         println!(
             "{}",
-            serde_json::json!({"function":ura_core::format_address(function.address),"instructions":function.instruction_count,"repetitions":repeats,"stackMs":stack_ms/repeats as f64,"abiMs":abi_ms/repeats as f64,"typesMs":types_ms/repeats as f64,"highLevelMs":hir_ms/repeats as f64,"importMs":import_ms/repeats as f64,"programMs":program_ms/repeats as f64,"pipelineMs":pipeline_ms/repeats as f64,"program":program_result.as_ref().map(|report|report.protocol_view(function.address)),"semanticMs":semantic_ms/repeats as f64,"renderMs":render_ms/repeats as f64,"semanticSerializationMs":serialization_ms/repeats as f64,"semanticBytes":semantic_bytes,"typedAstBytes":ast_bytes,"lines":lines,"unresolved":unresolved})
+            serde_json::json!({"function":ura_core::format_address(function.address),"instructions":function.instruction_count,"repetitions":repeats,"cDecompileMs":decompile_ms/repeats as f64,"cRenderMs":source_render_ms/repeats as f64,"cAstBytes":source_bytes,"cLines":source_lines,"stackMs":stack_ms/repeats as f64,"abiMs":abi_ms/repeats as f64,"typesMs":types_ms/repeats as f64,"highLevelMs":hir_ms/repeats as f64,"importMs":import_ms/repeats as f64,"programMs":program_ms/repeats as f64,"pipelineMs":pipeline_ms/repeats as f64,"program":program_result.as_ref().map(|report|report.protocol_view(function.address)),"semanticMs":semantic_ms/repeats as f64,"renderMs":render_ms/repeats as f64,"semanticSerializationMs":serialization_ms/repeats as f64,"semanticBytes":semantic_bytes,"typedAstBytes":ast_bytes,"lines":lines,"unresolved":unresolved})
         );
     }
 }

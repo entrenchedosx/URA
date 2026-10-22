@@ -213,6 +213,15 @@ pub struct DecompFunctionParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
+pub struct ExportDecompiledParams {
+    pub handle: String,
+    pub function: String,
+    /// New file inside an allowed root. Existing files are preserved. Requires --enable-writes.
+    pub destination: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct TypesParams {
     pub handle: String,
     /// Omit to read the persisted project type library without decompiling a function.

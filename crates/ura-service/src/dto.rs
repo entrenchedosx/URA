@@ -432,6 +432,38 @@ pub struct HighLevelResponse {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DecompileResponse {
+    pub schema_version: u32,
+    pub handle: String,
+    pub binary_hash: String,
+    pub function: String,
+    pub name: String,
+    pub analysis_partial: bool,
+    pub syntax: String,
+    pub status: String,
+    pub total: usize,
+    pub offset: usize,
+    pub returned: usize,
+    pub lines: Vec<ura_core::decomp::source::Line>,
+    pub unresolved: usize,
+    pub truncated: bool,
+    pub diagnostics: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ast: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DecompileExportResponse {
+    pub schema_version: u32,
+    pub function: String,
+    pub destination: String,
+    pub bytes: usize,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CallGraphNodeView {
     pub address: String,
     pub name: String,
