@@ -98,7 +98,7 @@ describe normal completion, not exception behavior.
 | RET | Native-width near return, optional unsigned imm16 stack adjustment; 16-bit operand override unsupported |
 | NOP | No state change |
 
-LOCK/repeat prefixes, SIMD/vector/FPU, shifts as machine instructions, arithmetic
+LOCK/repeat prefixes, SIMD/vector/FPU, unsupported arithmetic
 outside the listed set, system/privileged operations, far transfers and other
 register classes produce explicit unsupported diagnostics and state barriers.
 A failed partial lift rolls back operations **and** temporary variables before
@@ -210,3 +210,15 @@ benchmark harness. Python profiling scripts optionally require psutil.
 Future decompilation needs broader differential semantics testing, explicit ABI
 and exception models, alias analysis, structured control flow and type recovery.
 The present IR deliberately provides none of those as fabricated pseudocode.
+
+## Shared concrete instruction semantics (v0.13)
+
+The single-instruction CPU entry uses the same decoder and Builder operations as
+static lifting. INC/DEC now preserve CF, and SHL/SHR/SAR implement masked counts,
+zero-count preservation, SAR sign fill, defined CF/OF rules and undefined flags.
+Two locked HIR snapshots were deliberately updated because these instructions no
+longer produce unsupported barriers. Raw IR logical shift operators retain their
+own width semantics; the instruction builder supplies the architectural count
+mask and flag behavior. Concrete CALL handles stack/control transfer without the
+static lifter's abstract ABI clobbers. Prefix modes are determined from leading
+prefixes only, never displacement bytes. See dynamic tests and verification.

@@ -196,6 +196,102 @@ pub fn lift_image(
     Ok(builder.function)
 }
 
+/// One decoded machine instruction, using the same scalar lifter as static IR.
+/// Calls retain architectural state here: ABI clobber inference is not CPU execution.
+pub(crate) struct CpuInstruction {
+    pub variables: Vec<Variable>,
+    pub statements: Vec<Statement>,
+    pub transfer: Option<Operand>,
+    pub flow: CpuFlow,
+    pub next: u64,
+    pub target: u64,
+    pub bytes: Vec<u8>,
+}
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum CpuFlow {
+    Next,
+    Branch,
+    Jump,
+    Call,
+    Return,
+}
+pub(crate) fn lift_cpu_instruction(
+    bytes: &[u8],
+    address: u64,
+    bits: u8,
+) -> Result<CpuInstruction, String> {
+    if !matches!(bits, 32 | 64) {
+        return Err("CPU mode must be32 or64".into());
+    }
+    let i = Decoder::with_ip(u32::from(bits), bytes, address, DecoderOptions::NONE).decode();
+    if i.is_invalid() {
+        return Err("invalid or incomplete executable instruction".into());
+    }
+    let mut b = Builder::new(u16::from(bits), address);
+    let flow = match i.mnemonic() {
+        M::Call => {
+            let (address_bits, operand_override) = prefix_modes(&bytes[..i.len()], u16::from(bits));
+            b.address_bits = address_bits;
+            if i.has_lock_prefix() || i.has_rep_prefix() || i.has_repne_prefix() {
+                return Err("atomic/repeat call prefixes unsupported".into());
+            }
+            if i.is_call_far() || i.is_call_far_indirect() || operand_override && bits == 32 {
+                return Err("far/16-bit call is not emulated".into());
+            }
+            let target = b.read(&i, 0, u16::from(bits))?;
+            b.transfer = Some(target);
+            CpuFlow::Call
+        }
+        _ => {
+            b.instruction(&i, &bytes[..i.len()])?;
+            if i.mnemonic() == M::Ret {
+                CpuFlow::Return
+            } else if i.mnemonic() == M::Jmp {
+                CpuFlow::Jump
+            } else if i.is_jcc_short_or_near() {
+                CpuFlow::Branch
+            } else {
+                CpuFlow::Next
+            }
+        }
+    };
+    Ok(CpuInstruction {
+        variables: b.function.variables,
+        statements: b.ops,
+        transfer: b.transfer,
+        flow,
+        next: i.next_ip(),
+        target: i.near_branch_target(),
+        bytes: bytes[..i.len()].to_vec(),
+    })
+}
+
+fn prefix_modes(bytes: &[u8], bits: u16) -> (u16, bool) {
+    let mut address_override = false;
+    let mut operand_override = false;
+    for &b in bytes {
+        match b {
+            0x67 => address_override = true,
+            0x66 => operand_override = true,
+            0x26 | 0x2e | 0x36 | 0x3e | 0x64 | 0x65 | 0xf0 | 0xf2 | 0xf3 => {}
+            0x40..=0x4f if bits == 64 => {}
+            _ => break,
+        }
+    }
+    (
+        if address_override {
+            if bits == 64 {
+                32
+            } else {
+                16
+            }
+        } else {
+            bits
+        },
+        operand_override,
+    )
+}
+
 struct Builder {
     function: Function,
     bits: u16,
@@ -847,34 +943,105 @@ impl Builder {
         }
         self.unary(Operation::ToAddress, bits, Type::Address(self.bits))
     }
+    fn shift(&mut self, i: &Instruction) -> Result<(), String> {
+        self.comparison = None;
+        let width = self.width(i, 0)?;
+        let address = if i.op0_kind() == OpKind::Memory {
+            Some(self.address(i)?)
+        } else {
+            None
+        };
+        let left = self.read(i, 0, width)?;
+        let raw = self.read(i, 1, 8)?;
+        let count = self.binary(
+            Operation::And,
+            raw,
+            self.constant(8, if width == 64 { 63 } else { 31 }),
+        );
+        let count = self.resize(count, width, false);
+        let zero = self.compare(Operation::Equal, count, self.constant(width, 0));
+        let one = self.compare(Operation::Equal, count, self.constant(width, 1));
+        let old: Vec<_> = (0..6)
+            .map(|n| self.emit(Type::Bits(1), Operation::Copy, vec![self.flag(n)]))
+            .collect();
+        let right = i.mnemonic() != M::Shl;
+        let mut result = self.binary(
+            if right {
+                Operation::Shr
+            } else {
+                Operation::Shl
+            },
+            left,
+            count,
+        );
+        let sign = self.unary(
+            Operation::Extract { offset: width - 1 },
+            left,
+            Type::Bits(1),
+        );
+        if i.mnemonic() == M::Sar {
+            let sign = self.resize(sign, width, false);
+            let signmask = self.binary(Operation::Sub, self.constant(width, 0), sign);
+            let missing = self.binary(Operation::Shr, self.constant(width, mask(width)), count);
+            let missing = self.unary(Operation::Not, missing, Type::Bits(width));
+            let fill = self.binary(Operation::And, signmask, missing);
+            result = self.binary(Operation::Or, result, fill);
+        }
+        let valid = self.compare(
+            Operation::UnsignedLess,
+            count,
+            self.constant(width, width as u64),
+        );
+        let carry_count = if right {
+            let capped = self.emit(
+                Type::Bits(width),
+                Operation::Select,
+                vec![valid, count, self.constant(width, width as u64)],
+            );
+            self.binary(Operation::Sub, capped, self.constant(width, 1))
+        } else {
+            self.binary(Operation::Sub, self.constant(width, width as u64), count)
+        };
+        let carry = self.binary(Operation::Shr, left, carry_count);
+        let carry = self.unary(Operation::Extract { offset: 0 }, carry, Type::Bits(1));
+        let undefined = self.unknown(
+            Type::Bits(1),
+            "shift flag undefined for this effective count",
+        );
+        let carry = if i.mnemonic() == M::Sar {
+            carry
+        } else {
+            self.emit(
+                Type::Bits(1),
+                Operation::Select,
+                vec![valid, carry, undefined],
+            )
+        };
+        let sf = self.unary(
+            Operation::Extract { offset: width - 1 },
+            result,
+            Type::Bits(1),
+        );
+        let of = match i.mnemonic() {
+            M::Shl => self.binary(Operation::Xor, sf, carry),
+            M::Shr => sign,
+            _ => self.constant(1, 0),
+        };
+        let of = self.emit(Type::Bits(1), Operation::Select, vec![one, of, undefined]);
+        let zf = self.compare(Operation::Equal, result, self.constant(width, 0));
+        let pf = self.unary(Operation::Parity, result, Type::Bits(1));
+        for (n, new) in [carry, pf, undefined, zf, sf, of].into_iter().enumerate() {
+            let v = self.emit(Type::Bits(1), Operation::Select, vec![zero, old[n], new]);
+            self.set_flag(n, v);
+        }
+        self.write(i, result, address)
+    }
     fn instruction(&mut self, i: &Instruction, bytes: &[u8]) -> Result<(), String> {
         if i.has_lock_prefix() || i.has_rep_prefix() || i.has_repne_prefix() {
             return Err("atomic/repeat prefixes are not lifted".into());
         }
-        let mut address_override = false;
-        let mut operand_override = false;
-        for b in bytes {
-            if *b == 0x67 {
-                address_override = true;
-            } else if *b == 0x66 {
-                operand_override = true;
-            } else if !matches!(
-                b,
-                0x26 | 0x2e | 0x36 | 0x3e | 0x64 | 0x65 | 0xf0 | 0xf2 | 0xf3
-            ) && !(self.bits == 64 && (0x40..=0x4f).contains(b))
-            {
-                break;
-            }
-        }
-        self.address_bits = if address_override {
-            if self.bits == 64 {
-                32
-            } else {
-                16
-            }
-        } else {
-            self.bits
-        };
+        let (address_bits, operand_override) = prefix_modes(bytes, self.bits);
+        self.address_bits = address_bits;
         match i.mnemonic() {
             M::Nop => {}
             M::Mov | M::Movzx | M::Movsx | M::Movsxd => {
@@ -933,6 +1100,23 @@ impl Builder {
                 if !matches!(i.mnemonic(), M::Cmp | M::Test) {
                     self.write(i, result, address)?;
                 }
+            }
+            M::Inc | M::Dec => {
+                let width = self.width(i, 0)?;
+                let address = if i.op0_kind() == OpKind::Memory {
+                    Some(self.address(i)?)
+                } else {
+                    None
+                };
+                let left = self.read(i, 0, width)?;
+                let carry = self.emit(Type::Bits(1), Operation::Copy, vec![self.flag(0)]);
+                let one = self.constant(width, 1);
+                let add = i.mnemonic() == M::Inc;
+                let result =
+                    self.binary(if add { Operation::Add } else { Operation::Sub }, left, one);
+                self.flags(if add { M::Add } else { M::Sub }, left, one, result);
+                self.set_flag(0, carry);
+                self.write(i, result, address)?;
             }
             M::Push => {
                 let width = if operand_override { 16 } else { self.bits };
@@ -1078,6 +1262,7 @@ impl Builder {
                 self.write_register(to, value)?;
             }
             M::Rol | M::Ror => self.rotate(i)?,
+            M::Shl | M::Shr | M::Sar => self.shift(i)?,
             M::Seto
             | M::Setno
             | M::Setb

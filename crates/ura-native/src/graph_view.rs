@@ -45,6 +45,15 @@ impl Workspace {
                     .text("Zoom"),
             );
         });
+        let overlay = self
+            .info
+            .as_ref()
+            .is_some_and(|i| i.sha256 == self.dynamic.overlay_sha)
+            && !self.dynamic.overlay_sha.is_empty()
+            && self.patches.as_ref().is_none_or(|p| p.changed_bytes() == 0);
+        if overlay {
+            ui.label("Recorded instruction samples · unobserved paths remain possible");
+        }
         let Some(graph) = self.graph.get(&function) else {
             ui.label("Preparing graph…");
             return;
@@ -113,10 +122,15 @@ impl Workspace {
             };
             let start = transform(a.x + a.width * 0.5 + branch, a.y + a.height);
             let end = transform(b.x + b.width * 0.5, b.y);
-            let color = match edge.kind {
-                ura_core::EdgeKind::Taken => p.taken,
-                ura_core::EdgeKind::FallThrough => p.fallthrough,
-                _ => p.accent,
+            let observed = overlay && self.dynamic.overlay_edges.contains(&(a.address, b.address));
+            let color = if observed {
+                p.gold
+            } else {
+                match edge.kind {
+                    ura_core::EdgeKind::Taken => p.taken,
+                    ura_core::EdgeKind::FallThrough => p.fallthrough,
+                    _ => p.accent,
+                }
             };
             let points = if b.y > a.y {
                 let middle = start.y + (end.y - start.y) * 0.5;
@@ -166,6 +180,15 @@ impl Workspace {
             if !r.intersects(rect) {
                 continue;
             }
+            let observed = if overlay {
+                self.dynamic
+                    .overlay_blocks
+                    .get(&node.address)
+                    .copied()
+                    .unwrap_or(0)
+            } else {
+                0
+            };
             let selected = analysis
                 .block_containing(self.location.address.unwrap_or(0))
                 .is_some_and(|b| b.address == node.address);
@@ -173,7 +196,16 @@ impl Workspace {
             painter.rect_stroke(
                 r,
                 0.0,
-                Stroke::new(1.0, if selected { p.accent } else { p.border }),
+                Stroke::new(
+                    if observed > 0 { 2.0 } else { 1.0 },
+                    if observed > 0 {
+                        p.gold
+                    } else if selected {
+                        p.accent
+                    } else {
+                        p.border
+                    },
+                ),
                 StrokeKind::Inside,
             );
             let paint = painter.with_clip_rect(rect.intersect(r));
@@ -185,7 +217,15 @@ impl Workspace {
             paint.text(
                 r.min + egui::vec2(6.0, 3.0) * zoom,
                 Align2::LEFT_TOP,
-                format!("loc_{:X}:", node.address),
+                format!(
+                    "loc_{:X}:{}",
+                    node.address,
+                    if observed > 0 {
+                        format!(" · {observed} recorded samples")
+                    } else {
+                        String::new()
+                    }
+                ),
                 FontId::monospace(11.0 * zoom),
                 p.accent,
             );

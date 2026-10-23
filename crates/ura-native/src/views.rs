@@ -24,6 +24,7 @@ impl egui_dock::TabViewer for Workspace {
             FontId::monospace(self.settings.font_size),
         );
         match tab {
+            Panel::Emulation => self.emulation_view(ui),
             Panel::Explorer => self.explorer(ui),
             Panel::Disassembly => self.disassembly(ui),
             Panel::Functions => self.functions(ui),

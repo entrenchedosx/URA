@@ -1,6 +1,7 @@
 """Exercise the built Release MCP transport and prepare a disposable project.
 Samples are parsed statically. Only the selected disposable output folder is written.
 """
+from release_common import CURRENT_VERSION, MCP_TOOLS
 import argparse
 import json
 from pathlib import Path
@@ -39,7 +40,7 @@ def tool(name,args):
 try:
     request('initialize',{'protocolVersion':'2025-03-26','capabilities':{},'clientInfo':{'name':'ura-release-check','version':'1'}})
     child.stdin.write(json.dumps({'jsonrpc':'2.0','method':'notifications/initialized'})+'\n');child.stdin.flush()
-    assert len(request('tools/list',{})['tools']) == 64
+    assert len(request('tools/list',{})['tools']) == MCP_TOOLS
     opened = tool('ura_open_binary',{'binary':str(root/'tests/fixtures/ura64.exe')})
     handle = opened['handle'];tool('ura_analyze',{'handle':handle})
     timings = {}
@@ -83,7 +84,7 @@ try:
     tool('ura_set_type_library',{'handle':handle,'project':str(project),'database':library})
     assert tool('ura_get_structure',{'handle':handle,'name':'Header'})['structure']['fields'][0]['name'] == 'length'
     assert tool('ura_get_types',{'handle':handle})['database'] == library
-    result = {'tools':64,'irSchema':1,'decompilerSchema':decompiler,'callGraphNodes':graph['returnedNodes'],'fixtureQueryMs':timings,'projectPrepared':project.name,'typeLibraryRoundTrip':True,'cDecompileRoundTrip':True,'cExportRoundTrip':True,'typedAstRoundTrip':True,'semanticRoundTrip':True,'semanticBlockPage':True,'programConverged':typed['program']['converged']}
+    result = {'tools':MCP_TOOLS,'irSchema':1,'decompilerSchema':decompiler,'callGraphNodes':graph['returnedNodes'],'fixtureQueryMs':timings,'projectPrepared':project.name,'typeLibraryRoundTrip':True,'cDecompileRoundTrip':True,'cExportRoundTrip':True,'typedAstRoundTrip':True,'semanticRoundTrip':True,'semanticBlockPage':True,'programConverged':typed['program']['converged']}
     (project.parent/'mcp-release.json').write_text(json.dumps(result,indent=2),encoding='utf-8')
     print(json.dumps(result,indent=2))
 finally:

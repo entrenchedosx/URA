@@ -7,6 +7,7 @@ mod lift;
 pub mod ssa;
 mod verify;
 
+pub(crate) use lift::{lift_cpu_instruction, CpuFlow};
 pub use lift::{lift_function, lift_image};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

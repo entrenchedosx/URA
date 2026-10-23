@@ -77,6 +77,15 @@ impl DebugUi {
 }
 impl Workspace {
     pub(super) fn trace_panel(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            ui.selectable_value(&mut self.dynamic.replay_mode, false, "Live recording");
+            ui.selectable_value(&mut self.dynamic.replay_mode, true, "Replay file");
+        });
+        if self.dynamic.replay_mode {
+            self.replay_view(ui);
+            return;
+        }
+
         let debug = &mut self.debugger;
         ui.horizontal_wrapped(|ui|{
             ui.checkbox(&mut debug.trace_instructions,"Instruction stepping");

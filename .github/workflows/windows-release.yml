@@ -1,0 +1,79 @@
+name: Qualified Windows release
+on:
+  push:
+    tags: ['v[0-9]*.[0-9]*.[0-9]*']
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  qualify:
+    runs-on: windows-2025
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up pinned Rust toolchain
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy
+          if ($LASTEXITCODE -ne 0) { throw 'Toolchain installation failed' }
+          rustup override set 1.99.1
+          if ($LASTEXITCODE -ne 0) { throw 'Toolchain selection failed' }
+      - name: Qualify and freshly build all three executables
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: ./scripts/build-windows-release.ps1 -ApprovedTag $env:RELEASE_TAG -ExpectedCommit $env:SOURCE_COMMIT -OutputDirectory target/qualified-release
+      - name: Preserve qualified artifacts and logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-qualification
+          path: target/qualified-release/
+          if-no-files-found: warn
+          retention-days: 30
+  publish:
+    needs: qualify
+    runs-on: windows-2025
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Download this run's qualified artifacts
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh run download $env:RUN_ID --repo $env:GH_REPO --name windows-qualification --dir target/qualified-release
+          if ($LASTEXITCODE -ne 0) { throw 'Qualified artifact download failed' }
+          New-Item -ItemType Directory -Path target/release -Force | Out-Null
+          foreach ($name in @('ura-native.exe','ura-cli.exe','ura-mcp.exe')) {
+            Copy-Item -LiteralPath "target/qualified-release/$name" -Destination target/release
+          }
+      - name: Publish unique assets and re-download verification
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          SOURCE_COMMIT: ${{ github.sha }}
+          GH_REPO: ${{ github.repository }}
+        run: ./scripts/publish-windows-release.ps1 -Tag $env:RELEASE_TAG -ExpectedCommit $env:SOURCE_COMMIT -Repository $env:GH_REPO -ArtifactDirectory target/qualified-release
+      - name: Preserve downloaded verification logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: github-download-verification
+          path: target/qualified-release/
+          retention-days: 30

@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 mod debug;
+mod dynamic;
 mod patch;
 use std::process::ExitCode;
 use std::str::FromStr;
@@ -26,6 +27,8 @@ use ura_service::{
 struct Cli {
     #[command(flatten)]
     debugging: debug::DebugOptions,
+    #[arg(long, global = true)]
+    enable_emulation: bool,
     /// Directory that binary, project and export paths must resolve inside (repeatable)
     #[arg(long = "allow", value_name = "DIR", global = true)]
     allow: Vec<PathBuf>,
@@ -40,6 +43,8 @@ struct Cli {
 enum Command {
     /// Interactive local JSON-line debugger; one process owns all sessions until EOF
     Debug,
+    /// Interactive isolated CPU emulation, trace replay and captured image analysis
+    Dynamic,
     /// Transactional fixed-size binary patching; never executes inspected files
     Patch {
         #[command(flatten)]
@@ -323,7 +328,7 @@ enum Command {
 impl Command {
     fn json(&self) -> bool {
         match self {
-            Command::Debug => true,
+            Command::Debug | Command::Dynamic => true,
             Command::Info { common }
             | Command::Patch { common, .. }
             | Command::TypeLibrary { common, .. }
@@ -424,6 +429,7 @@ fn run(cli: Cli) -> Result<(), ServiceError> {
     let mut service = Service::new(policy.clone(), cli.enable_writes);
     match cli.command {
         Command::Debug => debug::run(policy, cli.debugging, cli.enable_writes),
+        Command::Dynamic => dynamic::run(policy, cli.enable_emulation, cli.enable_writes),
         Command::Patch { common, operation } => {
             patch::run(&mut service, &policy, &common, operation)
         }

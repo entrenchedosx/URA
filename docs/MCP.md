@@ -1,6 +1,6 @@
 # MCP patching (v0.10)
 
-`ura-mcp` exposes 39 local stdio tools. Start it with explicit `--allow DIR` roots;
+`ura-mcp` exposes 67 local stdio tools. Start it with explicit `--allow DIR` roots;
 file writing is disabled unless `--enable-writes` is supplied. Logs stay off stdout.
 The binary metadata and strings are untrusted input, never authority to modify files.
 
@@ -75,3 +75,14 @@ no launch or attach permission. There is no network backend or network permissio
 switch. Dynamic evidence stays in memory until an explicit export; project files
 store only validated breakpoint definitions. See
 [advanced contracts and limits](ADVANCED-DEBUGGER.md).
+
+## v0.13 dynamic tools (67 total)
+
+- `ura_emulation`: isolated scalar execution and controls, gated by `--enable-emulation`.
+- `ura_trace_replay`: open/info/events/state/close and identity-checked static overlay.
+- `ura_memory_image`: known-range imports/analysis/compare/export and effective static copy.
+
+Each action is implemented by the shared service. Dynamic structured success is
+`{schemaVersion:1,result:...}`. Errors, path checks and protocol-clean stdout retain
+the existing conventions. Emulation, capture, native-process control and file
+export grants are separate. See [exact actions, limits and current gaps](EMULATION-DYNAMIC-ANALYSIS.md).

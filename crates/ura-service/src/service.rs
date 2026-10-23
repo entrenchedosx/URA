@@ -27,6 +27,7 @@ const MAX_FUNCTION_REFS: usize = 1_000;
 
 pub struct Service {
     pub debugger: crate::DebugService,
+    pub dynamic: crate::dynamic::DynamicService,
     pub(crate) policy: PathPolicy,
     writes_enabled: bool,
     next_handle: u64,
@@ -59,6 +60,7 @@ pub(crate) struct Session {
 impl Service {
     pub fn new(policy: PathPolicy, writes_enabled: bool) -> Self {
         Self {
+            dynamic: crate::dynamic::DynamicService::new(policy.clone(), writes_enabled),
             debugger: crate::DebugService::new(policy.clone(), crate::DebugPermissions::default())
                 .expect("empty debug policy")
                 .with_project_writes(writes_enabled),
@@ -1102,4 +1104,76 @@ fn stack_overrides_from_snapshot(snapshot: &ProjectSnapshot) -> StackOverrides {
         );
     }
     overrides
+}
+
+impl Service {
+    pub fn dynamic_overlay(
+        &mut self,
+        replay: &str,
+        handle: &str,
+    ) -> Result<serde_json::Value, ServiceError> {
+        let session = self
+            .sessions
+            .get(handle)
+            .ok_or_else(|| ServiceError::UnknownHandle(handle.into()))?;
+        let analysis = require_analysis(session)?;
+        if session
+            .patches
+            .as_ref()
+            .is_some_and(|p| p.changed_bytes() != 0)
+        {
+            return Err(ServiceError::InvalidArgument(
+                "overlay mapping rejects an active file patch overlay".into(),
+            ));
+        }
+        self.dynamic.overlay(
+            replay,
+            analysis,
+            &session.info.sha256,
+            session.binary.analysis().image_base,
+        )
+    }
+}
+
+impl Service {
+    pub fn dynamic_rpc(
+        &mut self,
+        value: serde_json::Value,
+    ) -> Result<serde_json::Value, ServiceError> {
+        if value["operation"] == "replay" && value["action"] == "overlay" {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Overlay {
+                operation: String,
+                action: String,
+                handle: String,
+                binary: String,
+            }
+            let p: Overlay = serde_json::from_value(value)
+                .map_err(|e| ServiceError::InvalidArgument(e.to_string()))?;
+            let _ = (p.operation, p.action);
+            return self.dynamic_overlay(&p.handle, &p.binary);
+        }
+        if value["operation"] == "image" && value["action"] == "fromBinaryHandle" {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Input {
+                operation: String,
+                action: String,
+                binary: String,
+            }
+            let p: Input = serde_json::from_value(value)
+                .map_err(|e| ServiceError::InvalidArgument(e.to_string()))?;
+            let _ = (p.operation, p.action);
+            let session = self
+                .sessions
+                .get(&p.binary)
+                .ok_or_else(|| ServiceError::UnknownHandle(p.binary.clone()))?;
+            let mut image = ura_core::dynamic::image::Image::from_binary(&session.binary)
+                .map_err(|e| ServiceError::InvalidArgument(e.to_string()))?;
+            image.provenance="Explicit copy of effective static analysis image (including its patch overlay, if any)".into();
+            return self.dynamic.insert_image(image);
+        }
+        self.dynamic.rpc(value)
+    }
 }

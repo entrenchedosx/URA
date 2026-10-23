@@ -1,9 +1,10 @@
 """Verify an audit ZIP without starting or controlling any desktop app.
 
 Only CLI/MCP child processes run. All extraction and disposable projects stay
-under the archive's output folder. The native image is compared byte-for-byte
-with the previously built/tested image; GUI startup is deliberately not repeated.
+under the archive's output folder. The native image is compared byte-for-byte with the freshly built image.
+No native desktop window is launched.
 """
+from release_common import CURRENT_VERSION, MCP_TOOLS
 import argparse
 import hashlib
 import json
@@ -15,9 +16,20 @@ import zipfile
 
 parser = argparse.ArgumentParser()
 parser.add_argument('archive', type=Path)
-parser.add_argument('--version', default='0.12.0-dev')
+parser.add_argument('--version', default=CURRENT_VERSION)
 args = parser.parse_args()
 root = Path(__file__).resolve().parent.parent
+if args.version != CURRENT_VERSION:
+    raise ValueError('Audit must use the checked-out Cargo version')
+qualification = json.loads((root / 'release-qualification.json').read_text(encoding='utf-8'))
+if qualification.get('version') != args.version:
+    raise ValueError('Qualification version mismatch')
+evidence = qualification.get('requiredEvidence')
+if not isinstance(evidence,str) or not evidence:
+    raise ValueError('Qualification requiredEvidence is missing')
+evidence_path = (root / evidence).resolve()
+if not evidence_path.is_relative_to(root) or not evidence_path.is_file() or Path(evidence).is_absolute():
+    raise ValueError('Qualification evidence must name a real source file within the repository')
 archive = args.archive.resolve()
 extraction = archive.parent / ('package-check-' + uuid.uuid4().hex)
 extraction.mkdir()
@@ -31,8 +43,9 @@ sidecar_hash, sidecar_name = archive.with_suffix(archive.suffix + '.sha256').rea
 assert sidecar_hash.lower() == archive_hash
 assert sidecar_name == archive.name
 with zipfile.ZipFile(archive) as package:
-    assert package.testzip() is None
     entries = package.infolist()
+    if len(entries)>16384 or sum(e.file_size for e in entries)>512*1024*1024:
+        raise ValueError('Audit archive exceeds bounded entry/expanded-size limits')
     names = set()
     for entry in entries:
         name = PurePosixPath(entry.filename)
@@ -41,12 +54,15 @@ with zipfile.ZipFile(archive) as package:
         assert target.is_relative_to(extraction)
         assert entry.filename.lower() not in names
         names.add(entry.filename.lower())
+    assert package.testzip() is None
     package.extractall(extraction)
 
 checked = set()
 for line in (extraction / 'SHA256SUMS.txt').read_text(encoding='utf-8-sig').splitlines():
     expected, name = line.split('  ', 1)
-    assert digest(extraction / name) == expected.lower(), name
+    member=(extraction / name).resolve()
+    assert member.is_relative_to(extraction) and member.is_file(),name
+    assert digest(member) == expected.lower(), name
     checked.add(name.replace('\\', '/'))
 actual = {str(p.relative_to(extraction)).replace('\\', '/') for p in extraction.rglob('*') if p.is_file()}
 assert checked == actual - {'SHA256SUMS.txt'}
@@ -56,26 +72,15 @@ binary_hashes = {}
 for name in ['ura-native.exe', 'ura-cli.exe', 'ura-mcp.exe']:
     binary_hashes[name] = digest(extraction / name)
     assert binary_hashes[name] == digest(root / 'target/release' / name)
-for name in ['README.md', 'LICENSE', 'THIRD_PARTY.md', 'docs/AUDIT-0.8.md', 'docs/VERIFICATION-0.8.md',
+for name in ['README.md', 'LICENSE', 'THIRD_PARTY.md', 'release-qualification.json', 'docs/AUDIT-0.8.md', 'docs/VERIFICATION-0.8.md',
              'docs/BINARY-PATCHING.md', 'docs/ADVANCED-DEBUGGER.md', 'docs/DEBUGGER.md', 'docs/CLI.md', 'docs/MCP.md', 'docs/VERIFICATION-0.12.md',
-             'docs/FEATURE-PARITY.md', 'docs/ROADMAP.md', 'docs/benchmarks/0.12-headless-release.json',
+             'docs/FEATURE-PARITY.md', 'docs/ROADMAP.md', evidence,
+             'docs/EMULATION-DYNAMIC-ANALYSIS.md', 'docs/RELEASING.md', f'docs/RELEASE-NOTES-{args.version}.md',
+             'docs/benchmarks/0.13-dynamic-release.json', 'docs/benchmarks/0.12-headless-release.json',
              'docs/benchmarks/0.12-debugger-release.json', 'docs/benchmarks/0.12-advanced-release.json',
              'docs/benchmarks/0.12-trace-view-release.json', 'docs/benchmarks/0.12-condition-release.json']:
     assert (extraction / name).is_file()
     assert digest(extraction / name) == digest(root / name), name
-patch_evidence = json.loads((extraction / 'docs/benchmarks/0.12-headless-release.json').read_text(encoding='utf-8'))
-assert patch_evidence['version'] == args.version
-assert patch_evidence['executableSha256'] == binary_hashes
-debug_evidence = json.loads((extraction / 'docs/benchmarks/0.12-debugger-release.json').read_text(encoding='utf-8'))
-assert debug_evidence['version'] == args.version
-assert debug_evidence['controlledFixturesExecuted'] and not debug_evidence['nativeDesktopLaunched']
-assert debug_evidence['executableSha256'] == binary_hashes
-
-advanced_evidence = json.loads((extraction / 'docs/benchmarks/0.12-advanced-release.json').read_text(encoding='utf-8'))
-assert advanced_evidence['version'] == args.version
-assert advanced_evidence['mcpTools'] == 64
-assert advanced_evidence['controlledFixturesExecuted'] and not advanced_evidence['nativeDesktopLaunched']
-assert advanced_evidence['executableSha256'] == binary_hashes
 
 def run(executable, *arguments):
     return subprocess.run([str(extraction / executable), *map(str, arguments)], cwd=extraction,
@@ -97,7 +102,7 @@ mcp_process = subprocess.run([sys.executable, str(root / 'scripts/verify-mcp-rel
                              capture_output=True, text=True, check=True, timeout=60,
                              creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
 mcp = json.loads(mcp_process.stdout)
-assert mcp['tools'] == 64 and mcp['typeLibraryRoundTrip']
+assert mcp['tools'] == MCP_TOOLS and mcp['typeLibraryRoundTrip']
 report = {
     'version': args.version,
     'archive': archive.name,
@@ -117,7 +122,7 @@ report = {
     'typeLibraryRoundTrip': mcp['typeLibraryRoundTrip'],
     'cDecompileRoundTrip': mcp['cDecompileRoundTrip'],
     'cExportRoundTrip': mcp['cExportRoundTrip'],
-    'nativeStartup': 'Not exercised. The image matches the compiled Release executable; no live v0.12 native acceptance is claimed.',
+    'nativeStartup': 'Not exercised; matches the freshly compiled executable. Manual desktop acceptance remains unverified.',
 }
 (archive.parent / 'package-verification.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
 print(json.dumps(report, indent=2))

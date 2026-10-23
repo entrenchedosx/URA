@@ -3,6 +3,7 @@
 Does not start the native desktop, control UI, or attach to unrelated processes.
 Python/psutil are verification dependencies, never executable runtime dependencies.
 """
+from release_common import CURRENT_VERSION, MCP_TOOLS
 import argparse
 import hashlib
 import json
@@ -127,7 +128,7 @@ for mcp in (False, True):
     evidence[-1].update({'ownedPidAttach': True, 'pause': True, 'detachPreservedTarget': True,
                          'attachedTerminationDenied': True})
 
-summary = {'version': '0.12.0-dev', 'mcpTools': 64, 'controlledFixturesExecuted': True,
+summary = {'version': CURRENT_VERSION, 'mcpTools': MCP_TOOLS, 'controlledFixturesExecuted': True,
            'nativeDesktopLaunched': False, 'sourceSha256': hashlib.sha256(source.read_bytes()).hexdigest(),
            'fixtureSha256': hashlib.sha256(fixture.read_bytes()).hexdigest(), 'workflows': evidence,
            'rpcMedianMs': {key: statistics.median(values) for key, values in metrics.items()},

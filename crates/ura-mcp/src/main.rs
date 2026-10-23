@@ -21,6 +21,9 @@ use crate::server::UraServer;
                   directory). Project and export writes stay disabled unless --enable-writes is set."
 )]
 struct Cli {
+    /// Permit isolated virtual CPU sessions; does not grant native execution
+    #[arg(long)]
+    enable_emulation: bool,
     #[arg(long)]
     enable_debug_launch: bool,
     #[arg(long)]
@@ -55,6 +58,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let policy = PathPolicy::new(cli.allow)?;
     let mut service = Service::new(policy.clone(), cli.enable_writes);
+    service.dynamic = ura_service::dynamic::DynamicService::new(policy.clone(), cli.enable_writes)
+        .with_emulation(cli.enable_emulation);
     service.debugger = ura_service::DebugService::new(
         policy,
         ura_service::DebugPermissions {

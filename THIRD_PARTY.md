@@ -53,3 +53,10 @@ DLL is redistributed. `tempfile` moves from service test-only to runtime use for
 atomic new-file evidence export and was already in the locked application closure.
 Condition parsing and trace/capture storage are repository code. Local PDB files
 are explicitly selected user data and are never bundled automatically.
+
+The v0.13 isolated interpreter adds no external emulator dependency. It reuses
+iced-x86 and URA's typed IR semantics, and object for preferred PE/ELF mapping.
+Dependency version selection is unchanged except URA workspace versions. The
+release helper collects the full locked native/CLI/MCP dependency closure and
+fails on missing license texts. No Intel/Ghidra/IDA implementation source was
+copied into the emulator; architecture manuals informed semantic verification.

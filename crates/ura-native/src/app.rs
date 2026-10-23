@@ -54,9 +54,10 @@ pub enum Panel {
     Trace,
     Breakpoints,
     Runtime,
+    Emulation,
 }
 impl Panel {
-    pub const ALL: [Self; 28] = [
+    pub const ALL: [Self; 29] = [
         Self::Explorer,
         Self::Disassembly,
         Self::Functions,
@@ -85,6 +86,7 @@ impl Panel {
         Self::Trace,
         Self::Breakpoints,
         Self::Runtime,
+        Self::Emulation,
     ];
     pub fn title(self) -> &'static str {
         match self {
@@ -116,6 +118,7 @@ impl Panel {
             Self::Trace => "Execution Trace",
             Self::Breakpoints => "Breakpoints",
             Self::Runtime => "Runtime Disassembly",
+            Self::Emulation => "Emulation",
         }
     }
     fn legacy(self) -> &'static str {
@@ -148,6 +151,7 @@ impl Panel {
             Self::Trace => "executionTrace",
             Self::Breakpoints => "breakpoints",
             Self::Runtime => "runtimeDisassembly",
+            Self::Emulation => "emulation",
         }
     }
     fn from_legacy(s: &str) -> Option<Self> {
@@ -295,6 +299,7 @@ pub enum Action {
 }
 pub struct Workspace {
     pub debugger: crate::debugger::DebugUi,
+    pub dynamic: crate::dynamic::DynamicUi,
     pub patches: Option<ura_core::patch::PatchDocument>,
     pub patch_conflicts: std::collections::BTreeSet<u64>,
     pub patch_editor: Option<crate::patches::PatchEditor>,
@@ -391,6 +396,7 @@ impl Workspace {
         );
         Self {
             debugger: Default::default(),
+            dynamic: Default::default(),
             patches: None,
             patch_conflicts: Default::default(),
             patch_editor: None,
@@ -921,6 +927,7 @@ impl Workspace {
     }
     fn poll(&mut self) {
         self.debugger.poll(&self.ctx);
+        self.dynamic.poll(&self.ctx);
         while let Ok(reply) = self.worker.receiver.try_recv() {
             if reply.generation != self.generation {
                 continue;

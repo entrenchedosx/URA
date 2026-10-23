@@ -2,6 +2,7 @@ pub mod app;
 mod debugger;
 pub mod design;
 pub mod diagnostics;
+mod dynamic;
 mod editors;
 pub mod graph;
 mod graph_view;

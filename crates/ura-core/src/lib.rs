@@ -3,6 +3,7 @@ pub mod analysis;
 pub mod binary;
 pub mod decomp;
 pub mod disasm;
+pub mod dynamic;
 pub mod error;
 pub mod hex;
 pub mod ir;

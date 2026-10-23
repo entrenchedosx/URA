@@ -1,4 +1,5 @@
 """Release CLI/MCP real-process advanced audit. No desktop or unrelated attach."""
+from release_common import CURRENT_VERSION, MCP_TOOLS
 import argparse
 import hashlib
 import json
@@ -151,7 +152,7 @@ for mcp in [False, True]:
                     'traceRetainedEvents':len(imported['events']),'traceStop':True,'traceClear':True,
                     'captureAndExportDeniedWithoutFlags':True,'existingFilePreserved':True,
                     'pausedCpuOneCorePercentOneSecondSample':idle_cpu,'serverPeakWorkingSetBytes':peak})
-summary = {'version':'0.12.0-dev','mcpTools':64,'controlledFixturesExecuted':True,'nativeDesktopLaunched':False,
+summary = {'version':CURRENT_VERSION,'mcpTools':MCP_TOOLS,'controlledFixturesExecuted':True,'nativeDesktopLaunched':False,
            'workflows':reports,'rpcMedianMs':{k:statistics.median(v) for k,v in metrics.items()},
            'measurementScope':'Sequential transport-inclusive local samples;100 debugger-driven steps, not Intel PT, complete coverage, general hardware slowdown or real GUI latency. CPU one-second sample at Windows timer resolution; trace bytes are serialized payload, not total heap.',
            'sourceSha256':hashlib.sha256((root/'tests/fixtures/debuggee.rs').read_bytes()).hexdigest(),

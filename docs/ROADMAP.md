@@ -7,6 +7,26 @@ multi-release requirement. Update [FEATURE-PARITY.md](FEATURE-PARITY.md) on ever
 milestone, with source, automated/manual evidence, coverage and remaining gaps.
 No release may equate a panel/API with verified feature parity.
 
+## v0.13 — emulation/dynamic-analysis source checkpoint; incomplete milestone
+
+- [x] Actual bounded scalar x86/x64 instruction execution from virtual executable bytes.
+- [x] Shared INC/DEC/shift semantics, virtual memory, explicit faults and COW checkpoints.
+- [x] Indexed versioned observed/emulated trace browsing with thread/IP completeness.
+- [x] Identity-checked observed block samples/transition candidates on static CFG.
+- [x] Sparse capture/image analysis through CFG/IR/SSA and scoped pseudocode.
+- [x] Native/CLI/MCP integration, 67 tools, separate grants and Release transport tests.
+- [x] Owned independent CPU reference fixture, regression tests and separate adversarial review.
+- [x] Permanent fresh-three-EXE/ZIP/checksum policy, local helper and guarded tag workflow.
+- [ ] Useful real WOW64 debugger contexts and verified x86 process lifecycle.
+- [ ] Complete foreign-thread software-displacement handoff and bounded blocked-step cleanup.
+- [ ] Full ISA/environment emulation, verified relocations and import/API models.
+- [ ] Complete captured state/memory replay, emulated module overlay identity and persistent runtime projects.
+- [ ] Portable executable rebuilding, automated unpacking/OEP recovery and relocation-aware image diff.
+- [ ] Live native acceptance and an approved public tag with actual GitHub downloaded-artifact verification.
+
+See [v0.13 evidence and remaining gates](VERIFICATION-0.13.md). Future version
+labels do not supersede unresolved correctness obligations from earlier milestones.
+
 ## v0.12 — advanced debugging source checkpoint; incomplete milestone
 
 - [x] Real x64 DR0-3 execution/write/readWrite points, per-thread ownership and new-thread binding.

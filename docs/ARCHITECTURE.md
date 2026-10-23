@@ -393,3 +393,17 @@ and 25 MCP debugger tools use the same engine. JSON addresses preserve 64-bit
 precision as strings. Runtime observations never rewrite static CFG/SSA/HIR or
 patch overlays. WOW64/remote/kernel adapters remain absent, as described in
 [ADVANCED-DEBUGGER.md](ADVANCED-DEBUGGER.md).
+
+## Isolated execution and replay (v0.13)
+
+`ura-core/dynamic` contains a virtual-memory CPU interpreter, indexed imported
+trace reader and sparse memory-image adapter. Single-instruction lifting shares
+`ir/lift.rs` with static analysis; concrete CALL bypasses abstract ABI effects.
+The dynamic service owns bounded transient handles, asynchronous CPU workers,
+cached status and atomic cancellation, with separate execution/output policies.
+Native workers and CLI/MCP call that service; debugger process ownership never
+flows into the emulator. No new project schema or persistent runtime state is
+introduced. Image analysis reuses discovery/CFG/IR/SSA/source infrastructure;
+original/effective/captured/emulated provenance remains explicit. See
+[the model and limits](EMULATION-DYNAMIC-ANALYSIS.md) and
+[publication contract](RELEASING.md).

@@ -35,6 +35,10 @@ fn recursive(depth:u64)->u64 {if depth==0 {ura_nested(2)}else{recursive(std::hin
 fn main() {
     unsafe {SetErrorMode(0x0001|0x0002|0x8000);}
     let arguments=std::env::args().collect::<Vec<_>>();
+    if arguments.iter().any(|v|v=="--thread-exit") {
+        std::thread::spawn(||{std::hint::black_box(ura_marker(1));}).join().unwrap();
+        std::hint::black_box(ura_marker(3));std::process::exit(42);
+    }
     if arguments.iter().any(|v|v=="--step-race") {
         let worker=std::thread::spawn(||{
             while !STEP_GATE.load(std::sync::atomic::Ordering::Acquire) {std::thread::sleep(Duration::from_millis(1));}

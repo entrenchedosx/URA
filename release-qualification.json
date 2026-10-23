@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "version": "0.13.0-dev",
+  "publishable": false,
+  "status": "source-checkpoint",
+  "reason": "WOW64 execution and outstanding interrupted cross-thread software-breakpoint cleanup remain incomplete. No public binary acceptance is claimed.",
+  "requiredEvidence": "docs/VERIFICATION-0.13.md",
+  "manualDesktop": "unverified; desktop control prohibited"
+}

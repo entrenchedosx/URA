@@ -1,6 +1,6 @@
 # CLI patching (v0.10)
 
-`ura-cli --version` reports `0.10.0-dev`. Existing analysis/decompiler commands
+`ura-cli --version` reports `0.13.0-dev`. Existing analysis/decompiler commands
 remain available. `ura-cli patch --help` lists the shared-engine patch workflows:
 `init`, `list`, `read`, `preview`, `apply`, `instruction`, `history`, `export`,
 `manifest`. The binary is the first positional argument before the subcommand.
@@ -45,3 +45,12 @@ Launch/attach, bulk capture and file output have separate permissions. Complete
 JSON-line examples, bounds and cleanup limitations are in
 [ADVANCED-DEBUGGER.md](ADVANCED-DEBUGGER.md). These are runtime commands, not
 operations on the static file overlay.
+
+## v0.13 isolated execution and evidence
+
+Run `ura-cli --allow DIR --enable-emulation --enable-writes dynamic` for the
+bounded JSON-line interface. The emulation grant is independent of live debugger
+launch/attach/capture; export separately requires writes. Emulator, replay and
+image actions use the shared dynamic service. See the complete
+[schemas, example and limits](EMULATION-DYNAMIC-ANALYSIS.md#interfaces-and-permissions).
+Source is a development checkpoint; no live desktop or WOW64 acceptance is claimed.

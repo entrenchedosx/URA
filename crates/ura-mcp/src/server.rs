@@ -55,6 +55,57 @@ impl UraServer {
 #[tool_router]
 impl UraServer {
     #[tool(
+        name = "ura_emulation",
+        annotations(read_only_hint = false),
+        description = "Isolated scalar x86/x64 execution. Actions:create,status,step,run,stop,reset,snapshot,restore,removeSnapshot,breakpoint,memory,disassembly,trace,exportTrace,memoryImage,close. Requires separate --enable-emulation. No host program or API execution."
+    )]
+    fn ura_emulation(
+        &self,
+        Parameters(p): Parameters<crate::params::DynamicParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let mut value = serde_json::to_value(p).map_err(serialization)?;
+        value["operation"] = Value::String("emulation".into());
+        respond(
+            self.service()
+                .dynamic_rpc(value)
+                .map(|result| serde_json::json!({"schemaVersion":1,"result":result})),
+        )
+    }
+    #[tool(
+        name = "ura_trace_replay",
+        annotations(read_only_hint = true),
+        description = "Read version1 observed/emulated traces without executing their source. Actions:open,info,events,state,close; overlay additionally requires an analyzed binary handle. Register gaps remain unavailable; no historical memory invention."
+    )]
+    fn ura_trace_replay(
+        &self,
+        Parameters(p): Parameters<crate::params::DynamicParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let mut value = serde_json::to_value(p).map_err(serialization)?;
+        value["operation"] = Value::String("replay".into());
+        respond(
+            self.service()
+                .dynamic_rpc(value)
+                .map(|result| serde_json::json!({"schemaVersion":1,"result":result})),
+        )
+    }
+    #[tool(
+        name = "ura_memory_image",
+        annotations(read_only_hint = false),
+        description = "Bounded sparse known memory images. Actions:open snapshot/bundle,openBinary,fromBinaryHandle,info,memory,disassembly,analyze,compare,export,close. Preserve addresses/missing bytes; no portable EXE reconstruction. Export needs --enable-writes."
+    )]
+    fn ura_memory_image(
+        &self,
+        Parameters(p): Parameters<crate::params::DynamicParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let mut value = serde_json::to_value(p).map_err(serialization)?;
+        value["operation"] = Value::String("image".into());
+        respond(
+            self.service()
+                .dynamic_rpc(value)
+                .map(|result| serde_json::json!({"schemaVersion":1,"result":result})),
+        )
+    }
+    #[tool(
         name = "ura_debug_capabilities",
         annotations(read_only_hint = true),
         description = "Read implemented backend capabilities and bounds. Starts no process."

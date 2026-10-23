@@ -203,6 +203,15 @@ fn assert_parity(
         other => panic!("unknown parity fixture {other}"),
     };
     let expected = expected.trim_end();
+    if serialized != expected {
+        let folder = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/hir-parity-diff");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(
+            folder.join(format!("{name}.json")),
+            format!("{serialized}\n"),
+        )
+        .unwrap();
+    }
     assert!(
         serialized == expected,
         "fixture {name} diverged from the locked high-level IR snapshot"

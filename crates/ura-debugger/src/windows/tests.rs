@@ -274,3 +274,76 @@ fn cleanup_failure_before_exception_classification_preserves_application_disposi
         assert_eq!(code, EXCEPTION_BREAKPOINT as u32);
     }
 }
+
+#[test]
+fn targeted_hardware_point_retires_after_real_fixture_thread_exit() {
+    let shared = Arc::new(Mutex::new(Snapshot {
+        schema_version: 1,
+        ..Default::default()
+    }));
+    let mut backend = WindowsBackend::new(shared);
+    let mut launch = config();
+    launch.arguments = vec!["--thread-exit".into()];
+    backend
+        .command(
+            None,
+            Command::Launch(launch),
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .unwrap();
+    let deadline = Instant::now() + std::time::Duration::from_secs(10);
+    while backend.view.state != State::Paused {
+        backend.poll();
+        assert!(Instant::now() < deadline);
+    }
+    let binary = ura_core::analyze_path(&debug_fixture::fixture()).unwrap();
+    let rva = binary
+        .analysis()
+        .exports
+        .iter()
+        .find(|s| s.name == "ura_marker")
+        .unwrap()
+        .address
+        - binary.analysis().image_base;
+    let base = ura_core::parse_address(
+        &backend
+            .view
+            .modules
+            .iter()
+            .find(|m| {
+                m.path
+                    .as_ref()
+                    .is_some_and(|p| p.to_lowercase().ends_with(".exe"))
+            })
+            .unwrap()
+            .base,
+    )
+    .unwrap();
+    let marker = base + rva;
+    backend
+        .configure_point(BreakpointConfig::software(marker))
+        .unwrap();
+    backend.resume(None, true).unwrap();
+    while backend.view.state != State::Paused {
+        backend.poll();
+        assert!(Instant::now() < deadline);
+    }
+    let worker = backend.view.selected_thread.unwrap();
+    let mut cfg = BreakpointConfig::software(marker);
+    cfg.kind = BreakpointKind::Write;
+    cfg.thread = Some(worker);
+    // The fixture never writes its RX code. This isolates thread-exit cleanup.
+    cfg.address = marker;
+    backend.configure_point(cfg).unwrap();
+    let id = *backend.hardware.keys().next().unwrap();
+    backend.resume(None, true).unwrap();
+    while backend.view.state != State::Paused {
+        backend.poll();
+        assert!(Instant::now() < deadline);
+    }
+    // The owning thread exits before the next main-thread software marker.
+    assert_ne!(backend.view.selected_thread, Some(worker));
+    assert!(!backend.hardware[&id].view.enabled);
+    assert!(backend.hardware[&id].view.threads.is_empty());
+    backend.hardware_ready().unwrap();
+}

@@ -365,6 +365,11 @@ impl WindowsBackend {
             h.bindings.remove(&tid);
             h.view.slots.remove(&tid);
             h.view.threads.retain(|t| *t != tid);
+            // A runtime TID must never be silently reused as a new thread's
+            // authorization, nor block unrelated resumes after its owner exits.
+            if h.thread == Some(tid) {
+                h.view.enabled = false;
+            }
             self.refresh_hardware(id);
         }
     }

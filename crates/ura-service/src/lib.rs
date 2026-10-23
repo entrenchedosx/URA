@@ -1,5 +1,6 @@
 pub mod debugger;
 mod decomp;
+pub mod dynamic;
 pub use debugger::{DebugPermissions, DebugService};
 pub mod dto;
 pub mod error;

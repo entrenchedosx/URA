@@ -4,13 +4,18 @@
 
 Ultimate Reverse Engineer
 
-Current development is **0.12.0-dev** on `v0.12-advanced-debugging`: real
-Windows x64 hardware breakpoints/watchpoints, register conditions, bounded execution
-traces, memory captures and matched local PDB symbols, shared across Desktop,
-CLI and MCP. See [advanced debugger scope and permissions](docs/ADVANCED-DEBUGGER.md)
-and [v0.12 verification](docs/VERIFICATION-0.12.md). This is a development source
-checkpoint; native interaction acceptance and broader architecture coverage remain
-incomplete, so no public v0.12 release is accepted.
+Current development is **0.13.0-dev** on `v0.13-emulation-dynamic-analysis`:
+isolated scalar x86/x64 CPU execution, indexed trace replay, observed CFG evidence
+and sparse captured-memory analysis, shared across Desktop, CLI and MCP. See
+[emulation scope](docs/EMULATION-DYNAMIC-ANALYSIS.md),
+[v0.13 verification](docs/VERIFICATION-0.13.md) and the
+[permanent binary release policy](docs/RELEASING.md).
+This is an incomplete **source checkpoint**, not an accepted public release.
+WOW64 and outstanding interrupted cross-thread debugger cleanup remain unfinished;
+live desktop acceptance is unverified under the owner's restriction.
+
+The v0.12 source checkpoint `04ad9125df5f5e67b7a12ef72f8f22ebd7866a85` is
+preserved on `v0.12-advanced-debugging`, with its [historical report](docs/VERIFICATION-0.12.md).
 
 The v0.11 source checkpoint is preserved at `0df07cc` on
 `v0.11-windows-debugger`. Its [historical verification](docs/VERIFICATION-0.11.md)
@@ -68,7 +73,7 @@ analysis limits; it is not a replacement for the full feature sets of IDA or Ghi
 - Native Windows x64 debugger with explicit launch/attach, software/hardware breakpoints, conditions, stepping and runtime inspection.
 - Bounded event/instruction traces, register changes, region queries, memory snapshots/compare/export and matched local PDB lookup.
 - Transactional byte/instruction patches, project history, undo/redo and verified new-file export.
-- Native CLI with text/JSON output and a local stdio MCP server with 64 tools.
+- Native CLI with text/JSON output and a local stdio MCP server with 67 tools.
 
 CLI `decompile` and MCP `ura_decompile_function` reconstruct a separate C-like AST from semantic HIR: bounded expressions, edge-specific phi copies, proved nested regions/loops, ordered memory operations and explicit unknowns. The legacy `highlevel` view remains a diagnostic SSA representation. Reconstructed pseudocode uses explicit machine helpers and is not guaranteed to compile; see [decompiler scope](docs/C-DECOMPILER-0.9.md). Local main-image PDB names/lines are supported within a GUID/age-checked subset.
 There is no remote/kernel debugger, general C++ debug-type loader or public plugin API. Indirect transfers remain open, including transfers with heuristic
@@ -158,7 +163,7 @@ python scripts/generate_icons.py
 ```
 
 Create the portable Windows archive after the Release build with
-`./scripts/package-windows.ps1 -Version 0.12.0-dev`. It checks all three executable
+`./scripts/build-windows-release.ps1 -OutputDirectory target/new-audit`. It checks all three executable
 version/product resources, writes per-file checksums, collects dependency license
 texts (including bundled font notices) and emits a SHA-256 sidecar for the ZIP.
 Publishing the archive is a separate release step.

@@ -434,3 +434,55 @@ pub struct DebugParams {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<u64>,
 }
+
+#[derive(Debug, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DynamicParams {
+    pub action: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub handle: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub binary: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entry: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bitness: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub steps: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub until: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub address: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub length: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub after: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub offset: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thread: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub other: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub destination: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+}

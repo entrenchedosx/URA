@@ -1,4 +1,5 @@
 """Shared bounded audit transport. Only explicitly supplied owned fixtures execute."""
+from release_common import CURRENT_VERSION, MCP_TOOLS
 import json
 import queue
 import shutil
@@ -54,10 +55,10 @@ def driver_factory(bin_dir, folder, fixture, metrics):
             if mcp:
                 initialized = self.request('initialize', {'protocolVersion': '2025-03-26', 'capabilities': {},
                                                            'clientInfo': {'name': 'ura-debug-audit', 'version': '1'}})
-                assert initialized['serverInfo']['version'] == '0.12.0-dev'
+                assert initialized['serverInfo']['version'] == CURRENT_VERSION
                 self.send({'jsonrpc': '2.0', 'method': 'notifications/initialized'})
                 tools = self.request('tools/list', {})['tools']
-                assert len(tools) == 64
+                assert len(tools) == MCP_TOOLS
                 assert len([t for t in tools if t['name'].startswith('ura_debug_')]) == 25
 
         def send(self, value):
