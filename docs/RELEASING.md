@@ -85,3 +85,8 @@ CLI/MCP tools, including raw metadata, disassembly, IR/SSA, pseudocode and bound
 execution. CI disables development/test debug info and incremental caches to
 avoid excessive Windows linker/PDB disk usage; Release optimisation is unchanged.
 The independent oracle is installed under target/ only and never packaged.
+
+The helper requires Python 3.11+ and installs `scripts/requirements-release.txt`
+into `target/release-verification-python`. It checks pinned psutil and Unicorn
+imports with global site packages disabled before the build. These modules are
+verification dependencies and are excluded from every product asset.

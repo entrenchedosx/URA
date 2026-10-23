@@ -1,0 +1,3 @@
+# Verification only; these are never included in URA's product package.
+psutil==7.2.2
+unicorn==2.1.4

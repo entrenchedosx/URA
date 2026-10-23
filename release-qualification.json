@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "version": "0.14.0-dev.1",
+  "version": "0.14.0-dev.2",
   "publishable": true,
   "status": "scoped-development-prerelease",
   "reason": "Scoped v0.14 scalar multi-architecture gates: repaired foreign ordinary-TF/software handoff and new-thread suspension policy; true nested/rearm and uncertain cleanup remain explicitly safe-stopped. WOW64 and new-processor live debugging are unsupported and rejected. Exact-source package/public-download gates remain mandatory.",

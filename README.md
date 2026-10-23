@@ -4,7 +4,7 @@
 
 Ultimate Reverse Engineer
 
-Current development is **0.14.0-dev.1** on `v0.14-multi-architecture`:
+Current development is **0.14.0-dev.2** on `v0.14-multi-architecture`:
 real scalar AArch64 analysis, IR/SSA, ABI/stack evidence, C-like pseudocode and
 isolated execution, plus verified ARM/Thumb and RV32I/RV64I subsets. Desktop,
 CLI and the existing 67 MCP tools share the engine. See the

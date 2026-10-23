@@ -8,7 +8,8 @@ import pathlib
 import subprocess
 import sys
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "target/processor-reference"))
+verification_dependencies = ROOT / "target/release-verification-python"
+sys.path.insert(0, str(verification_dependencies if verification_dependencies.is_dir() else ROOT / "target/processor-reference"))
 import unicorn
 from unicorn import arm64_const, riscv_const, arm_const
 

@@ -1,6 +1,6 @@
 # CLI patching (v0.10)
 
-`ura-cli --version` reports `0.14.0-dev.1`. Existing analysis/decompiler commands
+`ura-cli --version` reports `0.14.0-dev.2`. Existing analysis/decompiler commands
 remain available. `ura-cli patch --help` lists the shared-engine patch workflows:
 `init`, `list`, `read`, `preview`, `apply`, `instruction`, `history`, `export`,
 `manifest`. The binary is the first positional argument before the subcommand.

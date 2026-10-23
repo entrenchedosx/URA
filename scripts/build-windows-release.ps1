@@ -42,12 +42,18 @@ if (-not $OutputDirectory) { $OutputDirectory = Join-Path $root ("target/release
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
 if ((Test-Path -LiteralPath $OutputDirectory) -and @(Get-ChildItem -LiteralPath $OutputDirectory -Force).Count -ne 0) { throw 'Use a new empty output directory for every build' }
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
+# Install the complete verification-only dependency set before expensive builds.
+# Keep it outside the product package and the user's global Python environment.
+$verificationPython = Join-Path $root 'target/release-verification-python'
+Invoke-Checked -Program python -Arguments @('-c','import sys; assert sys.version_info >= (3, 11), "Release verification requires Python 3.11+"')
+Invoke-Checked -Program python -Arguments @('-m','pip','install','--disable-pip-version-check','--upgrade','--target',$verificationPython,'-r',"$root/scripts/requirements-release.txt")
+Invoke-Checked -Program python -Arguments @('-I','-S','-c','import sys; sys.path.insert(0,sys.argv[1]); import psutil, unicorn; assert psutil.__version__ == "7.2.2"; assert unicorn.__version__ == "2.1.4"',$verificationPython)
+$env:PYTHONPATH = if ($env:PYTHONPATH) { $verificationPython + [IO.Path]::PathSeparator + $env:PYTHONPATH } else { $verificationPython }
 Invoke-Checked -Program cargo -Arguments @('fmt','--all','--','--check')
 Invoke-Checked -Program cargo -Arguments @('clippy','--workspace','--all-targets','--locked','--','-D','warnings')
 Invoke-Checked -Program cargo -Arguments @('test','--workspace','--locked')
 Invoke-Checked -Program cargo -Arguments @('build','--workspace','--release','--locked')
 Invoke-Checked -Program cargo -Arguments @('build','-p','ura-core','--example','processor-verify','--release','--locked')
-Invoke-Checked -Program python -Arguments @('-m','pip','install','--disable-pip-version-check','--target',"$root/target/processor-reference",'unicorn==2.1.4')
 Invoke-Checked -Program python -Arguments @("$root/scripts/verify-processor-oracle.py",'--release')
 Confirm-Source
 $buildStart = (Get-Date).ToUniversalTime()

@@ -1,6 +1,6 @@
 # v0.14 multi-architecture verification
 
-Date: 2026-10-23. Version `0.14.0-dev.1`, branch
+Date: 2026-10-23. Version `0.14.0-dev.2`, branch
 `v0.14-multi-architecture`. Baseline
 `660e3a02866fce2445a04c80af813da2b7f1d7d4` was clean, equal to fetched
 origin/v0.13-emulation-dynamic-analysis, and passed 352 tests. The containing
@@ -183,8 +183,15 @@ fixture outside its sole allowed temporary root. This PC could not create the
 symlink, while the hosted Windows runner could, exposing the test setup error.
 The test now copies the input into the granted folder and separately verifies
 that the original outside fixture is denied. No product path grant was broadened.
-The original tag is preserved without a release; `v0.14.0-dev.1` receives fresh
-qualification and assets. Saved performance reports retain their original
+The original tag is preserved without a release. The subsequent
+[dev.1 run](https://github.com/entrenchedosx/URA/actions/runs/40023907217) passed
+all 369 tests, the 767/671 semantic comparisons, fresh builds and dynamic/patching
+checks, but correctly withheld publication when the clean runner lacked the
+verification-only `psutil` module. The helper now installs pinned psutil7.2.2 and
+Unicorn2.1.4 into an isolated target directory and validates imports with global
+site packages disabled before building. A static import audit found no other
+third-party modules in the release verification call graph. Neither dependency
+is packaged with URA. `v0.14.0-dev.2` receives fresh qualification and assets. Saved performance reports retain their original
 `0.14.0-dev` measurement identity; the engine code is unchanged in this revision.
 
 ## Distribution and remaining work
