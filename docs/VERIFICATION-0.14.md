@@ -158,8 +158,8 @@ replay seek increased from about0.00518ms to0.00963ms: an unresolved measured
 regression, approximately4.4 microseconds/query, documented for profiling.
 No blanket performance improvement is claimed.
 
-Processor microbenchmark median 10k scalar-step times were approximately66ms
-x64,123ms A64,72ms ARM,70ms Thumb,94ms RV32,95ms RV64. The 2,001-instruction A64
+Processor microbenchmark median 10k scalar-step times were approximately53ms
+x64,118ms A64,64ms ARM,65ms Thumb,84ms RV32,87ms RV64. The 2,001-instruction A64
 case produced1,007 pseudocode lines, about2.7ms CFG and35.4ms full decompile
 median. These are synthetic single-function workloads and include uncached decode
 for self-modifying correctness. They are not million-instruction throughput or
