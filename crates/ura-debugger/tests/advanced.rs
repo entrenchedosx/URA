@@ -593,7 +593,7 @@ fn repeated_trace_pause_detach_races_preserve_owned_target_exit() {
 }
 
 #[test]
-fn another_thread_software_hit_during_tf_fails_closed_and_detaches_cleanly() {
+fn another_thread_software_hit_during_tf_serializes_and_detaches_cleanly() {
     use windows_sys::Win32::{Foundation::*, System::Threading::*};
     let (c, s) = launch_args(&["--step-race"]);
     c.command(
@@ -625,14 +625,15 @@ fn another_thread_software_hit_during_tf_fails_closed_and_detaches_cleanly() {
     .unwrap();
     let hit = wait(&c, State::Paused);
     assert_eq!(hit.reason.as_deref(), Some("breakpoint"));
-    assert!(c
-        .command(
-            s.session.as_deref(),
-            Command::Continue {
-                pass_exception: true
-            }
-        )
-        .is_err());
+    c.command(
+        s.session.as_deref(),
+        Command::Continue {
+            pass_exception: true,
+        },
+    )
+    .unwrap();
+    let completed = wait(&c, State::Paused);
+    assert_eq!(completed.reason.as_deref(), Some("singleStep"));
     unsafe {
         let process = OpenProcess(
             PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,

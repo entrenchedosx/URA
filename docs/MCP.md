@@ -86,3 +86,18 @@ Each action is implemented by the shared service. Dynamic structured success is
 `{schemaVersion:1,result:...}`. Errors, path checks and protocol-clean stdout retain
 the existing conventions. Emulation, capture, native-process control and file
 export grants are separate. See [exact actions, limits and current gaps](EMULATION-DYNAMIC-ANALYSIS.md).
+
+
+## v0.14 processors (still 67 tools)
+
+`ura_open_binary` accepts `processor` with `raw:true` for explicit raw mode;
+canonical values are x86, x86-64, aarch64, arm, thumb, riscv32, riscv64. Native
+files use qualified loader metadata. Existing IR/SSA/signature/stack/type and
+pseudocode tools process supported scalar targets; no per-architecture tool
+copies were added. `ura_emulation` create accepts `config.processor` with its
+matching bitness, including raw-path loading. Conflicting image configuration
+is rejected. Trace/image/replay identity retains processor provenance.
+
+The separate emulation, writes and path permissions remain unchanged. New
+processors do not add live debugging or instruction assembly. See
+[MULTI-ARCHITECTURE.md](MULTI-ARCHITECTURE.md).

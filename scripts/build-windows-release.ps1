@@ -5,6 +5,11 @@ param(
     [switch]$AllowDirty
 )
 $ErrorActionPreference = 'Stop'
+# Keep verification caches bounded on Windows; these do not change Release code.
+if(-not $env:CARGO_PROFILE_DEV_DEBUG){$env:CARGO_PROFILE_DEV_DEBUG='0'}
+if(-not $env:CARGO_PROFILE_TEST_DEBUG){$env:CARGO_PROFILE_TEST_DEBUG='0'}
+if(-not $env:CARGO_INCREMENTAL){$env:CARGO_INCREMENTAL='0'}
+
 $root = (Resolve-Path "$PSScriptRoot/..").Path
 Set-Location -LiteralPath $root
 function Invoke-Checked([string]$Program, [string[]]$Arguments) {
@@ -41,6 +46,9 @@ Invoke-Checked -Program cargo -Arguments @('fmt','--all','--','--check')
 Invoke-Checked -Program cargo -Arguments @('clippy','--workspace','--all-targets','--locked','--','-D','warnings')
 Invoke-Checked -Program cargo -Arguments @('test','--workspace','--locked')
 Invoke-Checked -Program cargo -Arguments @('build','--workspace','--release','--locked')
+Invoke-Checked -Program cargo -Arguments @('build','-p','ura-core','--example','processor-verify','--release','--locked')
+Invoke-Checked -Program python -Arguments @('-m','pip','install','--disable-pip-version-check','--target',"$root/target/processor-reference",'unicorn==2.1.4')
+Invoke-Checked -Program python -Arguments @("$root/scripts/verify-processor-oracle.py",'--release')
 Confirm-Source
 $buildStart = (Get-Date).ToUniversalTime()
 $nonce = $commit + [guid]::NewGuid().ToString('N')

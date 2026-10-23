@@ -108,7 +108,9 @@ pub fn analyze_function(
     callgraph::hydrate_thunks(binary, analysis, &mut hints, control)?;
     // The current function's explicit signature must also be a solver seed.
     if let Some(override_signature) = &context.override_signature {
-        let errors = override_signature.validate_for_width(binary.analysis().bitness as u16);
+        let errors = override_signature.validate_for_processor(
+            crate::processor::Processor::for_analysis(binary.analysis())?,
+        );
         if !errors.is_empty() {
             return Err(format!(
                 "signature override rejected: {}",
@@ -135,7 +137,9 @@ pub fn analyze_function(
         program::apply_to_signature(&mut signature, &program);
     }
     if let Some(override_signature) = &context.override_signature {
-        let errors = override_signature.validate_for_width(binary.analysis().bitness as u16);
+        let errors = override_signature.validate_for_processor(
+            crate::processor::Processor::for_analysis(binary.analysis())?,
+        );
         if !errors.is_empty() {
             return Err(format!(
                 "signature override rejected: {}",
@@ -268,3 +272,5 @@ pub fn imported_signature(
 ) -> Option<Result<FunctionSignature, String>> {
     api::lookup(name).map(|prototype| api::instantiate(prototype, convention, address_bits))
 }
+
+mod stack_risc;

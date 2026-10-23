@@ -13,7 +13,7 @@ members = [
 default-members = ["crates/ura-native"]
 
 [workspace.package]
-version = "0.13.0-dev"
+version = "0.14.0-dev"
 edition = "2021"
 license = "MIT"
 rust-version = "1.80"
@@ -33,3 +33,5 @@ rmcp = { version = "3.6", features = ["server", "transport-io", "macros"] }
 schemars = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+capstone = { version = "=0.14.0", default-features = false, features = ["std", "full", "arch_arm64", "arch_arm", "arch_riscv"] }

@@ -56,6 +56,10 @@ pub struct PatchExportParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenBinaryParams {
+    #[schemars(
+        description = "Explicit raw processor: x86, x86-64, aarch64, arm, thumb, riscv32, riscv64"
+    )]
+    pub processor: Option<String>,
     pub raw: Option<bool>,
     pub base: Option<String>,
     pub bitness: Option<u32>,

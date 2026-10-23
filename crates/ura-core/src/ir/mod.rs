@@ -1,14 +1,16 @@
 //! Versioned, architecture-neutral bit-vector IR. No GUI or decoder types escape
-//! the x86 lifter. Unknown effects are explicit state barriers.
+//! the processor lifters. Unknown effects are explicit state barriers.
 pub mod dataflow;
 pub mod evaluate;
 pub mod inspect;
 mod lift;
+mod risc;
 pub mod ssa;
 mod verify;
 
-pub(crate) use lift::{lift_cpu_instruction, CpuFlow};
+pub(crate) use lift::{lift_cpu_instruction, CpuFlow, CpuInstruction};
 pub use lift::{lift_function, lift_image};
+pub(crate) use risc::lift_cpu as lift_processor_instruction;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 pub use verify::verify;
@@ -265,5 +267,19 @@ impl Function {
             Operand::Variable(v) => self.variables.get(v).map(|v| v.ty),
             Operand::Constant(c) => Some(c.ty),
         }
+    }
+}
+
+pub fn lift_processor_image(
+    image: &crate::CodeImage<'_>,
+    processor: crate::processor::Processor,
+    analysis: &crate::ProgramAnalysis,
+    address: u64,
+    control: &dyn crate::AnalysisControl,
+) -> Result<Function, String> {
+    if processor.x86() {
+        lift_image(image, processor.bits(), analysis, address, control)
+    } else {
+        risc::lift(image, processor, analysis, address, control)
     }
 }

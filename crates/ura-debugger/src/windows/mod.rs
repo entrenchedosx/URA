@@ -58,6 +58,9 @@ pub struct WindowsBackend {
     pending: Option<(DEBUG_EVENT, NTSTATUS)>,
     displaced: Option<(u64, u32)>,
     step: Option<SingleStep>,
+    // A foreign software displacement can temporarily own the execution slot.
+    // The original ordinary TF step retains its trap/stop ownership here.
+    parked_step: Option<SingleStep>,
     owned_traps: std::collections::BTreeSet<u32>,
     image: Option<Image>,
     initial_break: bool,
@@ -97,6 +100,7 @@ impl WindowsBackend {
             pending: None,
             displaced: None,
             step: None,
+            parked_step: None,
             owned_traps: Default::default(),
             image: None,
             initial_break: true,
@@ -233,6 +237,7 @@ impl WindowsBackend {
         self.threads.clear();
         self.displaced = None;
         self.step = None;
+        self.parked_step = None;
         self.owned_traps.clear();
         self.pending = None;
         self.repair = None;
@@ -432,6 +437,8 @@ impl WindowsBackend {
             self.displaced = None;
             self.control = None;
             self.release_step()?;
+            self.parked_step = None;
+            self.step = None;
             self.cleanup_threads = self.hardware_cleanup_threads();
             self.cleanup_threads
                 .extend(self.owned_traps.iter().copied());

@@ -81,15 +81,10 @@ fn parse_location(text: &str, bits: u16) -> Result<Location, String> {
             width: bits,
         });
     }
-    let registers = if bits == 64 {
-        &[
-            "rax", "rbx", "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10", "r11", "r12", "r13",
-            "r14", "r15",
-        ][..]
-    } else {
-        &["eax", "ebx", "ecx", "edx", "esi", "edi"][..]
-    };
-    if registers.contains(&text.as_str()) {
+    // The shared signature validator checks this name against the selected ABI.
+    if text.starts_with(|c: char| c.is_ascii_alphabetic())
+        && text.chars().all(|c| c.is_ascii_alphanumeric())
+    {
         return Ok(Location::Register { name: text });
     }
     Err("Use a general register, stack:offset, or unknown".into())
@@ -214,6 +209,9 @@ impl Workspace {
         let mut open = true;
         let mut save = false;
         let mut reset = false;
+        let processor = self.binary.as_ref().and_then(|binary| {
+            ura_core::processor::Processor::for_analysis(binary.analysis()).ok()
+        });
         egui::Window::new(match editor.value {
             EditValue::Signature { .. } => "Edit function signature",
             EditValue::Stack { .. } => "Edit stack variable",
@@ -241,6 +239,10 @@ impl Workspace {
                             .selected_text(convention.name())
                             .show_ui(ui, |ui| {
                                 for cc in [
+                                    CallingConvention::Aapcs64,
+                                    CallingConvention::Aapcs32,
+                                    CallingConvention::Riscv32,
+                                    CallingConvention::Riscv64,
                                     CallingConvention::Win64,
                                     CallingConvention::SysV64,
                                     CallingConvention::Cdecl,
@@ -249,18 +251,16 @@ impl Workspace {
                                     CallingConvention::Thiscall,
                                     CallingConvention::Unknown,
                                 ] {
-                                    if cc.argument_registers(editor.bits).is_empty()
-                                        && editor.bits == 64
-                                        && !matches!(cc, CallingConvention::Unknown)
-                                    {
-                                        continue;
-                                    }
-                                    if editor.bits == 32
-                                        && matches!(
-                                            cc,
-                                            CallingConvention::Win64 | CallingConvention::SysV64
-                                        )
-                                    {
+                                    let probe = SignatureOverride {
+                                        convention: cc,
+                                        return_type: TypeRef::Void,
+                                        parameters: Vec::new(),
+                                        variadic: None,
+                                    };
+                                    if !processor.map_or_else(
+                                        || probe.validate_for_width(editor.bits),
+                                        |p| probe.validate_for_processor(p),
+                                    ).is_empty() {
                                         continue;
                                     }
                                     ui.selectable_value(convention, cc, cc.name());
@@ -270,7 +270,7 @@ impl Workspace {
                         ui.text_edit_singleline(return_type);
                     });
                     ui.small(
-                        "Locations: rcx, ecx, stack:40 (entry-relative byte offset), or unknown.",
+                        "Locations: an ABI register (rcx, x0, r0, a0), stack:40 (entry-relative byte offset), or unknown.",
                     );
                     let mut remove = None;
                     egui::ScrollArea::vertical()
@@ -586,7 +586,7 @@ impl Editor {
                         .collect::<Result<_, String>>()?,
                     variadic: *variadic,
                 };
-                let errors = value.validate();
+                let errors = value.validate_for_width(self.bits);
                 if !errors.is_empty() {
                     return Err(errors.join("; "));
                 }
@@ -756,6 +756,34 @@ mod tests {
             parameters[0].location = "some register".into();
         }
         assert!(editor.parsed(&TypeDatabase::new(64)).is_err());
+        for (cc, bits, register, invalid) in [
+            (CallingConvention::Aapcs64, 64, "x7", "rax"),
+            (CallingConvention::Aapcs32, 32, "r3", "x0"),
+            (CallingConvention::Riscv32, 32, "a7", "zero"),
+            (CallingConvention::Riscv64, 64, "s11", "x0"),
+        ] {
+            editor.bits = bits;
+            if let EditValue::Signature {
+                convention,
+                parameters,
+                ..
+            } = &mut editor.value
+            {
+                *convention = cc;
+                parameters[0].location = register.into();
+            }
+            let EditCommit::Signature(saved) = editor.parsed(&TypeDatabase::new(bits)).unwrap()
+            else {
+                panic!()
+            };
+            assert!(
+                matches!(&saved.parameters[0].location, Location::Register { name } if name == register)
+            );
+            if let EditValue::Signature { parameters, .. } = &mut editor.value {
+                parameters[0].location = invalid.into();
+            }
+            assert!(editor.parsed(&TypeDatabase::new(bits)).is_err());
+        }
     }
     #[test]
     fn structure_editor_checks_real_field_sizes_before_saving() {

@@ -87,7 +87,17 @@ pub fn context(thread: HANDLE) -> Result<Context> {
         Ok(c)
     }
 }
+#[cfg(test)]
+thread_local! {pub(super) static FAIL_CONTEXT_ONCE:std::cell::Cell<bool>=const{std::cell::Cell::new(false)};}
 pub fn set_context(thread: HANDLE, c: &Context) -> Result<()> {
+    #[cfg(test)]
+    if FAIL_CONTEXT_ONCE.with(|f| f.replace(false)) {
+        return Err(DebugError::new(
+            "injected",
+            "SetThreadContext failure injection",
+        ));
+    }
+
     unsafe { check(SetThreadContext(thread, &c.0), "SetThreadContext") }
 }
 pub fn registers(thread: u32, c: &Context) -> Registers {

@@ -1,5 +1,27 @@
 # Roadmap
 
+## v0.14 — verified scalar multi-architecture foundation
+
+- [x] Mature typed ARM64/ARM/Thumb/RISC-V decoders and explicit processor metadata.
+- [x] Real ARM64 scalar registers/flags/CFG/IR/SSA/ABI/pseudocode/emulation.
+- [x] Meaningful ARM32/Thumb and RV32I/RV64I scalar pipeline subsets.
+- [x] SSA-based physical stack slots, incoming scalar stack arguments and saved links.
+- [x] Compiler O0–O3 PE/ELF fixtures, external semantic oracle and independent review.
+- [x] Shared native/CLI/MCP engine, explicit raw selection and project preservation.
+- [x] Ordinary-TF/foreign-software handoff, rollback ownership, new-thread policy repair.
+- [ ] Full new-processor ISAs, floating/vector/crypto/atomic/system state and aggregate ABI.
+- [ ] Thumb IT/mixed-mode transitions, RISC-V compressed execution and alternate links.
+- [ ] MIPS and PowerPC backends, additional verified loaders and ARM64 host builds.
+- [ ] WOW64 and new-processor live debugger/assembler backends.
+- [ ] General stack/source-variable alias/lifetime and complete switch reconstruction.
+- [ ] Real native input, DPI, GPU/idle acceptance when permitted.
+
+A release is accepted only after its exact-source binaries and public downloads
+pass the existing publication workflow. Older checkpoints remain historical
+checkpoints. See [v0.14 scope](MULTI-ARCHITECTURE.md) and
+[verification](VERIFICATION-0.14.md). Remaining capabilities carry forward into
+future milestones; processor selection is not full IDA/Hex-Rays/Ghidra parity.
+
 ## Permanent product objective
 
 Full IDA Pro, relevant Hex-Rays and Ghidra feature-set parity is an auditable

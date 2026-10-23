@@ -134,7 +134,99 @@ impl InstructionDecoder for X86Decoder {
 pub fn decoder_for(architecture: CpuArchitecture) -> Option<&'static dyn InstructionDecoder> {
     match architecture {
         CpuArchitecture::X86 | CpuArchitecture::X86_64 => Some(&X86Decoder),
+        CpuArchitecture::Aarch64 => Some(&RiscDecoder(crate::processor::Processor::Aarch64)),
+        CpuArchitecture::Arm => Some(&RiscDecoder(crate::processor::Processor::Arm)),
+        CpuArchitecture::Riscv32 => Some(&RiscDecoder(crate::processor::Processor::Riscv32)),
+        CpuArchitecture::Riscv64 => Some(&RiscDecoder(crate::processor::Processor::Riscv64)),
         _ => None,
+    }
+}
+pub struct RiscDecoder(pub crate::processor::Processor);
+impl InstructionDecoder for RiscDecoder {
+    fn architecture_name(&self) -> &'static str {
+        self.0.name()
+    }
+    fn decode(
+        &self,
+        bytes: &[u8],
+        start: u64,
+        bits: u8,
+        file: Option<u64>,
+        count: usize,
+    ) -> Result<DecodedBatch> {
+        if bits != self.0.bits() {
+            return Err(UraError::UnsupportedArchitecture(
+                "processor bitness mismatch".into(),
+            ));
+        }
+        let mut instructions = vec![];
+        let mut offset = 0;
+        while offset < bytes.len() && instructions.len() < count {
+            let d = match crate::processor::decode(self.0, &bytes[offset..], start + offset as u64)
+            {
+                Ok(d) => d,
+                Err(error) => {
+                    let length = (bytes.len() - offset).min(4);
+                    instructions.push(InstructionView {
+                        address: format_address(start + offset as u64),
+                        file_offset: file
+                            .and_then(|f| f.checked_add(offset as u64))
+                            .map(format_address),
+                        bytes: bytes[offset..offset + length]
+                            .iter()
+                            .map(|b| format!("{b:02X}"))
+                            .collect::<Vec<_>>()
+                            .join(" "),
+                        length,
+                        mnemonic: "invalid".into(),
+                        operands: String::new(),
+                        text: format!("invalid/truncated instruction: {error}"),
+                        flow: "invalid".into(),
+                        target: None,
+                        target_name: None,
+                        invalid: true,
+                        privileged: false,
+                    });
+                    offset += length;
+                    break;
+                }
+            };
+            let text = if d.text.is_empty() {
+                d.mnemonic.clone()
+            } else {
+                format!("{} {}", d.mnemonic, d.text)
+            };
+            instructions.push(InstructionView {
+                address: format_address(d.address),
+                file_offset: file
+                    .and_then(|f| f.checked_add(offset as u64))
+                    .map(format_address),
+                bytes: bytes[offset..offset + d.length]
+                    .iter()
+                    .map(|b| format!("{b:02X}"))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                length: d.length,
+                mnemonic: d.mnemonic,
+                operands: d.text,
+                text,
+                flow: d
+                    .flow
+                    .name()
+                    .replace("indirectCall", "indirect-call")
+                    .replace("conditionalJump", "conditional-jump")
+                    .replace("indirectJump", "indirect-jump"),
+                target: d.target.map(format_address),
+                target_name: None,
+                invalid: false,
+                privileged: d.privileged,
+            });
+            offset += d.length;
+        }
+        Ok(DecodedBatch {
+            instructions,
+            bytes_consumed: offset,
+        })
     }
 }
 
@@ -144,6 +236,13 @@ pub fn disassemble(
     address: u64,
     count: usize,
 ) -> Result<DisassemblyPage> {
+    let processor = crate::processor::Processor::for_analysis(analysis)
+        .map_err(UraError::UnsupportedArchitecture)?;
+    let address = if processor == crate::processor::Processor::Thumb {
+        address & !1
+    } else {
+        address
+    };
     let count = count.clamp(1, MAX_INSTRUCTIONS);
     let section = analysis
         .code_section_containing_address(address)
@@ -164,9 +263,14 @@ pub fn disassemble(
     if start >= end {
         return Err(UraError::UnmappedAddress(format_address(address)));
     }
-    let decoder = decoder_for(analysis.architecture).ok_or_else(|| {
-        UraError::UnsupportedArchitecture(analysis.architecture.name().to_string())
-    })?;
+
+    let non_x86 = RiscDecoder(processor);
+    let decoder = if processor.x86() {
+        decoder_for(analysis.architecture)
+    } else {
+        Some(&non_x86 as &dyn InstructionDecoder)
+    }
+    .ok_or_else(|| UraError::UnsupportedArchitecture(analysis.architecture.name().to_string()))?;
     let batch = decoder.decode(
         &data[start..end],
         address,

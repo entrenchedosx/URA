@@ -671,6 +671,7 @@ fn xref_view(
         data_kind: xref.data_kind.map(|kind| {
             match kind {
                 DataReferenceKind::RipRelative => "ripRelative",
+                DataReferenceKind::PcRelative => "pcRelative",
                 DataReferenceKind::Absolute => "absolute",
             }
             .to_string()

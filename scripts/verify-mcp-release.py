@@ -84,7 +84,25 @@ try:
     tool('ura_set_type_library',{'handle':handle,'project':str(project),'database':library})
     assert tool('ura_get_structure',{'handle':handle,'name':'Header'})['structure']['fields'][0]['name'] == 'length'
     assert tool('ura_get_types',{'handle':handle})['database'] == library
-    result = {'tools':MCP_TOOLS,'irSchema':1,'decompilerSchema':decompiler,'callGraphNodes':graph['returnedNodes'],'fixtureQueryMs':timings,'projectPrepared':project.name,'typeLibraryRoundTrip':True,'cDecompileRoundTrip':True,'cExportRoundTrip':True,'typedAstRoundTrip':True,'semanticRoundTrip':True,'semanticBlockPage':True,'programConverged':typed['program']['converged']}
+    processor_checks={}
+    for processor in ['aarch64','arm','thumb','riscv32','riscv64']:
+        binary=root/'tests/fixtures/processors'/f'{processor}-O1.elf'
+        opened=tool('ura_open_binary',{'binary':str(binary)})
+        h=opened['handle'];assert opened['info']['processor']['processor']==processor,opened
+        tool('ura_analyze',{'handle':h})
+        entry=opened['info']['entryPoint'];entry=hex(int(entry,16)&~1) if processor=='thumb' else entry
+        code=tool('ura_decompile_function',{'handle':h,'function':entry,'limit':100,'ast':True})
+        assert code['syntax']=='c-like' and code['lines'],code
+        assert tool('ura_get_ssa',{'handle':h,'function':entry,'limit':20})['irVersion']==1
+        processor_checks[processor]={'ssa':True,'pseudocode':True,'entry':entry}
+        tool('ura_close_binary',{'handle':h})
+    raw=folder/'aarch64.raw';raw.write_bytes(bytes.fromhex('400580d2c0035fd6'))
+    opened_raw=tool('ura_open_binary',{'binary':str(raw),'raw':True,'processor':'aarch64','base':'1000'})
+    tool('ura_analyze',{'handle':opened_raw['handle']})
+    assert tool('ura_decompile_function',{'handle':opened_raw['handle'],'function':'1000','limit':100})['lines']
+    assert opened_raw['info']['processor']['processor']=='aarch64'
+    tool('ura_close_binary',{'handle':opened_raw['handle']})
+    result = {'processorChecks':processor_checks,'tools':MCP_TOOLS,'irSchema':1,'decompilerSchema':decompiler,'callGraphNodes':graph['returnedNodes'],'fixtureQueryMs':timings,'projectPrepared':project.name,'typeLibraryRoundTrip':True,'cDecompileRoundTrip':True,'cExportRoundTrip':True,'typedAstRoundTrip':True,'semanticRoundTrip':True,'semanticBlockPage':True,'programConverged':typed['program']['converged']}
     (project.parent/'mcp-release.json').write_text(json.dumps(result,indent=2),encoding='utf-8')
     print(json.dumps(result,indent=2))
 finally:

@@ -190,3 +190,37 @@ fn read_only_path_project_and_stale_revision_checks_leave_state_unchanged() {
         Err(ServiceError::PathDenied(_))
     ));
 }
+
+#[test]
+fn raw_arm_project_resave_preserves_processor_and_rejects_x86_assembly() {
+    use ura_core::processor::Processor;
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("a64.raw");
+    std::fs::write(&source, [0x1f, 0x20, 0x03, 0xd5, 0xc0, 0x03, 0x5f, 0xd6]).unwrap();
+    let project = dir.path().join("arm.ura");
+    let mut service = Service::new(PathPolicy::allow_all(), true);
+    let h = service
+        .open_raw_processor(&source, None, Some(0x1000), Processor::Aarch64)
+        .unwrap()
+        .handle;
+    service.save_project(&h, &project, None).unwrap();
+    service.save_project(&h, &project, None).unwrap();
+    let reopened = service.open_binary(&source, Some(&project)).unwrap();
+    assert_eq!(reopened.info.architecture, "arm64");
+    assert_eq!(reopened.info.processor["processor"], "aarch64");
+    let state = ura_project::read_project(&project)
+        .unwrap()
+        .patch_state
+        .unwrap();
+    assert_eq!(state.raw_processor, Some(Processor::Aarch64));
+    let mut doc = ura_core::patch::PatchDocument::raw_processor_shared(
+        std::sync::Arc::new(std::fs::read(source).unwrap()),
+        state.raw_base,
+        Processor::Aarch64,
+    )
+    .unwrap();
+    doc.restore(&state).unwrap();
+    assert!(doc
+        .preview_instruction(Address::VirtualAddress(0x1000), 4, "nop", false, "")
+        .is_err());
+}

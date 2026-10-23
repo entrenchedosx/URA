@@ -60,3 +60,20 @@ Dependency version selection is unchanged except URA workspace versions. The
 release helper collects the full locked native/CLI/MCP dependency closure and
 fails on missing license texts. No Intel/Ghidra/IDA implementation source was
 copied into the emulator; architecture manuals informed semantic verification.
+
+
+v0.14 adds capstone-rust 0.14.0 (MIT) and capstone-sys 0.18.0 (MIT), pinned
+in Cargo.lock. The latter statically builds Capstone 5.0.6 C decoders for
+AArch64, ARM/Thumb and RISC-V; other optional C processor backends are disabled.
+Capstone itself carries BSD terms and LLVM-derived component notices. The
+collector includes capstone/LICENSE.TXT and capstone/LICENSE_LLVM.TXT as well
+as the Rust wrapper licenses. URA authors the scalar IR semantics; disassembly
+is supplied by Capstone. No Capstone source is vendored or modified here.
+
+Unicorn 2.1.4 is an external, GPL-licensed test oracle installed under target/
+by the qualification helper. It is not a URA runtime dependency and neither
+Unicorn code nor its library is included in the portable release. LLVM Clang
+22.1.8 generated repository-owned scalar C/assembly fixtures at O0–O3; their
+source and hash manifest are in tests/samples/ and tests/fixtures/processors/.
+Those foreign executables are never launched as Windows processes. They run
+only in isolated virtual machines for semantic comparison.

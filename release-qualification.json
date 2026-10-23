@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "version": "0.13.0-dev",
-  "publishable": false,
-  "status": "source-checkpoint",
-  "reason": "WOW64 execution and outstanding interrupted cross-thread software-breakpoint cleanup remain incomplete. No public binary acceptance is claimed.",
-  "requiredEvidence": "docs/VERIFICATION-0.13.md",
-  "manualDesktop": "unverified; desktop control prohibited"
+  "version": "0.14.0-dev",
+  "publishable": true,
+  "status": "scoped-development-prerelease",
+  "reason": "Scoped v0.14 scalar multi-architecture gates: repaired foreign ordinary-TF/software handoff and new-thread suspension policy; true nested/rearm and uncertain cleanup remain explicitly safe-stopped. WOW64 and new-processor live debugging are unsupported and rejected. Exact-source package/public-download gates remain mandatory.",
+  "requiredEvidence": "docs/VERIFICATION-0.14.md",
+  "manualDesktop": "unverified; desktop control prohibited; presentation-only checks are not claimed"
 }

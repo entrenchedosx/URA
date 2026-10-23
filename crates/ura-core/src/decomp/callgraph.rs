@@ -407,6 +407,12 @@ fn operand_slot(
     binary: &crate::LoadedBinary,
     instruction: &crate::DecodedInstruction,
 ) -> Option<u64> {
+    if !matches!(
+        binary.analysis().architecture,
+        crate::CpuArchitecture::X86 | crate::CpuArchitecture::X86_64
+    ) {
+        return None;
+    }
     use iced_x86::{Decoder, DecoderOptions, OpKind, Register};
     let bytes = binary.bytes_at_address(instruction.address, usize::from(instruction.length))?;
     let decoded = Decoder::with_ip(

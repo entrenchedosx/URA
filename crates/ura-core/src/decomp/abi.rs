@@ -321,6 +321,13 @@ impl VariableExt for crate::ir::Variable {
 }
 
 fn platform_default(binary: &LoadedBinary, bits: u16) -> CallingConvention {
+    match binary.analysis().architecture {
+        crate::binary::CpuArchitecture::Aarch64 => return CallingConvention::Aapcs64,
+        crate::binary::CpuArchitecture::Arm => return CallingConvention::Aapcs32,
+        crate::binary::CpuArchitecture::Riscv32 => return CallingConvention::Riscv32,
+        crate::binary::CpuArchitecture::Riscv64 => return CallingConvention::Riscv64,
+        _ => {}
+    }
     if bits == 64 {
         match binary.analysis().format.as_str() {
             "PE" => CallingConvention::Win64,
@@ -344,6 +351,15 @@ fn choose_convention(
         detail: format!("container format suggests {}", platform.name()),
     }];
     let mut conflicts = Vec::new();
+    if matches!(
+        platform,
+        CallingConvention::Aapcs64
+            | CallingConvention::Aapcs32
+            | CallingConvention::Riscv32
+            | CallingConvention::Riscv64
+    ) {
+        return (platform, Confidence::Medium, evidence_list, conflicts);
+    }
     if bits == 64 {
         // RCX/R8/R9 are also System V arguments, and RDI/RSI can be
         // preserved nonvolatile values in Win64. Entry reads cannot prove an
@@ -658,7 +674,10 @@ fn recover_return(
 ) -> Result<ReturnValue, String> {
     let ret = register_index(ssa, "rax")
         .or_else(|| register_index(ssa, "eax"))
-        .unwrap_or(0);
+        .or_else(|| register_index(ssa, "x0"))
+        .or_else(|| register_index(ssa, "r0"))
+        .or_else(|| register_index(ssa, "a0"))
+        .ok_or("processor return register unavailable")?;
     let width = ssa
         .variables
         .get(ret)
@@ -762,12 +781,7 @@ fn recover_return(
     }
     Ok(ReturnValue {
         location: (!returns.is_empty()).then(|| Location::Register {
-            name: if ssa.address_width == 64 {
-                "rax"
-            } else {
-                "eax"
-            }
-            .into(),
+            name: ssa.variables[ret].name.clone(),
         }),
         ty: if all_tracked {
             TypeRef::Int {
@@ -884,6 +898,15 @@ fn call_site_constraints(
 fn stack_parameter_index(convention: CallingConvention, bits: u16, offset: i64) -> Option<usize> {
     let word = i64::from(bits / 8);
     match convention {
+        CallingConvention::Aapcs64 if bits == 64 => {
+            (offset >= 0 && offset % 8 == 0).then_some(8 + (offset / 8) as usize)
+        }
+        CallingConvention::Aapcs32 if bits == 32 => {
+            (offset >= 0 && offset % 4 == 0).then_some(4 + (offset / 4) as usize)
+        }
+        CallingConvention::Riscv32 | CallingConvention::Riscv64 => {
+            (offset >= 0 && offset % word == 0).then_some(8 + (offset / word) as usize)
+        }
         CallingConvention::Win64 if bits == 64 => {
             let start = word + 0x20;
             (offset >= start)
@@ -916,6 +939,12 @@ fn return_cleanup(
     analysis: &ProgramAnalysis,
     ssa: &SsaFunction,
 ) -> Option<u16> {
+    if !matches!(
+        binary.analysis().architecture,
+        crate::binary::CpuArchitecture::X86 | crate::binary::CpuArchitecture::X86_64
+    ) {
+        return None;
+    }
     let mut cleanups = BTreeSet::new();
     for block in &ssa.blocks {
         if block.terminator.flow.kind != crate::ir::FlowKind::Return {

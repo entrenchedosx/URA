@@ -37,6 +37,7 @@ pub struct Replay {
     records: Vec<Record>,
     threads: BTreeMap<u32, ThreadIndex>,
     pub mode: String,
+    pub processor: Option<crate::processor::Processor>,
     pub dropped: u64,
     pub bytes: usize,
 }
@@ -85,6 +86,12 @@ impl Replay {
                 .filter(|b| matches!(b, 32 | 64))
                 .ok_or_else(|| err("bitness must be32 or64"))?
         };
+        let processor: Option<crate::processor::Processor> =
+            serde_json::from_value(value["processor"].clone())
+                .map_err(|_| err("invalid processor identity"))?;
+        if processor.is_some_and(|p| u64::from(p.bits()) != bits) {
+            return Err(err("trace processor/bitness mismatch"));
+        }
         let events = value["events"]
             .as_array()
             .ok_or_else(|| err("events array required"))?;
@@ -101,6 +108,7 @@ impl Replay {
             threads: BTreeMap::new(),
             mode: if emulated { "emulated" } else { "observed" }.into(),
             dropped,
+            processor,
             bytes: bytes.len(),
         };
         let mut previous = 0;
@@ -260,7 +268,7 @@ impl Replay {
         Ok(result)
     }
     pub fn info(&self) -> Value {
-        json!({"mode":"replay","sourceMode":self.mode,"events":self.records.len(),"bytes":self.bytes,"threads":self.threads.keys().collect::<Vec<_>>(),"dropped":self.dropped,"memoryAvailable":false,"completeExecution":false})
+        json!({"mode":"replay","sourceMode":self.mode,"processor":self.processor,"events":self.records.len(),"bytes":self.bytes,"threads":self.threads.keys().collect::<Vec<_>>(),"dropped":self.dropped,"memoryAvailable":false,"completeExecution":false})
     }
     pub fn events(&self, offset: usize, limit: usize, thread: Option<u32>) -> Result<Value> {
         if !(1..=512).contains(&limit) || offset > self.records.len() {
@@ -276,7 +284,7 @@ impl Replay {
             .map(|(i, r)| json!({"index":i,"event":r.raw}))
             .collect::<Vec<_>>();
         Ok(
-            json!({"mode":"replay","sourceMode":self.mode,"events":events,"total":self.records.len(),"memoryAvailable":false}),
+            json!({"mode":"replay","sourceMode":self.mode,"processor":self.processor,"events":events,"total":self.records.len(),"memoryAvailable":false}),
         )
     }
     pub fn state(&self, index: usize, thread: Option<u32>) -> Result<Value> {
@@ -307,7 +315,7 @@ impl Replay {
         }
         let continuous = point.epoch == selected.epoch;
         Ok(
-            json!({"mode":"replay","sourceMode":self.mode,"index":index,"sequence":selected.sequence,"thread":tid,"capturedAtSequence":if point.sequence==0{None}else{Some(point.sequence)},"stateCapturedAtSelectedEvent":continuous&&point.sequence==selected.sequence,"instructionPointer":point.ip.map(Address),"selectedEventAddress":selected.address.map(Address),"sampleTiming":if self.mode=="emulated"{"after emulated instruction"}else{"observed paused instruction boundary"},"registers":point.values.into_iter().map(|(k,v)|(k,v.map(Address))).collect::<BTreeMap<_,_>>(),"registersComplete":false,"memoryAvailable":false,"discontinuous":!continuous,"missingState":"Registers not captured remain unavailable; values are as of capturedAtSequence. Historical memory was not captured."}),
+            json!({"mode":"replay","sourceMode":self.mode,"processor":self.processor,"index":index,"sequence":selected.sequence,"thread":tid,"capturedAtSequence":if point.sequence==0{None}else{Some(point.sequence)},"stateCapturedAtSelectedEvent":continuous&&point.sequence==selected.sequence,"instructionPointer":point.ip.map(Address),"selectedEventAddress":selected.address.map(Address),"sampleTiming":if self.mode=="emulated"{"after emulated instruction"}else{"observed paused instruction boundary"},"registers":point.values.into_iter().map(|(k,v)|(k,v.map(Address))).collect::<BTreeMap<_,_>>(),"registersComplete":false,"memoryAvailable":false,"discontinuous":!continuous,"missingState":"Registers not captured remain unavailable; values are as of capturedAtSequence. Historical memory was not captured."}),
         )
     }
     pub fn overlay(
@@ -370,7 +378,7 @@ impl Replay {
             previous.insert(r.thread, (r, address));
         }
         Ok(
-            json!({"mode":"observedEvidenceOverlay","sourceMode":self.mode,"imageSha256":image_sha,"blockInstructionObservations":samples,"blockEntryObservations":entries,"transitionCount":transition_count,"retainedTransitions":transitions.len(),"transitionsTruncated":transition_count>transitions.len() as u64,"transitions":transitions,"unmappedInstructionObservations":unknown,"completeCoverage":false,"mutatesStaticCfg":false}),
+            json!({"mode":"observedEvidenceOverlay","sourceMode":self.mode,"processor":self.processor,"imageSha256":image_sha,"blockInstructionObservations":samples,"blockEntryObservations":entries,"transitionCount":transition_count,"retainedTransitions":transitions.len(),"transitionsTruncated":transition_count>transitions.len() as u64,"transitions":transitions,"unmappedInstructionObservations":unknown,"completeCoverage":false,"mutatesStaticCfg":false}),
         )
     }
 }

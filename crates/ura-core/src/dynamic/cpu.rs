@@ -4,6 +4,7 @@ use super::{
     *,
 };
 use crate::ir::{self, Constant, CpuFlow, Operand, Operation, VariableKind};
+use crate::processor::Processor;
 use std::{
     collections::{BTreeMap, BTreeSet, VecDeque},
     sync::atomic::{AtomicBool, Ordering},
@@ -64,6 +65,7 @@ pub struct Mapping {
 #[serde(default, rename_all = "camelCase", deny_unknown_fields)]
 pub struct Config {
     pub bitness: u8,
+    pub processor: Option<Processor>,
     pub entry: Address,
     pub registers: BTreeMap<String, Address>,
     pub mappings: Vec<Mapping>,
@@ -76,6 +78,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             bitness: 64,
+            processor: None,
             entry: Address(0x1000),
             registers: BTreeMap::new(),
             mappings: vec![],
@@ -89,6 +92,7 @@ impl Default for Config {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct State {
+    pub processor: Processor,
     pub flags_value: Address,
     pub flags_known_mask: Address,
     pub flags_scope: &'static str,
@@ -129,6 +133,7 @@ struct Checkpoint {
 }
 pub struct Emulator {
     pub memory: Memory,
+    processor: Processor,
     pub config: Config,
     registers: BTreeMap<String, Option<u64>>,
     ip: u64,
@@ -149,6 +154,18 @@ pub struct Emulator {
 impl Emulator {
     pub fn new(config: Config) -> Result<Self> {
         config.limits.validate()?;
+        let processor = config.processor.unwrap_or(if config.bitness == 32 {
+            Processor::X86
+        } else {
+            Processor::X86_64
+        });
+        if config.bitness != processor.bits() {
+            return Err(Fault::new(
+                "configuration",
+                config.entry.0,
+                "processor/bitness mismatch",
+            ));
+        }
         if config.mappings.len() > 128
             || config.external_returns.len() > 32
             || config.registers.len() > 40
@@ -184,18 +201,43 @@ impl Emulator {
                 "entry is not mapped executable memory",
             ));
         }
-        let p = ir::lift_cpu_instruction(&[0x90], config.entry.0, config.bitness)
-            .map_err(|e| Fault::new("configuration", config.entry.0, e))?;
+        let p = if processor.x86() {
+            ir::lift_cpu_instruction(&[0x90], config.entry.0, config.bitness)
+        } else {
+            let nop = match processor {
+                Processor::Aarch64 => 0xd503201fu32.to_le_bytes().to_vec(),
+                Processor::Riscv32 | Processor::Riscv64 => 0x00000013u32.to_le_bytes().to_vec(),
+                Processor::Arm => 0xe320f000u32.to_le_bytes().to_vec(),
+                Processor::Thumb => 0xbf00u16.to_le_bytes().to_vec(),
+                _ => {
+                    return Err(Fault::new(
+                        "configuration",
+                        config.entry.0,
+                        "processor emulation is not implemented",
+                    ))
+                }
+            };
+            ir::lift_processor_instruction(&nop, config.entry.0, processor)
+        }
+        .map_err(|e| Fault::new("configuration", config.entry.0, e))?;
         let mut registers: BTreeMap<_, _> = p
             .variables
             .iter()
             .filter(|v| matches!(v.kind, VariableKind::Register | VariableKind::Flag))
             .map(|v| (v.name.clone(), Some(0)))
             .collect();
-        let sp = if config.bitness == 64 { "rsp" } else { "esp" };
+        let sp = processor.stack();
         registers.insert(
             sp.into(),
-            Some(config.stack_base.0 + config.stack_size as u64 - u64::from(config.bitness / 8)),
+            Some(
+                (config.stack_base.0 + config.stack_size as u64
+                    - if processor.x86() {
+                        u64::from(config.bitness / 8)
+                    } else {
+                        0
+                    })
+                    & ir::mask(u16::from(config.bitness)),
+            ),
         );
         for (name, value) in &config.registers {
             if name.len() > 32 {
@@ -222,7 +264,9 @@ impl Emulator {
                     format!("unknown root register/flag {name}"),
                 )
             })?;
-            let width = if ["cf", "pf", "af", "zf", "sf", "of"].contains(&name.as_str()) {
+            let width = if ["cf", "pf", "af", "zf", "sf", "of", "n", "z", "c", "v"]
+                .contains(&name.as_str())
+            {
                 1
             } else {
                 u16::from(config.bitness)
@@ -236,6 +280,13 @@ impl Emulator {
             }
             *dest = Some(value.0);
         }
+        if processor == Processor::Aarch64 && registers["sp"].is_some_and(|sp| sp % 16 != 0) {
+            return Err(Fault::new(
+                "configuration",
+                config.entry.0,
+                "AAPCS64 initial stack must be16-byte aligned",
+            ));
+        }
         let initial = Checkpoint {
             memory: memory.clone(),
             registers: registers.clone(),
@@ -245,6 +296,7 @@ impl Emulator {
         };
         Ok(Self {
             memory,
+            processor,
             ip: config.entry.0,
             config,
             registers,
@@ -264,26 +316,36 @@ impl Emulator {
         })
     }
     pub fn state(&self) -> State {
-        let mut flags = 2;
-        let mut known = 2;
-        for (name, bit) in [
-            ("cf", 0),
-            ("pf", 2),
-            ("af", 4),
-            ("zf", 6),
-            ("sf", 7),
-            ("of", 11),
-        ] {
-            if let Some(Some(v)) = self.registers.get(name) {
+        let (mut flags, mut known) = if self.processor.x86() { (2, 2) } else { (0, 0) };
+        let fields = if self.processor.x86() {
+            vec![
+                ("cf", 0),
+                ("pf", 2),
+                ("af", 4),
+                ("zf", 6),
+                ("sf", 7),
+                ("of", 11),
+            ]
+        } else {
+            vec![("n", 31), ("z", 30), ("c", 29), ("v", 28)]
+        };
+        for (name, bit) in fields {
+            if let Some(Some(value)) = self.registers.get(name) {
                 known |= 1 << bit;
-                flags |= v << bit;
+                flags |= value << bit;
             }
         }
         State {
+            processor: self.processor,
             flags_value: Address(flags),
             flags_known_mask: Address(known),
-            flags_scope:
-                "arithmetic flags CF/PF/AF/ZF/SF/OF; other architectural flags unavailable",
+            flags_scope: if self.processor.x86() {
+                "arithmetic flags CF/PF/AF/ZF/SF/OF; other architectural flags unavailable"
+            } else if matches!(self.processor, Processor::Riscv32 | Processor::Riscv64) {
+                "RISC-V has no arithmetic flags; CSRs unsupported"
+            } else {
+                "ARM NZCV only; other PSTATE/CPSR bits unavailable"
+            },
             mode: "emulated",
             bitness: self.config.bitness,
             instruction_pointer: Address(self.ip),
@@ -360,11 +422,11 @@ impl Emulator {
             return Err(Fault::new("limit", self.ip, "trace page1..512"));
         }
         Ok(
-            serde_json::json!({"format":"ura-emulation-trace","schemaVersion":1,"mode":"emulated","events":self.events.iter().filter(|(e,_)|e.sequence>after).take(limit).map(|(e,_)|e).collect::<Vec<_>>(),"dropped":self.dropped,"registersComplete":false,"memoryComplete":false}),
+            serde_json::json!({"format":"ura-emulation-trace","schemaVersion":1,"mode":"emulated","processor":self.processor,"events":self.events.iter().filter(|(e,_)|e.sequence>after).take(limit).map(|(e,_)|e).collect::<Vec<_>>(),"dropped":self.dropped,"registersComplete":false,"memoryComplete":false}),
         )
     }
     pub fn export_trace(&self) -> serde_json::Value {
-        serde_json::json!({"format":"ura-emulation-trace","schemaVersion":1,"mode":"emulated","bitness":self.config.bitness,"events":self.events.iter().map(|(e,_)|e).collect::<Vec<_>>(),"dropped":self.dropped,"registersComplete":false,"memoryComplete":false})
+        serde_json::json!({"format":"ura-emulation-trace","schemaVersion":1,"mode":"emulated","bitness":self.config.bitness,"processor":self.processor,"events":self.events.iter().map(|(e,_)|e).collect::<Vec<_>>(),"dropped":self.dropped,"registersComplete":false,"memoryComplete":false})
     }
     pub fn run(
         &mut self,
@@ -431,8 +493,12 @@ impl Emulator {
     }
     fn execute_one(&mut self) -> Result<()> {
         let bytes = self.memory.fetch(self.ip)?;
-        let p = ir::lift_cpu_instruction(&bytes, self.ip, self.config.bitness)
-            .map_err(|e| Fault::new("unsupported", self.ip, e))?;
+        let p = if self.processor.x86() {
+            ir::lift_cpu_instruction(&bytes, self.ip, self.config.bitness)
+        } else {
+            ir::lift_processor_instruction(&bytes, self.ip, self.processor)
+        }
+        .map_err(|e| Fault::new("unsupported", self.ip, e))?;
         let mut values: Vec<Option<Constant>> = p
             .variables
             .iter()
@@ -566,24 +632,40 @@ impl Emulator {
                             "emulated call depth exceeded",
                         ));
                     }
-                    let sp = if self.config.bitness == 64 {
-                        "rsp"
+                    if let Some(link) = self.processor.link() {
+                        let id =
+                            p.variables
+                                .iter()
+                                .position(|v| v.name == link)
+                                .ok_or_else(|| {
+                                    Fault::new("unsupported", self.ip, "link register unavailable")
+                                })?;
+                        values[id] = Some(Constant::bits(
+                            u16::from(self.config.bitness),
+                            p.next | u64::from(self.processor == Processor::Thumb),
+                        ));
+                        next = target;
+                        depth += 1;
                     } else {
-                        "esp"
-                    };
-                    let old = self.registers[sp].ok_or_else(|| {
-                        Fault::new("unknownState", self.ip, "stack pointer unknown")
-                    })?;
-                    let width = usize::from(self.config.bitness / 8);
-                    let new =
-                        old.wrapping_sub(width as u64) & ir::mask(u16::from(self.config.bitness));
-                    let bytes = p.next.to_le_bytes()[..width].to_vec();
-                    self.memory.validate_write(new, &bytes)?;
-                    writes.push((new, bytes));
-                    let id = p.variables.iter().position(|v| v.name == sp).unwrap();
-                    values[id] = Some(Constant::bits(u16::from(self.config.bitness), new));
-                    next = target;
-                    depth += 1;
+                        let sp = if self.config.bitness == 64 {
+                            "rsp"
+                        } else {
+                            "esp"
+                        };
+                        let old = self.registers[sp].ok_or_else(|| {
+                            Fault::new("unknownState", self.ip, "stack pointer unknown")
+                        })?;
+                        let width = usize::from(self.config.bitness / 8);
+                        let new = old.wrapping_sub(width as u64)
+                            & ir::mask(u16::from(self.config.bitness));
+                        let bytes = p.next.to_le_bytes()[..width].to_vec();
+                        self.memory.validate_write(new, &bytes)?;
+                        writes.push((new, bytes));
+                        let id = p.variables.iter().position(|v| v.name == sp).unwrap();
+                        values[id] = Some(Constant::bits(u16::from(self.config.bitness), new));
+                        next = target;
+                        depth += 1;
+                    }
                 }
             }
         }
@@ -595,14 +677,17 @@ impl Emulator {
         }
         if let Some(value) = overrides {
             registers.insert(
-                if self.config.bitness == 64 {
-                    "rax"
-                } else {
-                    "eax"
-                }
-                .into(),
+                self.processor.result().into(),
                 Some(value & ir::mask(u16::from(self.config.bitness))),
             );
+        }
+        if overrides.is_some() {
+            if let Some(lr) = self.processor.link() {
+                registers.insert(
+                    lr.into(),
+                    Some(p.next | u64::from(self.processor == Processor::Thumb)),
+                );
+            }
         }
         let changed = registers
             .iter()

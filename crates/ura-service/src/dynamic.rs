@@ -307,14 +307,18 @@ impl DynamicService {
                         }
                         let data = self.read(&path)?;
                         let binary = if raw {
-                            ura_core::binary::analyze_raw_bytes(
+                            ura_core::binary::analyze_raw_processor_bytes(
                                 &path,
                                 data,
                                 Some(match base {
                                     Some(v) => ura_core::parse_address(&v)?,
                                     None => 0x1000,
                                 }),
-                                u32::from(bitness),
+                                cfg.processor.unwrap_or(if bitness == 32 {
+                                    ura_core::processor::Processor::X86
+                                } else {
+                                    ura_core::processor::Processor::X86_64
+                                }),
                             )?
                         } else {
                             ura_core::binary::analyze_bytes(&path, data)?
@@ -429,8 +433,17 @@ impl DynamicService {
                         let a = address(a, "address")?;
                         let cpu = e.locked()?;
                         let bytes = engine(cpu.memory.fetch(a))?;
-                        let page =
-                            ura_core::X86Decoder.decode(&bytes, a, cpu.config.bitness, None, 1)?;
+                        let page = if let Some(p) = cpu.config.processor.filter(|p| !p.x86()) {
+                            ura_core::disasm::RiscDecoder(p).decode(
+                                &bytes,
+                                a,
+                                cpu.config.bitness,
+                                None,
+                                1,
+                            )?
+                        } else {
+                            ura_core::X86Decoder.decode(&bytes, a, cpu.config.bitness, None, 1)?
+                        };
                         Ok(json!({"mode":"emulated","instructions":page.instructions}))
                     }
                     "trace" => engine(e.locked()?.trace(after, limit)),
@@ -451,6 +464,7 @@ impl DynamicService {
                                 format: "ura-memory-image".into(),
                                 schema_version: 1,
                                 bitness: cpu.config.bitness,
+                                processor: cpu.config.processor,
                                 provenance:
                                     "Emulated virtual memory; not observed live process memory"
                                         .into(),
@@ -557,7 +571,7 @@ impl DynamicService {
                             ));
                         }
                     }
-                    let info = json!({"bitness":image.bitness,"segments":image.segments.iter().map(|s|json!({"base":s.base,"bytes":s.bytes.len(),"permissions":s.permissions})).collect::<Vec<_>>(),"missing":image.missing,"provenance":image.provenance});
+                    let info = json!({"bitness":image.bitness,"processor":image.processor,"segments":image.segments.iter().map(|s|json!({"base":s.base,"bytes":s.bytes.len(),"permissions":s.permissions})).collect::<Vec<_>>(),"missing":image.missing,"provenance":image.provenance});
                     let id = self.next("image");
                     self.images.insert(id.clone(), image);
                     return Ok(json!({"handle":id,"info":info}));
@@ -575,7 +589,7 @@ impl DynamicService {
                     .ok_or_else(|| invalid("unknown image handle"))?;
                 match action.as_str() {
                     "info" => Ok(
-                        json!({"mode":"capturedImage","bitness":image.bitness,"provenance":image.provenance,"captureMetadata":image.capture_metadata,"missing":image.missing,"segments":image.segments.iter().map(|s|json!({"base":s.base,"bytes":s.bytes.len(),"permissions":s.permissions})).collect::<Vec<_>>(),"portableExecutableReconstructed":false}),
+                        json!({"mode":"capturedImage","bitness":image.bitness,"processor":image.processor,"provenance":image.provenance,"captureMetadata":image.capture_metadata,"missing":image.missing,"segments":image.segments.iter().map(|s|json!({"base":s.base,"bytes":s.bytes.len(),"permissions":s.permissions})).collect::<Vec<_>>(),"portableExecutableReconstructed":false}),
                     ),
                     "analyze" => engine(image.analyze(address(entry, "entry")?)),
                     "memory" => {
@@ -588,13 +602,23 @@ impl DynamicService {
                         use ura_core::InstructionDecoder;
                         let address = address(a, "address")?;
                         let bytes = engine(image.read(address, length.unwrap_or(64)))?;
-                        let page = ura_core::X86Decoder.decode(
-                            &bytes,
-                            address,
-                            image.bitness,
-                            None,
-                            128,
-                        )?;
+                        let page = if let Some(p) = image.processor.filter(|p| !p.x86()) {
+                            ura_core::disasm::RiscDecoder(p).decode(
+                                &bytes,
+                                address,
+                                image.bitness,
+                                None,
+                                128,
+                            )?
+                        } else {
+                            ura_core::X86Decoder.decode(
+                                &bytes,
+                                address,
+                                image.bitness,
+                                None,
+                                128,
+                            )?
+                        };
                         Ok(json!({"mode":"capturedRuntime","instructions":page.instructions}))
                     }
                     "compare" => {

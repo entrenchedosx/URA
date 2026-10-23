@@ -174,7 +174,7 @@ impl WindowsBackend {
                 self.step = Some(step);
                 return Err(e);
             }
-            self.step = None;
+            self.step = self.parked_step.take();
             Ok(Some(step))
         }
     }
@@ -222,8 +222,17 @@ impl WindowsBackend {
         }
         if let Some(step) = &self.step {
             if self.displaced.is_some_and(|(_, tid)| tid != step.thread) {
-                return Err(DebugError::new("state", "a software breakpoint interrupted another thread's step; safe handoff is unavailable, detach or terminate required"));
+                if stepping.is_some()
+                    || step.rearm.is_some()
+                    || !step.frozen.is_empty()
+                    || self.parked_step.is_some()
+                {
+                    return Err(DebugError::new("state",format!("foreign displacement handoff cannot continue safely: step owner={}, event owner={:?}, stepping={}, rearm={:?}, frozen={}, parked={}; retry detach or terminate",step.thread,self.displaced.map(|v|v.1),stepping.is_some(),step.rearm,step.frozen.len(),self.parked_step.is_some())));
+                }
+                self.parked_step = self.step.take();
             }
+        }
+        if let Some(step) = &self.step {
             if stepping.is_none()
                 && self
                     .pending
@@ -260,11 +269,15 @@ impl WindowsBackend {
             } else if original.0.EFlags & 0x100 == 0 {
                 self.owned_traps.remove(&tid);
             }
-            if let Some(step) = self.step.as_mut() {
-                step.rearm = None;
-            }
-            if let Err(e) = self.release_step() {
-                failures.push(e.message);
+            // resume_inner may already have rolled back the event-thread step
+            // and restored the parked owner. Never release that other owner.
+            if self.step.as_ref().is_some_and(|step| step.thread == tid) {
+                if let Some(step) = self.step.as_mut() {
+                    step.rearm = None;
+                }
+                if let Err(e) = self.release_step() {
+                    failures.push(e.message);
+                }
             }
             let added = self
                 .points
@@ -284,6 +297,9 @@ impl WindowsBackend {
                     format!("resume rollback incomplete: {}", failures.join("; ")),
                 ));
             }
+        }
+        if self.step.is_none() {
+            self.step = self.parked_step.take();
         }
         result
     }

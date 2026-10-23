@@ -1,6 +1,6 @@
 # CLI patching (v0.10)
 
-`ura-cli --version` reports `0.13.0-dev`. Existing analysis/decompiler commands
+`ura-cli --version` reports `0.14.0-dev`. Existing analysis/decompiler commands
 remain available. `ura-cli patch --help` lists the shared-engine patch workflows:
 `init`, `list`, `read`, `preview`, `apply`, `instruction`, `history`, `export`,
 `manifest`. The binary is the first positional argument before the subcommand.
@@ -54,3 +54,17 @@ launch/attach/capture; export separately requires writes. Emulator, replay and
 image actions use the shared dynamic service. See the complete
 [schemas, example and limits](EMULATION-DYNAMIC-ANALYSIS.md#interfaces-and-permissions).
 Source is a development checkpoint; no live desktop or WOW64 acceptance is claimed.
+
+
+## v0.14 processor selection
+
+Native ARM64 PE/ELF, uniform ARM/Thumb ELF and RV32/RV64 ELF analysis use loader
+processor metadata. Existing functions, CFG, IR, SSA, types, stack and decompile
+commands use the same scalar engine. Explicit raw analysis adds `--processor NAME` (aarch64, arm, thumb, riscv32, riscv64, x86 or x86-64) with `--raw` and an aligned
+`--base`. Existing bitness-only raw commands retain their x86/x64 meaning.
+
+Dynamic JSON accepts `config.processor` and matching `config.bitness`. This
+also selects a raw path's processor. Native-image mode must agree with explicit
+configuration. Emulated disassembly uses the selected processor. No new live
+processor debugger or instruction assembler is implied. See
+[MULTI-ARCHITECTURE.md](MULTI-ARCHITECTURE.md) for precise ISA/ABI/loader limits.

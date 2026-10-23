@@ -4,15 +4,25 @@
 
 Ultimate Reverse Engineer
 
-Current development is **0.13.0-dev** on `v0.13-emulation-dynamic-analysis`:
-isolated scalar x86/x64 CPU execution, indexed trace replay, observed CFG evidence
-and sparse captured-memory analysis, shared across Desktop, CLI and MCP. See
-[emulation scope](docs/EMULATION-DYNAMIC-ANALYSIS.md),
-[v0.13 verification](docs/VERIFICATION-0.13.md) and the
-[permanent binary release policy](docs/RELEASING.md).
-This is an incomplete **source checkpoint**, not an accepted public release.
-WOW64 and outstanding interrupted cross-thread debugger cleanup remain unfinished;
-live desktop acceptance is unverified under the owner's restriction.
+Current development is **0.14.0-dev** on `v0.14-multi-architecture`:
+real scalar AArch64 analysis, IR/SSA, ABI/stack evidence, C-like pseudocode and
+isolated execution, plus verified ARM/Thumb and RV32I/RV64I subsets. Desktop,
+CLI and the existing 67 MCP tools share the engine. See the
+[processor scope](docs/MULTI-ARCHITECTURE.md),
+[v0.14 verification](docs/VERIFICATION-0.14.md) and
+[binary release policy](docs/RELEASING.md).
+
+The scoped development prerelease requires fresh Desktop/CLI/MCP EXEs, a complete
+ZIP, checksums and public download verification. Refer to the
+[releases page](https://github.com/entrenchedosx/URA/releases) for published assets;
+a source push alone is not a binary release. Native interaction/DPI remains
+unverified; WOW64, new-processor live debugging, vector/FP execution and full
+processor/IDA/Ghidra parity remain incomplete.
+
+The v0.13 source checkpoint is preserved at
+`660e3a02866fce2445a04c80af813da2b7f1d7d4` on
+`v0.13-emulation-dynamic-analysis` with its
+[historical report](docs/VERIFICATION-0.13.md).
 
 The v0.12 source checkpoint `04ad9125df5f5e67b7a12ef72f8f22ebd7866a85` is
 preserved on `v0.12-advanced-debugging`, with its [historical report](docs/VERIFICATION-0.12.md).

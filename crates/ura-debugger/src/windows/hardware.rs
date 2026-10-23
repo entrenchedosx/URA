@@ -453,7 +453,17 @@ impl WindowsBackend {
         if own_step {
             self.owned_traps.remove(&tid);
         }
-        let step = if own_step { self.release_step()? } else { None };
+        let step = if own_step {
+            if self.step.as_ref().is_some_and(|s| s.thread == tid) {
+                self.release_step()?
+            } else if self.parked_step.as_ref().is_some_and(|s| s.thread == tid) {
+                self.parked_step.take()
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         let regs = registers(tid, &c);
         let mut stop = false;
         for (id, _) in hits {

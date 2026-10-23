@@ -57,7 +57,7 @@ impl UraServer {
     #[tool(
         name = "ura_emulation",
         annotations(read_only_hint = false),
-        description = "Isolated scalar x86/x64 execution. Actions:create,status,step,run,stop,reset,snapshot,restore,removeSnapshot,breakpoint,memory,disassembly,trace,exportTrace,memoryImage,close. Requires separate --enable-emulation. No host program or API execution."
+        description = "Isolated scalar processor execution (capability scoped). Actions:create,status,step,run,stop,reset,snapshot,restore,removeSnapshot,breakpoint,memory,disassembly,trace,exportTrace,memoryImage,close. Requires separate --enable-emulation. No host program or API execution."
     )]
     fn ura_emulation(
         &self,
@@ -1014,6 +1014,18 @@ impl UraServer {
                     .transpose()
                     .map_err(ServiceError::from)
                     .and_then(|base| {
+                        if let Some(name) = &params.processor {
+                            let p =
+                                ura_core::processor::Processor::parse(name).ok_or_else(|| {
+                                    ServiceError::InvalidArgument("unknown processor".into())
+                                })?;
+                            return self.service().open_raw_processor(
+                                Path::new(&params.binary),
+                                params.project.as_deref().map(Path::new),
+                                base,
+                                p,
+                            );
+                        }
                         self.service().open_raw_binary(
                             Path::new(&params.binary),
                             params.project.as_deref().map(Path::new),
@@ -1023,7 +1035,7 @@ impl UraServer {
                     }),
             );
         }
-        if params.base.is_some() || params.bitness.is_some() {
+        if params.base.is_some() || params.bitness.is_some() || params.processor.is_some() {
             return respond::<serde_json::Value>(Err(ServiceError::InvalidArgument(
                 "base/bitness require explicit raw=true".into(),
             )));

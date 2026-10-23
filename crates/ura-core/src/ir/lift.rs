@@ -34,6 +34,10 @@ pub fn lift_function(
     control: &dyn AnalysisControl,
 ) -> Result<Function, String> {
     let image = CodeImage::from_binary(binary);
+    let processor = crate::processor::Processor::for_analysis(binary.analysis())?;
+    if !processor.x86() {
+        return super::risc::lift(&image, processor, analysis, address, control);
+    }
     lift_image(
         &image,
         binary.analysis().bitness,

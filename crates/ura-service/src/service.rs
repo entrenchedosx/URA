@@ -85,13 +85,26 @@ impl Service {
         base: Option<u64>,
         bitness: u32,
     ) -> ServiceResult<OpenBinaryResponse> {
-        self.open_with_options(path, project, Some((base, bitness)))
+        self.open_with_options(path, project, Some((base, bitness, None)))
+    }
+    pub fn open_raw_processor(
+        &mut self,
+        path: &Path,
+        project: Option<&Path>,
+        base: Option<u64>,
+        processor: ura_core::processor::Processor,
+    ) -> ServiceResult<OpenBinaryResponse> {
+        self.open_with_options(
+            path,
+            project,
+            Some((base, u32::from(processor.bits()), Some(processor))),
+        )
     }
     fn open_with_options(
         &mut self,
         path: &Path,
         project: Option<&Path>,
-        raw: Option<(Option<u64>, u32)>,
+        raw: Option<(Option<u64>, u32, Option<ura_core::processor::Processor>)>,
     ) -> ServiceResult<OpenBinaryResponse> {
         if self.sessions.len() >= 8 {
             return Err(ServiceError::LimitExceeded(
@@ -115,6 +128,7 @@ impl Service {
                     state
                         .raw_bitness
                         .ok_or_else(|| ServiceError::InvalidArgument("raw mode missing".into()))?,
+                    state.raw_processor,
                 ))
             } else {
                 None
@@ -122,15 +136,30 @@ impl Service {
         } else {
             None
         };
-        let mut binary = if let Some((base, bits)) = raw {
-            ura_core::binary::analyze_raw_path(&resolved, base, bits)?
+        let mut binary = if let Some((base, bits, processor)) = raw {
+            if let Some(processor) = processor {
+                ura_core::binary::analyze_raw_processor_path(&resolved, base, processor)?
+            } else {
+                ura_core::binary::analyze_raw_path(&resolved, base, bits)?
+            }
         } else {
             analyze_path(&resolved)?
         };
-        let mut patches = if let Some((base, bits)) = raw {
+        let mut patches = if let Some((base, bits, processor)) = raw {
             Some(
-                ura_core::patch::PatchDocument::raw_shared(binary.shared_bytes(), base, bits)
-                    .map_err(|e| ServiceError::InvalidArgument(e.to_string()))?,
+                match processor {
+                    Some(p) => ura_core::patch::PatchDocument::raw_processor_shared(
+                        binary.shared_bytes(),
+                        base,
+                        p,
+                    ),
+                    None => ura_core::patch::PatchDocument::raw_shared(
+                        binary.shared_bytes(),
+                        base,
+                        bits,
+                    ),
+                }
+                .map_err(|e| ServiceError::InvalidArgument(e.to_string()))?,
             )
         } else {
             ura_core::patch::PatchDocument::from_shared(binary.shared_bytes()).ok()
@@ -773,11 +802,19 @@ impl Service {
             previous_patches
         } else if let Some(previous) = previous_patches {
             let document = if previous.format() == "raw" {
-                ura_core::patch::PatchDocument::raw(
-                    previous.original().to_vec(),
-                    previous.state().raw_base,
-                    previous.bitness(),
-                )
+                if let Some(p) = previous.state().raw_processor {
+                    ura_core::patch::PatchDocument::raw_processor_shared(
+                        Arc::new(previous.original().to_vec()),
+                        previous.state().raw_base,
+                        p,
+                    )
+                } else {
+                    ura_core::patch::PatchDocument::raw(
+                        previous.original().to_vec(),
+                        previous.state().raw_base,
+                        previous.bitness(),
+                    )
+                }
             } else {
                 ura_core::patch::PatchDocument::new(previous.original().to_vec())
             };

@@ -625,8 +625,10 @@ impl Service {
         signature_override: &SignatureOverride,
     ) -> ServiceResult<SignatureResponse> {
         self.require_writes()?;
-        let errors = signature_override
-            .validate_for_width(self.session(handle)?.binary.analysis().bitness as u16);
+        let errors = signature_override.validate_for_processor(
+            ura_core::processor::Processor::for_analysis(self.session(handle)?.binary.analysis())
+                .map_err(ServiceError::InvalidArgument)?,
+        );
         if !errors.is_empty() {
             return Err(ServiceError::InvalidArgument(format!(
                 "signature override rejected: {}",

@@ -1,5 +1,30 @@
 use super::*;
 impl WindowsBackend {
+    pub(super) fn freeze_new_step_peer(
+        &mut self,
+        tid: u32,
+        handle: windows_sys::Win32::Foundation::HANDLE,
+        debugger_break: bool,
+    ) -> Result<()> {
+        if let Some(step) = self.step.as_mut() {
+            // Only shared, temporarily restored breakpoint bytes need a peer
+            // suspension. An ordinary TF instruction can depend on this thread.
+            if step.rearm.is_some()
+                && tid != step.thread
+                && !debugger_break
+                && !step.frozen.contains(&tid)
+            {
+                if unsafe { SuspendThread(handle) } == u32::MAX {
+                    return Err(error(
+                        "SuspendThread new thread during displaced instruction",
+                    ));
+                }
+                step.frozen.push(tid);
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn on_event(&mut self, event: DEBUG_EVENT) -> Result<()> {
         unsafe {
             let tid = event.dwThreadId;
@@ -90,16 +115,7 @@ impl WindowsBackend {
                     if debugger_break {
                         self.break_threads.insert(tid);
                     }
-                    if let Some(step) = self.step.as_mut() {
-                        if tid != step.thread && !debugger_break {
-                            if SuspendThread(handle.0) == u32::MAX {
-                                return Err(error(
-                                    "SuspendThread new thread during displaced instruction",
-                                ));
-                            }
-                            step.frozen.push(tid);
-                        }
-                    }
+                    self.freeze_new_step_peer(tid, handle.0, debugger_break)?;
                     self.threads.insert(tid, handle);
                     self.hardware_new_thread(tid)?;
                     self.view.threads.push(Thread {
@@ -109,6 +125,12 @@ impl WindowsBackend {
                     self.event(tid, "threadCreated", "thread observed");
                 }
                 EXIT_THREAD_DEBUG_EVENT => {
+                    if let Some(step) = self.step.as_mut() {
+                        step.frozen.retain(|id| *id != tid);
+                    }
+                    if self.parked_step.as_ref().is_some_and(|s| s.thread == tid) {
+                        self.parked_step = None;
+                    }
                     self.event(
                         tid,
                         "threadExited",
@@ -183,6 +205,7 @@ impl WindowsBackend {
                     self.cleanup_threads.clear();
                     self.trace.finish("processExited");
                     self.step = None;
+                    self.parked_step = None;
                     self.owned_traps.clear();
                     self.displaced = None;
                     self.image = None;

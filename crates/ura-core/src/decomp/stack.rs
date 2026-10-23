@@ -58,6 +58,8 @@ pub struct StackFrame {
     pub frame_size: u64,
     pub alignment: u64,
     pub return_address_offset: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub return_address_register: Option<String>,
     pub saved_registers: Vec<String>,
     pub local_bytes: u64,
     pub incoming_argument_bytes: u64,
@@ -72,7 +74,12 @@ impl StackFrame {
     }
     pub fn argument_slots(&self) -> impl Iterator<Item = &StackSlot> {
         self.slots.iter().filter(|slot| {
-            slot.offset >= self.return_address_offset + i64::from(self.address_width / 8)
+            slot.offset
+                >= if self.return_address_register.is_some() {
+                    0
+                } else {
+                    self.return_address_offset + i64::from(self.address_width / 8)
+                }
         })
     }
 }
@@ -150,6 +157,11 @@ pub fn recover_with_control(
         .function_by_start(function)
         .ok_or_else(|| format!("function {function:#x} was not discovered"))?;
     let bits = binary.analysis().bitness;
+    if let Ok(p) = crate::processor::Processor::for_analysis(binary.analysis()) {
+        if !p.x86() {
+            return super::stack_risc::recover(binary, analysis, function.address, p, control);
+        }
+    }
     if !matches!(bits, 32 | 64)
         || !matches!(binary.analysis().architecture.name(), "x86" | "x86-64")
     {
@@ -160,6 +172,7 @@ pub fn recover_with_control(
             frame_size: 0,
             alignment: 1,
             return_address_offset: 0,
+            return_address_register: None,
             saved_registers: vec![],
             local_bytes: 0,
             incoming_argument_bytes: 0,
@@ -602,6 +615,7 @@ pub fn recover_with_control(
         frame_size,
         alignment: 1,
         return_address_offset: 0,
+        return_address_register: None,
         saved_registers,
         local_bytes,
         incoming_argument_bytes,

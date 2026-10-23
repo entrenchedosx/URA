@@ -1096,7 +1096,7 @@ impl Workspace {
                     .strong(),
             );
             ui.label(
-                RichText::new("PE · ELF · Mach-O  /  x86 and x64 disassembly")
+                RichText::new("PE · ELF · Mach-O  /  processor-aware analysis")
                     .color(self.colors().muted),
             );
         }

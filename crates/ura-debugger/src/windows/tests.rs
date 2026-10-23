@@ -347,3 +347,70 @@ fn targeted_hardware_point_retires_after_real_fixture_thread_exit() {
     assert!(backend.hardware[&id].view.threads.is_empty());
     backend.hardware_ready().unwrap();
 }
+
+#[test]
+fn failed_event_context_update_does_not_discard_restored_parked_step() {
+    let mut backend = paused();
+    let tid = backend.view.selected_thread.unwrap();
+    let before = context(backend.threads[&tid].0).unwrap();
+    // A real event-thread update fails while another owner's execution intent
+    // is parked. The parked record is synthetic; it owns no OS suspend or TF.
+    let parked_tid = tid.wrapping_add(0x10000);
+    backend.parked_step = Some(SingleStep {
+        thread: parked_tid,
+        rearm: None,
+        stop: true,
+        frozen: vec![],
+    });
+    os::FAIL_CONTEXT_ONCE.with(|f| f.set(true));
+    assert!(backend.resume(Some(false), true).is_err());
+    let restored = backend
+        .step
+        .as_ref()
+        .expect("parked owner must survive rollback");
+    assert_eq!(restored.thread, parked_tid);
+    assert!(restored.stop);
+    assert!(backend.parked_step.is_none());
+    assert!(backend.pending.is_some());
+    let after = context(backend.threads[&tid].0).unwrap();
+    assert_eq!(before.0.EFlags, after.0.EFlags);
+    assert_eq!(before.0.Rip, after.0.Rip);
+    backend.step = None; // Dispose only the synthetic intent, which owns no OS resource.
+}
+
+#[test]
+fn new_step_peer_has_zero_owned_suspends_for_tf_and_exactly_one_for_displacement() {
+    let mut backend = paused();
+    let tid = backend.view.selected_thread.unwrap();
+    let h = backend.threads[&tid].0;
+    let ip = context(h).unwrap().0.Rip;
+    // Exercise the event policy with a real stopped owned process/thread.
+    // The other step owner is a synthetic intent with no TF or OS resources.
+    let owner = tid.wrapping_add(0x10000);
+    backend.step = Some(SingleStep {
+        thread: owner,
+        rearm: None,
+        stop: true,
+        frozen: vec![],
+    });
+    backend.freeze_new_step_peer(tid, h, false).unwrap();
+    assert!(backend.step.as_ref().unwrap().frozen.is_empty());
+    unsafe {
+        assert_eq!(SuspendThread(h), 0);
+        assert_eq!(ResumeThread(h), 1);
+    }
+    backend.step.as_mut().unwrap().rearm = Some(ip);
+    backend.freeze_new_step_peer(tid, h, false).unwrap();
+    backend.freeze_new_step_peer(tid, h, false).unwrap();
+    assert_eq!(backend.step.as_ref().unwrap().frozen, vec![tid]);
+    unsafe {
+        assert_eq!(SuspendThread(h), 1);
+        assert_eq!(ResumeThread(h), 2);
+    }
+    backend.release_step().unwrap();
+    assert!(backend.step.is_none());
+    unsafe {
+        assert_eq!(SuspendThread(h), 0);
+        assert_eq!(ResumeThread(h), 1);
+    }
+}

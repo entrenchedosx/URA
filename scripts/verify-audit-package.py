@@ -67,6 +67,9 @@ for line in (extraction / 'SHA256SUMS.txt').read_text(encoding='utf-8-sig').spli
 actual = {str(p.relative_to(extraction)).replace('\\', '/') for p in extraction.rglob('*') if p.is_file()}
 assert checked == actual - {'SHA256SUMS.txt'}
 assert not (extraction / 'licenses/MISSING-TEXTS.txt').read_text().strip()
+for name in ['capstone-0.14.0/LICENSE','capstone-sys-0.18.0/LICENSE','capstone-sys-0.18.0/capstone/LICENSE.TXT','capstone-sys-0.18.0/capstone/LICENSE_LLVM.TXT']:
+    assert (extraction/'licenses'/name).is_file(),name
+
 assert digest(extraction / 'icon.webp') == digest(root / 'icon.webp')
 binary_hashes = {}
 for name in ['ura-native.exe', 'ura-cli.exe', 'ura-mcp.exe']:
@@ -74,7 +77,9 @@ for name in ['ura-native.exe', 'ura-cli.exe', 'ura-mcp.exe']:
     assert binary_hashes[name] == digest(root / 'target/release' / name)
 for name in ['README.md', 'LICENSE', 'THIRD_PARTY.md', 'release-qualification.json', 'docs/AUDIT-0.8.md', 'docs/VERIFICATION-0.8.md',
              'docs/BINARY-PATCHING.md', 'docs/ADVANCED-DEBUGGER.md', 'docs/DEBUGGER.md', 'docs/CLI.md', 'docs/MCP.md', 'docs/VERIFICATION-0.12.md',
-             'docs/FEATURE-PARITY.md', 'docs/ROADMAP.md', evidence,
+             'docs/FEATURE-PARITY.md', 'docs/ROADMAP.md', evidence, 'docs/MULTI-ARCHITECTURE.md',
+             'docs/benchmarks/0.14-processors-release.json', 'docs/benchmarks/0.14-processor-oracle.json',
+             'docs/benchmarks/0.14-dynamic-release.json', 'docs/benchmarks/0.14-baseline-controlled.json',
              'docs/EMULATION-DYNAMIC-ANALYSIS.md', 'docs/RELEASING.md', f'docs/RELEASE-NOTES-{args.version}.md',
              'docs/benchmarks/0.13-dynamic-release.json', 'docs/benchmarks/0.12-headless-release.json',
              'docs/benchmarks/0.12-debugger-release.json', 'docs/benchmarks/0.12-advanced-release.json',

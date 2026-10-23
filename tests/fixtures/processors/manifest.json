@@ -1,0 +1,110 @@
+{
+  "foreignImagesNeverHostExecuted": true,
+  "compiler": "clang version 22.1.8 (https://github.com/llvm/llvm-project ca7933e47d3a3451d81e72ac174dcb5aa28b59d1)",
+  "sourceSha256": "627050858eb6275957b520ce936bcaafc53625ee57b9a2a0fe117ec9a6432fa9",
+  "generator": "scripts/build-processor-fixtures.ps1",
+  "source": "tests/samples/processors.c",
+  "files": [
+    {
+      "name": "aarch64-edges.elf",
+      "sha256": "29472a14f0209e53f33e6d531493df2169cb9fac909fdc75ce6cd14dea2f26f8"
+    },
+    {
+      "name": "aarch64-O0.elf",
+      "sha256": "673dda6ed9f50e769c4366d489269bdc8e487bd2a6855a515f1fad64eb9106c5"
+    },
+    {
+      "name": "aarch64-O0.exe",
+      "sha256": "2d9497e4486ed206b4dc17914bcfb6d94ea5be9865cf9b7acbdd0aa041513512"
+    },
+    {
+      "name": "aarch64-O1.elf",
+      "sha256": "cb44ee6dd6c598ff727058af6de58d19d52693c72ef6885882d7eeaea37e0fdb"
+    },
+    {
+      "name": "aarch64-O1.exe",
+      "sha256": "7bbce1dd9fcba578b697ed78fe300e5cca79c3d310ec02475404233db96fb0ce"
+    },
+    {
+      "name": "aarch64-O2.elf",
+      "sha256": "cb44ee6dd6c598ff727058af6de58d19d52693c72ef6885882d7eeaea37e0fdb"
+    },
+    {
+      "name": "aarch64-O2.exe",
+      "sha256": "9a38122a08b0b38249cd5154b80d6d36f022589e15c468bdd4749bdec011aa0e"
+    },
+    {
+      "name": "aarch64-O3.elf",
+      "sha256": "cb44ee6dd6c598ff727058af6de58d19d52693c72ef6885882d7eeaea37e0fdb"
+    },
+    {
+      "name": "aarch64-O3.exe",
+      "sha256": "7b7cc5fc9b8fff0d609f020612a4ae594715a15662d008e1131c5533559e4a9a"
+    },
+    {
+      "name": "arm-O0.elf",
+      "sha256": "bf8243b9b5c451c58de4ab78deea74f36d73fd78a278a00985238200338a6265"
+    },
+    {
+      "name": "arm-O1.elf",
+      "sha256": "daf9683d5b5407edcc98a60358b4485a0ce8cfee6ac5021e697573c85add396d"
+    },
+    {
+      "name": "arm-O2.elf",
+      "sha256": "d8672588439a9fe2e59001391a905930aa5f570b3cd8765b6872891be1ecfa0a"
+    },
+    {
+      "name": "arm-O3.elf",
+      "sha256": "de196d6694543d06845d5aad968a3840b02451e3808f11b6cb3e3da0666ab54e"
+    },
+    {
+      "name": "riscv32-O0.elf",
+      "sha256": "eabb641544ce275ddcdee05547b8017f57a4b2a92ddd499a3f600c777d59758e"
+    },
+    {
+      "name": "riscv32-O1.elf",
+      "sha256": "e15b9c0df5ede6ce527ac3ae72112e4f7cdc89379d5643bb1a6b68d51de4fa78"
+    },
+    {
+      "name": "riscv32-O2.elf",
+      "sha256": "e15b9c0df5ede6ce527ac3ae72112e4f7cdc89379d5643bb1a6b68d51de4fa78"
+    },
+    {
+      "name": "riscv32-O3.elf",
+      "sha256": "e15b9c0df5ede6ce527ac3ae72112e4f7cdc89379d5643bb1a6b68d51de4fa78"
+    },
+    {
+      "name": "riscv64-O0.elf",
+      "sha256": "4b38334115002fc50fca60e2e5704a3932d847e3e8b3e383676b023725cd2560"
+    },
+    {
+      "name": "riscv64-O1.elf",
+      "sha256": "dab5bf598d37a7ce90e5786bf46ac9f3bb7b5d534cd6a7c188a11ef0206a2145"
+    },
+    {
+      "name": "riscv64-O2.elf",
+      "sha256": "dab5bf598d37a7ce90e5786bf46ac9f3bb7b5d534cd6a7c188a11ef0206a2145"
+    },
+    {
+      "name": "riscv64-O3.elf",
+      "sha256": "dab5bf598d37a7ce90e5786bf46ac9f3bb7b5d534cd6a7c188a11ef0206a2145"
+    },
+    {
+      "name": "thumb-O0.elf",
+      "sha256": "8aeacc0ec76e2c0ec075defc0f079e93f9a6f7cca56b530845fad96650eb9586"
+    },
+    {
+      "name": "thumb-O1.elf",
+      "sha256": "2c1118067eb6baced540f5a35b8e19244fefe0fb7c10fec8efe8363f4cde0bf5"
+    },
+    {
+      "name": "thumb-O2.elf",
+      "sha256": "04a8589e2ac705032a773aefbea6c6158c51600b28bdd5bbb039e7f66966bd7b"
+    },
+    {
+      "name": "thumb-O3.elf",
+      "sha256": "4051e8bdd9d58a1617d9775a8884aa3c28da7517ca852ceaf0f6f982ce55c6a9"
+    }
+  ],
+  "edgesSourceSha256": "79d09d5c73187bf0b687192786fd76ecf17ed9b64e289be3c7a0e40897247aff"
+}

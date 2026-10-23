@@ -19,6 +19,8 @@ pub struct Image {
     pub format: String,
     pub schema_version: u32,
     pub bitness: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub processor: Option<crate::processor::Processor>,
     pub provenance: String,
     pub segments: Vec<Segment>,
     pub missing: Vec<(Address, u64)>,
@@ -30,6 +32,7 @@ impl Image {
     pub fn validate(&self) -> Result<()> {
         if self.format != "ura-memory-image"
             || self.schema_version != 1
+            || self.processor.is_some_and(|p| p.bits() != self.bitness)
             || self.provenance.len() > 1024
             || self
                 .capture_metadata
@@ -125,6 +128,7 @@ impl Image {
             format: "ura-memory-image".into(),
             schema_version: 1,
             bitness: 64,
+            processor:None,
             provenance: "Imported observed snapshot; CPU mode assumed x64 (legacy capture has no architecture); missing bytes remain unmapped".into(),
             segments: vec![],
             missing: vec![],
@@ -198,24 +202,20 @@ impl Image {
     }
     pub fn from_binary(binary: &LoadedBinary) -> Result<Self> {
         let a = binary.analysis();
-        if !matches!(a.format.as_str(), "PE" | "ELF" | "raw")
-            || a.endianness != crate::binary::Endianness::Little
-            || !matches!(
-                (a.architecture, a.bitness),
-                (crate::binary::CpuArchitecture::X86, 32)
-                    | (crate::binary::CpuArchitecture::X86_64, 64)
-            )
-        {
+        let processor =
+            crate::processor::Processor::for_analysis(a).map_err(|e| Fault::new("loader", 0, e))?;
+        if !matches!(a.format.as_str(), "PE" | "ELF" | "raw") {
             return Err(Fault::new(
                 "loader",
                 0,
-                "only preferred-address PE/ELF and explicit raw x86/x64 supported",
+                "preferred PE/ELF or explicit raw mapping required",
             ));
         }
         let mut image = Self {
             format: "ura-memory-image".into(),
             schema_version: 1,
             bitness: a.bitness,
+            processor: Some(processor),
             provenance: format!(
                 "{} preferred virtual addresses; no relocation, dynamic linking or OS loader",
                 a.format
@@ -338,8 +338,22 @@ impl Image {
                 "image loading and explicit mappings cannot overlap implicitly",
             ));
         }
+        if config.processor.is_some_and(|p| Some(p) != self.processor) {
+            return Err(Fault::new(
+                "configuration",
+                entry,
+                "configured processor conflicts with image metadata",
+            ));
+        }
         config.bitness = self.bitness;
-        config.entry = Address(entry);
+        config.processor = self.processor;
+        config.entry = Address(
+            if self.processor == Some(crate::processor::Processor::Thumb) {
+                entry & !1
+            } else {
+                entry
+            },
+        );
         config.mappings = self
             .segments
             .iter()
@@ -403,6 +417,11 @@ impl Image {
         )
     }
     pub fn analyze(&self, entry: u64) -> Result<Value> {
+        let entry = if self.processor == Some(crate::processor::Processor::Thumb) {
+            entry & !1
+        } else {
+            entry
+        };
         self.validate()?;
         let exec = CodeImage::new(
             self.segments
@@ -420,12 +439,25 @@ impl Image {
             max_blocks: 2048,
             ..Default::default()
         };
-        let analysis = crate::analyze_image(&exec, self.bitness, Some(entry), &[], &options, &());
-        let ir =
-            crate::ir::lift_image(&exec, self.bitness, &analysis, entry, &()).and_then(|raw| {
+        let processor = self.processor.unwrap_or(if self.bitness == 32 {
+            crate::processor::Processor::X86
+        } else {
+            crate::processor::Processor::X86_64
+        });
+        let analysis = crate::analysis::analyze_processor_image(
+            &exec,
+            processor,
+            Some(entry),
+            &[],
+            &options,
+            &(),
+        );
+        let ir = crate::ir::lift_processor_image(&exec, processor, &analysis, entry, &()).and_then(
+            |raw| {
                 let ssa = crate::ir::ssa::construct(&raw)?;
                 Ok(json!({"raw":raw,"ssa":ssa}))
-            });
+            },
+        );
         let segment = self
             .segments
             .iter()
@@ -441,16 +473,16 @@ impl Image {
                     "selected entry is not known executable bytes",
                 )
             })?;
-        let binary = crate::binary::analyze_raw_bytes(
+        let binary = crate::binary::analyze_raw_processor_bytes(
             std::path::Path::new("captured-memory.raw"),
             segment.bytes.clone(),
             Some(segment.base.0),
-            u32::from(self.bitness),
+            processor,
         )
         .map_err(|e| Fault::new("analysis", entry, e.to_string()))?;
-        let local = crate::analyze_image(
+        let local = crate::analysis::analyze_processor_image(
             &CodeImage::from_binary(&binary),
-            self.bitness,
+            processor,
             Some(entry),
             &[],
             &options,
@@ -465,7 +497,7 @@ impl Image {
         )
         .map(|v| v.pseudocode);
         Ok(
-            json!({"mode":"capturedMemoryAnalysis","entry":Address(entry),"provenance":self.provenance,"missing":self.missing,"portableExecutableReconstructed":false,"report":analysis.report,"functions":analysis.functions.iter().map(|f|json!({"address":Address(f.address),"end":Address(f.end),"blocks":f.blocks.len()})).collect::<Vec<_>>(),"blocks":analysis.blocks.values().map(|b|json!({"address":Address(b.address),"instructions":b.instructions.iter().copied().map(Address).collect::<Vec<_>>(),"successors":b.successors.iter().map(|e|json!({"target":Address(e.target),"kind":format!("{:?}",e.kind)})).collect::<Vec<_>>()})).collect::<Vec<_>>(),"ir":ir.as_ref().ok(),"irError":ir.as_ref().err(),"pseudocode":pseudocode.as_ref().ok(),"pseudocodeError":pseudocode.as_ref().err(),"pseudocodeScope":"selected contiguous known executable range; sparse cross-range reconstruction remains partial"}),
+            json!({"mode":"capturedMemoryAnalysis","processor":processor,"entry":Address(entry),"provenance":self.provenance,"missing":self.missing,"portableExecutableReconstructed":false,"report":analysis.report,"functions":analysis.functions.iter().map(|f|json!({"address":Address(f.address),"end":Address(f.end),"blocks":f.blocks.len()})).collect::<Vec<_>>(),"blocks":analysis.blocks.values().map(|b|json!({"address":Address(b.address),"instructions":b.instructions.iter().copied().map(Address).collect::<Vec<_>>(),"successors":b.successors.iter().map(|e|json!({"target":Address(e.target),"kind":format!("{:?}",e.kind)})).collect::<Vec<_>>()})).collect::<Vec<_>>(),"ir":ir.as_ref().ok(),"irError":ir.as_ref().err(),"pseudocode":pseudocode.as_ref().ok(),"pseudocodeError":pseudocode.as_ref().err(),"pseudocodeScope":"selected contiguous known executable range; sparse cross-range reconstruction remains partial"}),
         )
     }
 }

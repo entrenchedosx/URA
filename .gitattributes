@@ -1,0 +1,5 @@
+# Fixture source hashes are part of the cross-platform qualification contract.
+tests/samples/processors.c text eol=lf
+tests/samples/aarch64-edges.s text eol=lf
+tests/fixtures/processors/*.elf -text
+tests/fixtures/processors/*.exe -text

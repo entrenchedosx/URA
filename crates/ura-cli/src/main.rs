@@ -356,9 +356,12 @@ impl Command {
 
 #[derive(Args)]
 struct CommonArgs {
-    /// Explicitly interpret the file as a raw x86/x64 image
+    /// Explicitly interpret the file as a raw image
     #[arg(long)]
     raw: bool,
+    /// Raw processor: x86, x86-64, aarch64, arm, thumb, riscv32, riscv64
+    #[arg(long, requires = "raw")]
+    processor: Option<String>,
     /// Raw virtual base in hexadecimal; omit for file-offset-only operations
     #[arg(long, requires = "raw")]
     base: Option<String>,
@@ -900,6 +903,16 @@ fn read_definition<T: serde::de::DeserializeOwned>(
 
 fn open(service: &mut Service, common: &CommonArgs) -> Result<OpenBinaryResponse, ServiceError> {
     if common.raw {
+        if let Some(name) = &common.processor {
+            let p = ura_core::processor::Processor::parse(name)
+                .ok_or_else(|| ServiceError::InvalidArgument("unknown processor".into()))?;
+            return service.open_raw_processor(
+                &common.binary,
+                common.project.as_deref(),
+                common.base.as_deref().map(parse_address).transpose()?,
+                p,
+            );
+        }
         service.open_raw_binary(
             &common.binary,
             common.project.as_deref(),

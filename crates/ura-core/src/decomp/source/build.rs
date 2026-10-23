@@ -572,13 +572,7 @@ impl Builder<'_> {
             .transfer
             .registers
             .iter()
-            .find(|(name, _)| {
-                name == if self.hir.address_width == 64 {
-                    "rax"
-                } else {
-                    "eax"
-                }
-            })
+            .find(|(name, _)| matches!(name.as_str(), "rax" | "eax" | "x0" | "r0" | "a0"))
             .map(|(_, v)| *v)
     }
     fn liveness(&mut self) {

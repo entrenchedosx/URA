@@ -2,7 +2,7 @@
 import argparse,ctypes,json,statistics,subprocess,time
 from ctypes import wintypes as w
 from pathlib import Path
-parser=argparse.ArgumentParser();parser.add_argument('--exe',type=Path,default=Path('target/release/examples/dynamic-bench.exe'));parser.add_argument('--output',type=Path,required=True);args=parser.parse_args()
+parser=argparse.ArgumentParser();parser.add_argument("--kind",choices=["dynamic","processors"],default="dynamic");parser.add_argument('--exe',type=Path,default=Path('target/release/examples/dynamic-bench.exe'));parser.add_argument('--output',type=Path,required=True);args=parser.parse_args()
 class Counters(ctypes.Structure):
  _fields_=[('cb',w.DWORD),('PageFaultCount',w.DWORD)]+[(name,ctypes.c_size_t) for name in ['PeakWorkingSetSize','WorkingSetSize','QuotaPeakPagedPoolUsage','QuotaPagedPoolUsage','QuotaPeakNonPagedPoolUsage','QuotaNonPagedPoolUsage','PagefileUsage','PeakPagefileUsage']]
 get_memory=ctypes.WinDLL('psapi').GetProcessMemoryInfo;get_memory.argtypes=[w.HANDLE,ctypes.POINTER(Counters),w.DWORD];get_memory.restype=w.BOOL
@@ -21,5 +21,8 @@ for _ in range(3):
  ticks=lambda value:(value.dwHighDateTime<<32)|value.dwLowDateTime
  cpu=(ticks(kernel)+ticks(user))/10000000
  result=json.loads(out);result.update({'processWallMs':wall*1000,'processCpuMs':cpu*1000,'averageCpuPercentOneCore':cpu/wall*100,'sampledPeakWorkingSetBytes':peak});samples.append(result)
-report={'samples':samples,'medianInstructionsPerSecond':statistics.median(s['instructionsPerSecond'] for s in samples),'medianSeekMs':statistics.median(s['averageSeekMs'] for s in samples),'scope':'Three sequential local Release microbenchmarks. Working set sampled every5ms across the whole benchmark; CPU from Windows GetProcessTimes including replay/analysis. No GPU/native presentation/idle CPU or per-snapshot private-heap claim.'}
+if args.kind=='processors':
+ report={'samples':samples,'medianByProcessor':{processor:{key:statistics.median(row[key] for sample in samples for row in sample['rows'] if row['processor']==processor) for key in ['cfgMs','liftMs','ssaMs','dataflowMs','decompileMs','emulate10000Ms','cancelAlreadyRequestedMs']} for processor in [row['processor'] for row in samples[0]['rows']]},'scope':'Three sequential Release processor benchmarks. Whole-process working set sampled every5ms and CPU via Windows GetProcessTimes; per-phase time includes the specified engine work. No native GUI, GPU, idle CPU or total retained-object heap claim.'}
+else:
+ report={'samples':samples,'medianInstructionsPerSecond':statistics.median(s['instructionsPerSecond'] for s in samples),'medianSeekMs':statistics.median(s['averageSeekMs'] for s in samples),'scope':'Three sequential local Release microbenchmarks. Working set sampled every5ms across the whole benchmark; CPU from Windows GetProcessTimes including replay/analysis. No GPU/native presentation/idle CPU or per-snapshot private-heap claim.'}
 args.output.parent.mkdir(parents=True,exist_ok=True);args.output.write_text(json.dumps(report,indent=2)+'\n',encoding='utf-8');print(json.dumps(report,indent=2))

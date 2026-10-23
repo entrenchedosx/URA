@@ -88,11 +88,35 @@ for mcp in [False,True]:
   assert comparison['changedBytes']==0 and comparison['unknownBytes']==0
   client.rpc('emulation','close',session=session)
   client.rpc('emulation','status',session=session,ok=False)
+  processors={
+   'aarch64':(64,'x0',[0x40,0x05,0x80,0xd2,0xc0,0x03,0x5f,0xd6]),
+   'arm':(32,'r0',[0x2a,0x00,0xa0,0xe3,0x1e,0xff,0x2f,0xe1]),
+   'thumb':(32,'r0',[0x2a,0x20,0x70,0x47]),
+   'riscv32':(32,'a0',[0x13,0x05,0xa0,0x02,0x67,0x80,0x00,0x00]),
+   'riscv64':(64,'a0',[0x13,0x05,0xa0,0x02,0x67,0x80,0x00,0x00])}
+  for processor,(bits,root,code) in processors.items():
+   cfg={'processor':processor,'bitness':bits,'entry':'0x1000','mappings':[{'base':'0x1000','bytes':code,'size':len(code),'permissions':{'read':True,'write':False,'execute':True}}]}
+   session=client.rpc('emulation','create',config=cfg)['session']
+   decoded=client.rpc('emulation','disassembly',session=session,address='0x1000')
+   assert decoded['instructions'][0]['length'] in (2,4),decoded
+   client.rpc('emulation','run',session=session,steps=20);state=client.wait(session)
+   assert state['processor']==processor and state['status']=='returned' and state['registers'][root]=='0x2A',state
+   assert 'rax' not in state['registers']
+   image=client.rpc('emulation','memoryImage',session=session)['handle']
+   analyzed=client.rpc('image','analyze',handle=image,entry='0x1000');assert analyzed['pseudocode'] and analyzed['ir'],analyzed
+   assert client.rpc('image','info',handle=image)['processor']==processor
+   image_decode=client.rpc('image','disassembly',handle=image,address='0x1000',length=len(code));assert image_decode['instructions'][0]['length'] in (2,4),image_decode
+   client.rpc('image','close',handle=image)
+   client.rpc('emulation','close',session=session)
+   raw_path=folder/(name+'-'+processor+'.raw');raw_path.write_bytes(bytes(code))
+   session=client.rpc('emulation','create',path=str(raw_path),raw=True,bitness=bits,config={'processor':processor,'bitness':bits})['session']
+   client.rpc('emulation','run',session=session,steps=20);state=client.wait(session);assert state['processor']==processor and state['registers'][root]=='0x2A',state
+   client.rpc('emulation','close',session=session)
   loop={**config,'mappings':[{'base':'0x1000','bytes':[235,254],'size':2,'permissions':{'read':True,'write':False,'execute':True}}]}
   session=client.rpc('emulation','create',config=loop)['session']
   client.rpc('emulation','run',session=session,steps=100000)
   start=time.perf_counter();client.rpc('emulation','stop',session=session);assert client.wait(session)['stopReason']=='cancelled'
-  results[name]={'virtualResult':42,'traceReplay':True,'imageAnalysis':True,'noClobber':True,'resetRestore':True,'staleHandleRejected':True,'cancelMs':(time.perf_counter()-start)*1000}
+  results[name]={'virtualResult':42,'traceReplay':True,'imageAnalysis':True,'noClobber':True,'resetRestore':True,'staleHandleRejected':True,'cancelMs':(time.perf_counter()-start)*1000,'processorEmulationAndRawLoad':list(processors)}
  finally:client.close()
  denied=Client(mcp,enabled=False,writes=False)
  try:denied.rpc('emulation','create',config=config,ok=False)

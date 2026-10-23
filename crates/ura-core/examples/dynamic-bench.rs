@@ -46,6 +46,7 @@ fn main() {
         format: "ura-memory-image".into(),
         schema_version: 1,
         bitness: 64,
+        processor: None,
         provenance: "owned benchmark raw code".into(),
         segments: vec![Segment {
             base: Address(0x1000),

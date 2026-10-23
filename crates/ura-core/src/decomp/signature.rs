@@ -4,6 +4,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum CallingConvention {
+    Aapcs64,
+    Aapcs32,
+    Riscv32,
+    Riscv64,
     Win64,
     SysV64,
     Cdecl,
@@ -15,6 +19,10 @@ pub enum CallingConvention {
 impl CallingConvention {
     pub fn name(self) -> &'static str {
         match self {
+            Self::Aapcs64 => "aapcs64",
+            Self::Aapcs32 => "aapcs32",
+            Self::Riscv32 => "riscv32",
+            Self::Riscv64 => "riscv64",
             Self::Win64 => "win64",
             Self::SysV64 => "sysv64",
             Self::Cdecl => "cdecl",
@@ -26,6 +34,10 @@ impl CallingConvention {
     }
     pub fn parse(value: &str) -> Option<Self> {
         match value.trim().to_ascii_lowercase().as_str() {
+            "aapcs64" => Some(Self::Aapcs64),
+            "aapcs32" => Some(Self::Aapcs32),
+            "riscv32" => Some(Self::Riscv32),
+            "riscv64" => Some(Self::Riscv64),
             "win64" | "microsoftx64" | "microsoft-x64" => Some(Self::Win64),
             "sysv64" | "systemv" | "system-v" | "sysv-amd64" => Some(Self::SysV64),
             "cdecl" => Some(Self::Cdecl),
@@ -38,6 +50,11 @@ impl CallingConvention {
     }
     pub fn argument_registers(self, address_bits: u16) -> &'static [&'static str] {
         match (self, address_bits) {
+            (Self::Aapcs64, 64) => &["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"],
+            (Self::Aapcs32, 32) => &["r0", "r1", "r2", "r3"],
+            (Self::Riscv32, 32) | (Self::Riscv64, 64) => {
+                &["a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7"]
+            }
             (Self::Win64, 64) => &["rcx", "rdx", "r8", "r9"],
             (Self::SysV64, 64) => &["rdi", "rsi", "rdx", "rcx", "r8", "r9"],
             (Self::Fastcall, 32) => &["ecx", "edx"],
@@ -47,6 +64,13 @@ impl CallingConvention {
     }
     pub fn callee_saved(self, address_bits: u16) -> &'static [&'static str] {
         match (self, address_bits) {
+            (Self::Aapcs64, 64) => &[
+                "x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26", "x27", "x28", "x29", "sp",
+            ],
+            (Self::Aapcs32, 32) => &["r4", "r5", "r6", "r7", "r8", "r10", "r11", "r13"],
+            (Self::Riscv32, 32) | (Self::Riscv64, 64) => &[
+                "sp", "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11",
+            ],
             (Self::Win64, 64) => &["rbx", "rbp", "rdi", "rsi", "r12", "r13", "r14", "r15"],
             (Self::SysV64, 64) => &["rbx", "rbp", "r12", "r13", "r14", "r15"],
             (_, 32) => &["ebx", "esi", "edi", "ebp"],
@@ -54,6 +78,15 @@ impl CallingConvention {
         }
     }
     pub fn return_register(self, address_bits: u16) -> Option<&'static str> {
+        if matches!(self, Self::Aapcs64) {
+            return (address_bits == 64).then_some("x0");
+        }
+        if matches!(self, Self::Aapcs32) {
+            return (address_bits == 32).then_some("r0");
+        }
+        if matches!(self, Self::Riscv32 | Self::Riscv64) {
+            return Some("a0");
+        }
         match address_bits {
             64 => Some("rax"),
             32 => Some("eax"),
@@ -183,14 +216,55 @@ pub struct SignatureParameterInput {
     pub ty: TypeRef,
 }
 impl SignatureOverride {
+    pub fn validate_for_processor(&self, p: crate::processor::Processor) -> Vec<String> {
+        let mut errors = self.validate_for_width(u16::from(p.bits()));
+        let valid = match p {
+            crate::processor::Processor::Aarch64 => matches!(
+                self.convention,
+                CallingConvention::Aapcs64 | CallingConvention::Unknown
+            ),
+            crate::processor::Processor::Arm | crate::processor::Processor::Thumb => matches!(
+                self.convention,
+                CallingConvention::Aapcs32 | CallingConvention::Unknown
+            ),
+            crate::processor::Processor::Riscv32 => matches!(
+                self.convention,
+                CallingConvention::Riscv32 | CallingConvention::Unknown
+            ),
+            crate::processor::Processor::Riscv64 => matches!(
+                self.convention,
+                CallingConvention::Riscv64 | CallingConvention::Unknown
+            ),
+            _ => !matches!(
+                self.convention,
+                CallingConvention::Aapcs32
+                    | CallingConvention::Aapcs64
+                    | CallingConvention::Riscv32
+                    | CallingConvention::Riscv64
+            ),
+        };
+        if !valid {
+            errors.push(format!(
+                "calling convention {} does not match processor {}",
+                self.convention.name(),
+                p.name()
+            ));
+        }
+        errors
+    }
     pub fn validate_for_width(&self, bits: u16) -> Vec<String> {
         let mut errors = self.validate();
         let valid = match self.convention {
-            CallingConvention::Win64 | CallingConvention::SysV64 => bits == 64,
+            CallingConvention::Win64
+            | CallingConvention::SysV64
+            | CallingConvention::Aapcs64
+            | CallingConvention::Riscv64 => bits == 64,
             CallingConvention::Cdecl
             | CallingConvention::Stdcall
             | CallingConvention::Fastcall
-            | CallingConvention::Thiscall => bits == 32,
+            | CallingConvention::Thiscall
+            | CallingConvention::Aapcs32
+            | CallingConvention::Riscv32 => bits == 32,
             CallingConvention::Unknown => matches!(bits, 32 | 64),
         };
         if !valid {
@@ -254,6 +328,17 @@ fn valid_register_location(name: &str, convention: CallingConvention) -> bool {
     ];
     let x86 = ["eax", "ebx", "ecx", "edx", "esi", "edi"];
     let general = match convention {
+        CallingConvention::Aapcs64 => name
+            .strip_prefix('x')
+            .and_then(|n| n.parse::<u8>().ok())
+            .is_some_and(|n| n < 31 && name == format!("x{n}")),
+        CallingConvention::Aapcs32 => name
+            .strip_prefix('r')
+            .and_then(|n| n.parse::<u8>().ok())
+            .is_some_and(|n| n < 15 && name == format!("r{n}")),
+        CallingConvention::Riscv32 | CallingConvention::Riscv64 => {
+            crate::processor::RISCV_NAMES[1..].contains(&name)
+        }
         CallingConvention::Win64 | CallingConvention::SysV64 => x64.contains(&name),
         CallingConvention::Cdecl
         | CallingConvention::Stdcall

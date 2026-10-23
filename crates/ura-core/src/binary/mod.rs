@@ -45,7 +45,15 @@ impl CpuArchitecture {
     }
 
     pub fn supports_disassembly(self) -> bool {
-        matches!(self, CpuArchitecture::X86 | CpuArchitecture::X86_64)
+        matches!(
+            self,
+            CpuArchitecture::X86
+                | CpuArchitecture::X86_64
+                | CpuArchitecture::Aarch64
+                | CpuArchitecture::Arm
+                | CpuArchitecture::Riscv32
+                | CpuArchitecture::Riscv64
+        )
     }
 }
 
@@ -228,6 +236,7 @@ pub struct BinaryView {
     pub sha256: String,
     pub format: String,
     pub architecture: String,
+    pub processor: serde_json::Value,
     pub bitness: u8,
     pub endianness: String,
     pub image_base: String,
@@ -327,6 +336,9 @@ impl LoadedBinary {
             sha256: sha256_hex(&self.bytes),
             format: self.analysis.format.clone(),
             architecture: self.analysis.architecture.name().to_string(),
+            processor: crate::processor::Processor::for_analysis(&self.analysis)
+                .map(|p| p.metadata())
+                .unwrap_or_else(|e| serde_json::json!({"supported":false,"diagnostic":e})),
             bitness: self.analysis.bitness,
             endianness: self.analysis.endianness.name().to_string(),
             image_base: format_address(self.analysis.image_base),
@@ -796,4 +808,31 @@ fn object_kind_name(kind: object::ObjectKind) -> &'static str {
         object::ObjectKind::Core => "core",
         _ => "unknown",
     }
+}
+
+/// Explicit raw processor selection; legacy raw API remains x86/x64.
+pub fn analyze_raw_processor_bytes(
+    path: &Path,
+    bytes: Vec<u8>,
+    base: Option<u64>,
+    processor: crate::processor::Processor,
+) -> Result<LoadedBinary> {
+    if base.is_some_and(|a| a % processor.alignment() != 0) {
+        return Err(UraError::InvalidAddress(
+            "raw base must align to the explicitly selected instruction mode".into(),
+        ));
+    }
+    let mut binary = analyze_raw_bytes(path, bytes, base, u32::from(processor.bits()))?;
+    binary.analysis.architecture = processor.architecture();
+    binary.analysis.object_kind = format!("explicit raw image ({})", processor.name());
+    Ok(binary)
+}
+
+pub fn analyze_raw_processor_path(
+    path: &Path,
+    base: Option<u64>,
+    processor: crate::processor::Processor,
+) -> Result<LoadedBinary> {
+    let binary = analyze_raw_path(path, base, u32::from(processor.bits()))?;
+    analyze_raw_processor_bytes(path, binary.bytes().to_vec(), base, processor)
 }

@@ -55,6 +55,8 @@ pub struct PatchState {
     #[serde(with = "hex_base")]
     pub raw_base: Option<u64>,
     pub raw_bitness: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_processor: Option<crate::processor::Processor>,
     pub version: u32,
     pub original_sha256: String,
     pub file_size: u64,
@@ -117,7 +119,9 @@ impl PatchDocument {
     fn interpretation(&self) -> String {
         format!(
             "{}/{}/{:X?}",
-            self.format, self.bitness, self.state.raw_base
+            self.format,
+            self.bitness,
+            (self.state.raw_base, self.state.raw_processor)
         )
     }
     pub fn new(bytes: Vec<u8>) -> PatchResult<Self> {
@@ -182,6 +186,7 @@ impl PatchDocument {
                 None
             },
             raw_bitness: if format == "raw" { Some(bitness) } else { None },
+            raw_processor: None,
             version: 1,
             original_sha256: crate::sha256_hex(&bytes),
             file_size: bytes.len() as u64,
@@ -200,6 +205,16 @@ impl PatchDocument {
             instruction_supported: true,
             protected: vec![],
         })
+    }
+    pub fn raw_processor_shared(
+        bytes: Arc<Vec<u8>>,
+        base: Option<u64>,
+        processor: crate::processor::Processor,
+    ) -> PatchResult<Self> {
+        let mut doc = Self::raw_shared(bytes, base, u32::from(processor.bits()))?;
+        doc.state.raw_processor = Some(processor);
+        doc.instruction_supported = processor.x86();
+        Ok(doc)
     }
     pub fn state(&self) -> &PatchState {
         &self.state
@@ -348,11 +363,15 @@ impl PatchDocument {
     }
     pub fn effective_binary(&self, path: &Path) -> crate::Result<crate::LoadedBinary> {
         if self.format == "raw" {
-            crate::binary::analyze_raw_bytes(
+            crate::binary::analyze_raw_processor_bytes(
                 path,
                 self.materialize(),
                 self.state.raw_base,
-                self.bitness,
+                self.state.raw_processor.unwrap_or(if self.bitness == 32 {
+                    crate::processor::Processor::X86
+                } else {
+                    crate::processor::Processor::X86_64
+                }),
             )
         } else {
             crate::binary::analyze_bytes(path, self.materialize())
@@ -613,6 +632,7 @@ impl PatchDocument {
         if state.version != 1
             || state.raw_base != self.state.raw_base
             || state.raw_bitness != self.state.raw_bitness
+            || state.raw_processor != self.state.raw_processor
             || state.original_sha256 != self.state.original_sha256
             || state.file_size != self.original.len() as u64
             || state.cursor > state.transactions.len()

@@ -12,9 +12,12 @@ overwrite an old asset or alter main automatically.
 
 `release-qualification.json` is a checked-in publication gate. Set its version
 to the Cargo version, document evidence and set `publishable:true` only after
-critical correctness/safety/package gates are resolved. Current0.13.0-dev is
-**false/source-checkpoint** because WOW64 and interrupted cross-thread software
-cleanup remain incomplete. Manual desktop restrictions are recorded separately;
+critical correctness/safety/package gates pass for the stated release scope.
+v0.14 targets a scoped scalar development prerelease: the foreign-step and
+new-thread ownership regressions are repaired, while genuinely nested/rearm
+steps and uncertain cleanup remain explicitly blocked. WOW64 is unsupported and
+rejected; it is not mandatory for this owner-approved scoped v0.14 definition.
+Earlier v0.13 publication eligibility remains historically false. Manual desktop restrictions are recorded separately;
 headless rendering must not be called live desktop acceptance.
 
 From committed clean source, run:
@@ -28,7 +31,7 @@ receipt marks the source dirty and the publisher rejects it. Use a new empty
 output folder every time. The helper rechecks clean HEAD/source before sealing and after packaging, and
 verification fails immediately if Python optimization disables assertions.
 The helper runs fmt, strict all-target Clippy, all
-workspace tests, a locked workspace Release build, and **fresh compilation of
+workspace tests, the external pinned Unicorn processor oracle, a locked workspace Release build, and **fresh compilation of
 each executable root** with a unique compiler metadata input. Existing dependency
 artifacts may be cached; previous EXEs/ZIPs are never build inputs. It checks
 Windows product/version resources, performs dynamic/static/decompiler/patching/
@@ -75,3 +78,10 @@ EXE identity, and runs CLI/MCP smoke checks on downloaded programs. It does not
 launch a native desktop window under the current restriction. Release/download
 links may be reported as successful only after these steps pass. Failures require
 a new unique version once repaired; never recycle historical versioned binaries.
+
+
+v0.14 qualification also verifies scalar processor workflows through the existing
+CLI/MCP tools, including raw metadata, disassembly, IR/SSA, pseudocode and bounded
+execution. CI disables development/test debug info and incremental caches to
+avoid excessive Windows linker/PDB disk usage; Release optimisation is unchanged.
+The independent oracle is installed under target/ only and never packaged.

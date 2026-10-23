@@ -24,6 +24,7 @@ pub struct DynamicUi {
     pub registers: String,
     pub mappings: String,
     pub bits: u8,
+    pub processor: Option<ura_core::processor::Processor>,
     pub raw: bool,
     pub steps: u64,
     pub until: String,
@@ -68,6 +69,7 @@ impl Default for DynamicUi {
             registers: "{}".into(),
             mappings: "[]".into(),
             bits: 64,
+            processor: None,
             raw: false,
             steps: 1000,
             until: String::new(),
@@ -299,8 +301,30 @@ impl DynamicUi {
         ui.horizontal(|ui| {
             ui.label("Entry");
             ui.text_edit_singleline(&mut self.entry);
-            ui.selectable_value(&mut self.bits, 64, "x64");
-            ui.selectable_value(&mut self.bits, 32, "x86");
+            egui::ComboBox::from_id_salt("emulation-processor")
+                .selected_text(
+                    self.processor
+                        .map_or("Automatic (native file); x64 raw", |p| p.name()),
+                )
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(
+                        &mut self.processor,
+                        None,
+                        "Automatic (native file); x64 raw",
+                    );
+                    for p in [
+                        ura_core::processor::Processor::X86,
+                        ura_core::processor::Processor::X86_64,
+                        ura_core::processor::Processor::Aarch64,
+                        ura_core::processor::Processor::Arm,
+                        ura_core::processor::Processor::Thumb,
+                        ura_core::processor::Processor::Riscv32,
+                        ura_core::processor::Processor::Riscv64,
+                    ] {
+                        ui.selectable_value(&mut self.processor, Some(p), p.name());
+                    }
+                });
+            self.bits = self.processor.map_or(64, |p| p.bits());
         });
         ui.collapsing("Initial state", |ui| {
             ui.label("Raw code bytes when no image path is selected");
@@ -327,7 +351,7 @@ impl DynamicUi {
                         ura_core::patch::parse_hex(&self.code).map_err(|e| e.to_string())?;
                     mappings.push(json!({"base":self.entry,"size":bytes.len(),"bytes":bytes,"permissions":{"read":true,"write":false,"execute":true}}));
                 }
-                let mut v = json!({"operation":"emulation","action":"create","entry":self.entry,"config":{"bitness":self.bits,"registers":registers,"mappings":mappings},"bitness":self.bits});
+                let mut v = json!({"operation":"emulation","action":"create","entry":self.entry,"config":{"bitness":self.bits,"processor":self.processor,"registers":registers,"mappings":mappings},"bitness":self.bits});
                 if !self.path.is_empty() {
                     v["path"] = json!(self.path);
                     v["raw"] = json!(self.raw);

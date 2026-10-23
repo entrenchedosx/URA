@@ -159,6 +159,7 @@ impl XrefKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DataReferenceKind {
     RipRelative,
+    PcRelative,
     Absolute,
 }
 
@@ -166,6 +167,7 @@ impl DataReferenceKind {
     pub fn name(self) -> &'static str {
         match self {
             DataReferenceKind::RipRelative => "ripRelative",
+            DataReferenceKind::PcRelative => "pcRelative",
             DataReferenceKind::Absolute => "absolute",
         }
     }
@@ -566,10 +568,22 @@ pub fn analyze_binary_with_seeds(
     let mapped = mapped_ranges(binary);
     let options = options.normalized();
     let memory = CodeImage::readonly_data(binary);
+    let processor = crate::processor::Processor::for_analysis(analysis).ok();
+    if processor == Some(crate::processor::Processor::Thumb) {
+        for seed in &mut seeds {
+            seed.address &= !1;
+        }
+    }
     analyze_images(
         (&image, &memory),
-        analysis.bitness,
-        analysis.entry_point,
+        (analysis.bitness, processor),
+        analysis.entry_point.map(|a| {
+            if processor == Some(crate::processor::Processor::Thumb) {
+                a & !1
+            } else {
+                a
+            }
+        }),
         &seeds,
         &options,
         &mapped,
@@ -688,7 +702,14 @@ pub fn analyze_image_mapped(
 ) -> ProgramAnalysis {
     analyze_images(
         (image, image),
-        bitness,
+        (
+            bitness,
+            match bitness {
+                32 => Some(crate::processor::Processor::X86),
+                64 => Some(crate::processor::Processor::X86_64),
+                _ => None,
+            },
+        ),
         entry,
         seeds,
         options,
@@ -697,9 +718,28 @@ pub fn analyze_image_mapped(
     )
 }
 
+pub fn analyze_processor_image(
+    image: &CodeImage<'_>,
+    processor: crate::processor::Processor,
+    entry: Option<u64>,
+    seeds: &[AnalysisSeed],
+    options: &AnalysisOptions,
+    control: &dyn AnalysisControl,
+) -> ProgramAnalysis {
+    analyze_images(
+        (image, image),
+        (processor.bits(), Some(processor)),
+        entry,
+        seeds,
+        options,
+        &[],
+        control,
+    )
+}
+
 fn analyze_images(
     images: (&CodeImage<'_>, &CodeImage<'_>),
-    bitness: u8,
+    mode: (u8, Option<crate::processor::Processor>),
     entry: Option<u64>,
     seeds: &[AnalysisSeed],
     options: &AnalysisOptions,
@@ -707,17 +747,18 @@ fn analyze_images(
     control: &dyn AnalysisControl,
 ) -> ProgramAnalysis {
     let (image, memory) = images;
+    let (bitness, processor) = mode;
     let normalized_options = options.normalized();
     let options = &normalized_options;
     let started = Instant::now();
     let mut diagnostics = Diagnostics::default();
     let mut discovered = Discovery::default();
 
-    if bitness != 32 && bitness != 64 {
+    if processor.is_none() {
         diagnostics.push(
             None,
             format!(
-                "function analysis supports x86/x86-64 only (bitness {})",
+                "function analysis requires a supported little-endian processor/mode (bitness {})",
                 bitness
             ),
         );
@@ -731,6 +772,7 @@ fn analyze_images(
             mapped,
         );
     }
+    let processor = processor.unwrap();
     if image.is_empty() {
         diagnostics.push(
             None,
@@ -906,7 +948,7 @@ fn analyze_images(
                     }
                 }
             }
-            let Some(instruction) = decode_instruction(image, address, bitness, &mut formatter)
+            let Some(instruction) = decode_instruction(image, address, processor, &mut formatter)
             else {
                 diagnostics.push(
                     Some(address),
@@ -990,6 +1032,13 @@ fn analyze_images(
                     }
                 }
                 InstructionFlow::IndirectJump => {
+                    if !processor.x86() {
+                        diagnostics.push(
+                            Some(address),
+                            "indirect transfer remains unresolved for this processor".into(),
+                        );
+                        continue;
+                    }
                     let mut preceding = Vec::new();
                     let mut cursor = address;
                     for _ in 0..7 {
@@ -1302,6 +1351,7 @@ fn finalize(
             }
             let detail_code = match reference.kind {
                 DataReferenceKind::RipRelative => 0,
+                DataReferenceKind::PcRelative => 2,
                 DataReferenceKind::Absolute => 1,
             };
             xref_set.insert((*address, reference.target, 3, detail_code));
@@ -1319,6 +1369,8 @@ fn finalize(
                 data_xref_count += 1;
                 let data_kind = if detail_code == 0 {
                     DataReferenceKind::RipRelative
+                } else if detail_code == 2 {
+                    DataReferenceKind::PcRelative
                 } else {
                     DataReferenceKind::Absolute
                 };
@@ -1444,10 +1496,47 @@ fn mapped_contains(mapped: &[(u64, u64)], address: u64) -> bool {
 fn decode_instruction(
     image: &CodeImage<'_>,
     address: u64,
-    bitness: u8,
+    processor: crate::processor::Processor,
     formatter: &mut IntelFormatter,
 ) -> Option<DecodedInstruction> {
     let bytes = image.bytes_at(address)?;
+    let bitness = processor.bits();
+    if !processor.x86() {
+        let d = crate::processor::decode(processor, bytes, address).ok()?;
+        let mut data_references = vec![];
+        if processor == crate::processor::Processor::Aarch64
+            && (matches!(d.mnemonic.as_str(), "adr" | "adrp")
+                || d.args
+                    .iter()
+                    .any(|a| matches!(a.value, crate::processor::Arg::Imm(_)))
+                    && d.flow == InstructionFlow::Next)
+        {
+            if let Some(target) = d.args.iter().rev().find_map(|a| {
+                if let crate::processor::Arg::Imm(n) = a.value {
+                    Some(n as u64)
+                } else {
+                    None
+                }
+            }) {
+                if matches!(d.mnemonic.as_str(), "adr" | "adrp" | "ldr" | "ldrsw") {
+                    data_references.push(DataReference {
+                        target,
+                        kind: DataReferenceKind::PcRelative,
+                    });
+                }
+            }
+        }
+        return Some(DecodedInstruction {
+            address,
+            length: d.length as u8,
+            flow: d.flow,
+            target: d.target,
+            data_references,
+            invalid: false,
+            mnemonic: d.mnemonic,
+            operands: d.text,
+        });
+    }
     let mut decoder = Decoder::with_ip(bitness as u32, bytes, address, DecoderOptions::NONE);
     if !decoder.can_decode() {
         return None;
@@ -1588,5 +1677,13 @@ struct FunctionBuilder {
 }
 
 pub fn architecture_supports_analysis(architecture: CpuArchitecture) -> bool {
-    matches!(architecture, CpuArchitecture::X86 | CpuArchitecture::X86_64)
+    matches!(
+        architecture,
+        CpuArchitecture::X86
+            | CpuArchitecture::X86_64
+            | CpuArchitecture::Aarch64
+            | CpuArchitecture::Arm
+            | CpuArchitecture::Riscv32
+            | CpuArchitecture::Riscv64
+    )
 }

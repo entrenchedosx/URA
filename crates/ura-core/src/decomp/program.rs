@@ -211,14 +211,26 @@ pub fn enrich(
     check(control)?;
     let mut report = ProgramTypes::default();
     report.notes.push("Exact-copy parameter demands and combined SSA argument/return constraints use a bounded scope. Container ABI defaults remain assumptions; convergence is not whole-program coverage.".into());
-    if entry.ssa.address_width != 64 || !matches!(binary.analysis().format.as_str(), "PE" | "ELF") {
+    if entry.ssa.address_width != 64
+        || !matches!(
+            binary.analysis().architecture,
+            crate::CpuArchitecture::X86_64
+                | crate::CpuArchitecture::Aarch64
+                | crate::CpuArchitecture::Riscv64
+        )
+        || !matches!(binary.analysis().format.as_str(), "PE" | "ELF")
+    {
         report.converged = true;
         report
             .notes
-            .push("Cross-function propagation currently supports PE/ELF x86-64 only.".into());
+            .push("Cross-function propagation currently supports scalar 64-bit PE/ELF x86-64/AArch64/RV64; 32-bit and raw images remain partial.".into());
         return Ok(report);
     }
-    let default = if binary.analysis().format == "PE" {
+    let default = if binary.analysis().architecture == crate::CpuArchitecture::Aarch64 {
+        CallingConvention::Aapcs64
+    } else if binary.analysis().architecture == crate::CpuArchitecture::Riscv64 {
+        CallingConvention::Riscv64
+    } else if binary.analysis().format == "PE" {
         CallingConvention::Win64
     } else {
         CallingConvention::SysV64

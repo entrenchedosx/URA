@@ -171,10 +171,16 @@ pub fn open(path: PathBuf) -> Result<Event, String> {
                     .patch_state
                     .as_ref()
                     .ok_or("raw project is missing mode/base metadata")?;
-                ura_core::binary::analyze_raw_path(
+                ura_core::binary::analyze_raw_processor_path(
                     source,
                     state.raw_base,
-                    state.raw_bitness.ok_or("raw project mode missing")?,
+                    state.raw_processor.unwrap_or(
+                        if state.raw_bitness.ok_or("raw project mode missing")? == 32 {
+                            ura_core::processor::Processor::X86
+                        } else {
+                            ura_core::processor::Processor::X86_64
+                        },
+                    ),
                 )
             } else {
                 ura_core::analyze_path(source)
@@ -184,11 +190,19 @@ pub fn open(path: PathBuf) -> Result<Event, String> {
             patches = if binary.analysis().format == "raw" {
                 let state = snapshot.patch_state.as_ref().unwrap();
                 Some(
-                    ura_core::patch::PatchDocument::raw_shared(
-                        binary.shared_bytes(),
-                        state.raw_base,
-                        state.raw_bitness.unwrap(),
-                    )
+                    if let Some(p) = state.raw_processor {
+                        ura_core::patch::PatchDocument::raw_processor_shared(
+                            binary.shared_bytes(),
+                            state.raw_base,
+                            p,
+                        )
+                    } else {
+                        ura_core::patch::PatchDocument::raw_shared(
+                            binary.shared_bytes(),
+                            state.raw_base,
+                            state.raw_bitness.unwrap(),
+                        )
+                    }
                     .map_err(|e| e.to_string())?,
                 )
             } else {

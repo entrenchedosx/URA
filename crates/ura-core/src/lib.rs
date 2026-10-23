@@ -56,3 +56,5 @@ pub fn sha256_file(path: &Path) -> Result<String> {
     let data = std::fs::read(path)?;
     Ok(sha256_hex(&data))
 }
+
+pub mod processor;

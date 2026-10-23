@@ -472,12 +472,13 @@ fn overlay_requires_identity_and_reports_transition_truncation() {
     );
 }
 #[test]
-fn native_loader_rejects_non_x86_even_when_bitness_matches() {
+fn native_loader_rejects_unimplemented_processor_even_when_bitness_matches() {
     let path =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/ura64.elf");
     let mut bytes = std::fs::read(path).unwrap();
-    bytes[18..20].copy_from_slice(&183u16.to_le_bytes()); // EM_AARCH64, valid ELF64
-    let binary = ura_core::binary::analyze_bytes(std::path::Path::new("arm64.elf"), bytes).unwrap();
+    bytes[18..20].copy_from_slice(&8u16.to_le_bytes()); // EM_MIPS, unsupported ELF64 processor
+    let binary =
+        ura_core::binary::analyze_bytes(std::path::Path::new("mips64.elf"), bytes).unwrap();
     assert_eq!(binary.analysis().bitness, 64);
     assert_eq!(Image::from_binary(&binary).unwrap_err().kind, "loader");
 }
