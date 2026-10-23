@@ -1,6 +1,6 @@
 # v0.14 multi-architecture verification
 
-Date: 2026-10-23. Version `0.14.0-dev`, branch
+Date: 2026-10-23. Version `0.14.0-dev.1`, branch
 `v0.14-multi-architecture`. Baseline
 `660e3a02866fce2445a04c80af813da2b7f1d7d4` was clean, equal to fetched
 origin/v0.13-emulation-dynamic-analysis, and passed 352 tests. The containing
@@ -176,6 +176,16 @@ unverified under the desktop restriction.
 Budgets remain bounded; see processor scope for IR/stack limits and dynamic scope
 for execution/memory/trace/session constraints. No decoder cache bypasses changed
 virtual code bytes.
+
+The initial tagged GitHub run [40022422403](https://github.com/entrenchedosx/URA/actions/runs/40022422403)
+correctly withheld publication: a baseline symlink-escape test opened its input
+fixture outside its sole allowed temporary root. This PC could not create the
+symlink, while the hosted Windows runner could, exposing the test setup error.
+The test now copies the input into the granted folder and separately verifies
+that the original outside fixture is denied. No product path grant was broadened.
+The original tag is preserved without a release; `v0.14.0-dev.1` receives fresh
+qualification and assets. Saved performance reports retain their original
+`0.14.0-dev` measurement identity; the engine code is unchanged in this revision.
 
 ## Distribution and remaining work
 

@@ -4,7 +4,7 @@ URA now uses a shared analysis/IR/SSA/decompiler pipeline for verified scalar
 subsets of AArch64, ARM32, Thumb, RV64I and RV32I. This is a Windows x64 product
 analysing those targets, not a Windows ARM64 host build or full ISA/OS emulator.
 Existing x86/x64 paths remain available. The source and package version is
-`0.14.0-dev`; public acceptance additionally requires the release verification
+`0.14.0-dev.1`; public acceptance additionally requires the release verification
 receipts described in [RELEASING.md](RELEASING.md).
 
 ## Capability matrix

@@ -525,20 +525,28 @@ fn project_writes_cannot_escape_through_dangling_symlinks_or_data_streams() {
     let outside = tempfile::tempdir().unwrap();
     let target = outside.path().join("escaped.ura");
     let link = root.path().join("project.ura");
+    // The only granted root is this disposable folder. Keep the input within
+    // that grant so symlink-capable CI reaches the write-escape assertion.
+    let input = root.path().join("sample.exe");
+    std::fs::copy(fixture("ura64.exe"), &input).unwrap();
+    let mut service = Service::new(PathPolicy::new([root.path().to_path_buf()]).unwrap(), true);
+    assert_eq!(
+        service
+            .open_binary(&fixture("ura64.exe"), None)
+            .unwrap_err()
+            .code(),
+        "path_denied"
+    );
+    let handle = service.open_binary(&input, None).unwrap().handle;
+    service
+        .analyze(&handle, &AnalysisOptions::default())
+        .unwrap();
 
     #[cfg(windows)]
     let created = std::os::windows::fs::symlink_file(&target, &link).is_ok();
     #[cfg(not(windows))]
     let created = std::os::unix::fs::symlink(&target, &link).is_ok();
     if created {
-        let mut service = Service::new(PathPolicy::new([root.path().to_path_buf()]).unwrap(), true);
-        let handle = service
-            .open_binary(&fixture("ura64.exe"), None)
-            .unwrap()
-            .handle;
-        service
-            .analyze(&handle, &AnalysisOptions::default())
-            .unwrap();
         let error = service
             .save_project(&handle, &link, Some("Escape"))
             .unwrap_err();
