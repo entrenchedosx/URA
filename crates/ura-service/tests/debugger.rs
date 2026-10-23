@@ -63,6 +63,7 @@ fn debugger_policy_persistence_cross_project_and_restore_rollback() {
             module_sha256: other_identity.binary_hash,
             rva: "0x1020".into(),
             enabled: true,
+            ..Default::default()
         }],
     )
     .unwrap();
@@ -94,11 +95,13 @@ fn debugger_policy_persistence_cross_project_and_restore_rollback() {
                 module_sha256: target_identity.binary_hash.clone(),
                 rva: ura_debugger::hex(marker),
                 enabled: true,
+                ..Default::default()
             },
             ura_project::DebugBreakpoint {
                 module_sha256: target_identity.binary_hash,
                 rva: ura_debugger::hex(trap),
                 enabled: true,
+                ..Default::default()
             },
         ],
     )
@@ -111,6 +114,120 @@ fn debugger_policy_persistence_cross_project_and_restore_rollback() {
         service.snapshot().breakpoints.is_empty(),
         "first restored point must roll back when original INT3 rejects the second"
     );
+    service
+        .rpc(json!({"operation":"terminate","session":session}))
+        .unwrap();
+}
+#[test]
+fn advanced_rpc_permissions_atomic_exports_and_persistent_breakpoint_types() {
+    let target = fixture();
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("advanced.ura");
+    let id = identity(&target);
+    ura_project::create_project(&project, "advanced", &id).unwrap();
+    let mut service = DebugService::new(
+        PathPolicy::allow_all(),
+        DebugPermissions {
+            launch: true,
+            targets: vec![target.clone()],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        service.rpc(json!({"operation":"capabilities"})).unwrap()["remote"],
+        false
+    );
+    let mut session = service
+        .rpc(json!({"operation":"launch","executable":target}))
+        .unwrap()["session"]
+        .clone();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while service.snapshot().state != ura_debugger::State::Paused {
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let image = ura_core::analyze_path(&target).unwrap();
+    let base = ura_core::parse_address(&service.snapshot().modules[0].base).unwrap();
+    let preferred = ura_core::parse_address(&image.view().image_base).unwrap();
+    let runtime = |name: &str| {
+        ura_debugger::hex(
+            base + ura_core::parse_address(
+                &image
+                    .analysis()
+                    .export_view_list()
+                    .iter()
+                    .find(|e| e.name == name)
+                    .unwrap()
+                    .address,
+            )
+            .unwrap()
+                - preferred,
+        )
+    };
+    let marker = runtime("ura_marker");
+    let watched = runtime("ura_watch");
+    assert!(service.rpc(json!({"operation":"snapshot","action":"capture","session":session,"address":marker,"length":32})).is_err());
+    service = service.with_memory_capture(true);
+    let capture=service.rpc(json!({"operation":"snapshot","action":"capture","session":session,"address":marker,"length":32})).unwrap();
+    let capture_id = capture["id"].clone();
+    assert!(service.rpc(json!({"operation":"snapshot","action":"export","session":session,"id":capture_id,"destination":dir.path().join("denied.json")})).is_err());
+    service = service.with_project_writes(true);
+    let destination = dir.path().join("capture.json");
+    service.rpc(json!({"operation":"snapshot","action":"export","session":session,"id":capture_id,"destination":destination})).unwrap();
+    let data = std::fs::read(&destination).unwrap();
+    let imported: serde_json::Value = serde_json::from_slice(&data).unwrap();
+    assert_eq!(imported, capture);
+    assert!(service.rpc(json!({"operation":"snapshot","action":"export","session":session,"id":capture_id,"destination":destination})).is_err());
+    assert_eq!(std::fs::read(destination).unwrap(), data);
+    for (address, kind, length, condition) in [
+        (marker.clone(), "software", 1, "ecx == 2"),
+        (watched, "write", 8, "1"),
+    ] {
+        service.rpc(json!({"operation":"configureBreakpoint","session":session,"address":address,"kind":kind,"length":length,"condition":condition,"hitAfter":2,"hitEvery":3})).unwrap();
+    }
+    service
+        .rpc(json!({"operation":"breakpoints","session":session,"action":"save","project":project}))
+        .unwrap();
+    let saved = ura_project::read_project(&project).unwrap();
+    assert_eq!(saved.project.schema_version, 8);
+    assert_eq!(saved.debug_breakpoints.len(), 2);
+    assert!(saved
+        .debug_breakpoints
+        .iter()
+        .any(|p| p.kind == "write" && p.length == 8));
+    for point in service.snapshot().breakpoints {
+        service.rpc(json!({"operation":"breakpoints","session":session,"action":"remove","id":point.id})).unwrap();
+    }
+    // A global hardware removal may retain physical slots on other threads until
+    // their own event handoff. Restore into a fresh process (and ASLR base), not
+    // over a still-retiring point in the current session.
+    service
+        .rpc(json!({"operation":"terminate","session":session}))
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while service.snapshot().state != ura_debugger::State::Exited {
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    session = service
+        .rpc(json!({"operation":"launch","executable":target}))
+        .unwrap()["session"]
+        .clone();
+    while service.snapshot().state != ura_debugger::State::Paused {
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    service.rpc(json!({"operation":"breakpoints","session":session,"action":"restore","project":project})).unwrap();
+    let restored = service.snapshot();
+    assert!(restored
+        .breakpoints
+        .iter()
+        .any(|p| p.kind == ura_debugger::BreakpointKind::Write));
+    assert!(restored
+        .breakpoints
+        .iter()
+        .all(|p| p.hit_after == 2 && p.hit_every == 3 && p.hits == 0));
     service
         .rpc(json!({"operation":"terminate","session":session}))
         .unwrap();

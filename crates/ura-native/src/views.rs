@@ -48,6 +48,7 @@ impl egui_dock::TabViewer for Workspace {
             | Panel::DebugStack
             | Panel::Memory
             | Panel::Modules
+            | Panel::Trace
             | Panel::DebugEvents
             | Panel::Breakpoints
             | Panel::Runtime => self.debugger_panel(ui, *tab),

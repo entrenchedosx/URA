@@ -25,12 +25,8 @@ folder.mkdir(parents=True, exist_ok=False)
 bin_dir = args.bin_dir.resolve()
 flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 source = root/'tests/fixtures/debuggee.rs'
-fixture = folder/'owned-debuggee.exe'
-compiler = shutil.which('rustc') or str(Path.home()/'.cargo/bin/rustc.exe')
-subprocess.run([compiler, '--edition=2021', '-C', 'opt-level=1', '-C', 'debuginfo=0',
-                '-C', 'link-arg=/EXPORT:ura_marker', '-C', 'link-arg=/EXPORT:ura_nested',
-                '-C', 'link-arg=/EXPORT:ura_existing_int3,DATA', str(source), '-o', str(fixture)],
-               check=True, capture_output=True, timeout=60, creationflags=flags)
+from debugger_client import compile_owned_fixture
+fixture = compile_owned_fixture(folder, root)
 metrics = {}
 
 
@@ -50,83 +46,8 @@ preferred = int(info['info']['imageBase'], 16)
 marker_rva = next(int(e['address'], 16) - preferred for e in info['exports'] if e['name'] == 'ura_marker')
 
 
-class Driver:
-    def __init__(self, mcp, launch=False, attach_pid=None, writes=False):
-        self.mcp = mcp
-        self.id = 0
-        options = ['--allow', str(folder)]
-        if writes:
-            options += ['--enable-writes']
-        if launch:
-            options += ['--enable-debug-launch']
-        if attach_pid:
-            options += ['--enable-debug-attach', '--debug-pid', str(attach_pid)]
-        if launch or attach_pid:
-            options += ['--debug-target', str(fixture)]
-        if mcp:
-            options += ['--log', 'off']
-        else:
-            options += ['debug']
-        self.process = subprocess.Popen([str(bin_dir/('ura-mcp.exe' if mcp else 'ura-cli.exe')), *options],
-                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                        text=True, creationflags=flags)
-        self.replies = queue.Queue()
-        def reader():
-            for line in self.process.stdout:
-                self.replies.put(json.loads(line))
-        threading.Thread(target=reader, daemon=True).start()
-        if mcp:
-            initialized = self.request('initialize', {'protocolVersion': '2025-03-26', 'capabilities': {},
-                                                       'clientInfo': {'name': 'ura-debug-audit', 'version': '1'}})
-            assert initialized['serverInfo']['version'] == '0.11.0-dev'
-            self.send({'jsonrpc': '2.0', 'method': 'notifications/initialized'})
-            tools = self.request('tools/list', {})['tools']
-            assert len(tools) == 55
-            assert len([t for t in tools if t['name'].startswith('ura_debug_')]) == 16
-
-    def send(self, value):
-        self.process.stdin.write(json.dumps(value) + '\n')
-        self.process.stdin.flush()
-
-    def request(self, method, params):
-        self.id += 1
-        self.send({'jsonrpc': '2.0', 'id': self.id, 'method': method, 'params': params})
-        deadline = time.monotonic() + 8
-        while True:
-            response = self.replies.get(timeout=max(.01, deadline - time.monotonic()))
-            if response.get('id') == self.id:
-                assert 'error' not in response, response
-                return response['result']
-
-    def rpc(self, operation, success=True, **parameters):
-        start = time.perf_counter()
-        if self.mcp:
-            name = {'readMemory': 'read_memory', 'callStack': 'call_stack'}.get(operation, operation)
-            result = self.request('tools/call', {'name': 'ura_debug_' + name, 'arguments': parameters})
-            error = result.get('isError', False)
-            response = result.get('structuredContent', {})
-        else:
-            self.send({'operation': operation, **parameters})
-            response = self.replies.get(timeout=8)
-            error = 'error' in response
-        assert error != success, response
-        record(('mcp_' if self.mcp else 'cli_') + ('' if success else 'denied_') + operation, time.perf_counter() - start)
-        return response.get('result', response)
-
-    def wait(self, session, state):
-        deadline = time.monotonic() + 10
-        while True:
-            response = self.rpc('status', session=session)
-            if response['state'] == state:
-                return response
-            assert time.monotonic() < deadline, response
-            time.sleep(.01)
-
-    def close(self):
-        self.process.stdin.close()
-        self.process.wait(timeout=8)
-        assert self.process.returncode == 0, self.process.stderr.read()
-
+from debugger_client import driver_factory
+Driver = driver_factory(bin_dir, folder, fixture, metrics)
 
 evidence = []
 for mcp in (False, True):
@@ -206,7 +127,7 @@ for mcp in (False, True):
     evidence[-1].update({'ownedPidAttach': True, 'pause': True, 'detachPreservedTarget': True,
                          'attachedTerminationDenied': True})
 
-summary = {'version': '0.11.0-dev', 'mcpTools': 55, 'controlledFixturesExecuted': True,
+summary = {'version': '0.12.0-dev', 'mcpTools': 64, 'controlledFixturesExecuted': True,
            'nativeDesktopLaunched': False, 'sourceSha256': hashlib.sha256(source.read_bytes()).hexdigest(),
            'fixtureSha256': hashlib.sha256(fixture.read_bytes()).hexdigest(), 'workflows': evidence,
            'rpcMedianMs': {key: statistics.median(values) for key, values in metrics.items()},

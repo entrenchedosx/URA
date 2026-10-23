@@ -53,6 +53,20 @@ fn interactive_debugger_real_launch_step_memory_and_permissions() {
     let ip = paused["result"]["registers"]["values"]["rip"].clone();
     let memory = rpc(json!({"operation":"readMemory","session":session,"address":ip,"length":16}));
     assert_eq!(memory["result"]["read"], 16);
+    assert!(rpc(json!({"operation":"capabilities"}))["result"]["hardwareSlotsPerThread"] == 4);
+    assert!(rpc(json!({"operation":"snapshot","session":session,"action":"capture","address":ip,"length":16}))["error"].is_object());
+    assert!(
+        rpc(
+            json!({"operation":"trace","session":session,"action":"start","config":{"mode":"events","maxEvents":4}})
+        )["result"]["active"]
+            == true
+    );
+    rpc(json!({"operation":"trace","session":session,"action":"stop"}));
+    assert!(
+        rpc(json!({"operation":"trace","session":session,"action":"read","limit":4}))["result"]
+            ["events"]
+            .is_array()
+    );
     let denied = rpc(json!({"operation":"attach","pid":4,"executable":target}));
     assert!(denied["error"].is_object());
     let terminated = rpc(json!({"operation":"terminate","session":session}));

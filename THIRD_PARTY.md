@@ -45,3 +45,11 @@ The v0.11 native debugger uses the already-locked Microsoft `windows-sys` 0.61.2
 bindings (MIT OR Apache-2.0) for documented Windows APIs. DbgHelp and kernel32 are
 OS components and are not copied into the package. No debugger driver, third-party
 debugger executable, symbol-server client or new assembler runtime is bundled.
+
+The v0.12 advanced debugger adds no new external dependency version. Windows
+hardware contexts, VirtualQueryEx and DbgHelp symbol/unwind facilities are supplied
+by the operating system through existing `windows-sys` bindings; no Microsoft
+DLL is redistributed. `tempfile` moves from service test-only to runtime use for
+atomic new-file evidence export and was already in the locked application closure.
+Condition parsing and trace/capture storage are repository code. Local PDB files
+are explicitly selected user data and are never bundled automatically.

@@ -45,7 +45,7 @@ worker drains them on shutdown. Samples remain read-only.
 `ura-service` owns sessions, normalized analysis options, schema-versioned DTOs,
 path restrictions and explicit write permissions. It invokes the same core
 analysis and project functions used by the desktop. `ura-cli` is a synchronous
-text/JSON adapter; `ura-mcp` routes 55 stdio tools to the service. Neither starts
+text/JSON adapter; `ura-mcp` routes 64 stdio tools to the service. Neither starts
 the desktop. MCP uses rmcp and stderr logging; there is no network listener.
 Query pages and byte reads have explicit limits. Address-based byte reads must
 fit one file-backed section. Read-only project snapshots support v1-v7 and
@@ -369,3 +369,27 @@ renders the native runtime panels. The event owner waits for commands while paus
 CLI `debug` owns a single local JSON-line session; MCP adds 16 bounded debugger
 tools to the existing 39. Neither frontend provides a cross-process controller.
 See [DEBUGGER.md](DEBUGGER.md) for exact lifecycle, permissions and limitations.
+
+## Advanced debugger (v0.12)
+
+`ura-debugger/advanced.rs` defines typed actions; `condition.rs` parses bounded
+register predicates. Windows `hardware.rs` owns per-thread DR bindings and
+classifies DR6/TF causes, `control.rs` owns validated run-to/step-out,
+`tracing.rs` retains bounded observed evidence, `evidence.rs` captures/query/compares
+memory and `symbols.rs` serializes local DbgHelp/PDB work. All OS state remains
+on the event owner. Hardware retirement is logical first; physical restoration
+waits for that thread's actual debug event so queued exceptions retain their owner.
+
+`ura-service/debugger_advanced.rs` validates requests, separates capture/output
+permissions and atomically exports new JSON files. A controller snapshot reports
+pending instruction cleanup independently from trace recording. Schema8 persists
+only main-image hash/RVA point definitions (kind/length/condition/hit policy), never
+runtime thread IDs, trace buffers or dumps. Read-only legacy projects stay legacy;
+explicit writes migrate with defaults preserving schema7 software points.
+
+`ura-native/debugger_advanced.rs` extends existing panels and provides a virtualized
+Execution Trace panel, using worker service calls and captured provenance. CLI
+and 25 MCP debugger tools use the same engine. JSON addresses preserve 64-bit
+precision as strings. Runtime observations never rewrite static CFG/SSA/HIR or
+patch overlays. WOW64/remote/kernel adapters remain absent, as described in
+[ADVANCED-DEBUGGER.md](ADVANCED-DEBUGGER.md).

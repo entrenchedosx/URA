@@ -15,6 +15,11 @@ impl WindowsBackend {
                 "breakpoint address already owned; remove it before this operation",
             ));
         }
+        let region = memory(self.process()?, address, 1)?;
+        let protection = region["region"]["protection"]
+            .as_u64()
+            .ok_or_else(|| DebugError::new("memory", "breakpoint region unavailable"))?
+            as u32;
         let original = read(self.process()?, address, 1)?[0];
         if original == 0xcc {
             return Err(DebugError::new(
@@ -30,8 +35,19 @@ impl WindowsBackend {
         self.points.insert(
             address,
             Point {
+                uncertain: false,
+                protection,
                 temporary,
                 view: Breakpoint {
+                    verification: None,
+                    thread_filter: None,
+                    kind: BreakpointKind::Software,
+                    length: 1,
+                    threads: vec![],
+                    slots: Default::default(),
+                    condition: None,
+                    hit_after: 1,
+                    hit_every: 1,
                     id,
                     session: self.view.session.clone().unwrap(),
                     address: hex(address),
@@ -60,15 +76,35 @@ impl WindowsBackend {
             .points
             .get(&address)
             .ok_or_else(|| DebugError::new("breakpoint", "unknown breakpoint"))?;
+        if p.uncertain {
+            if armed {
+                return Err(DebugError::new("critical","uncertain breakpoint bytes/protection require verified cleanup before execution"));
+            }
+            repair_byte(self.process()?, address, p.view.original_byte, p.protection)?;
+            let p = self.points.get_mut(&address).unwrap();
+            p.uncertain = false;
+            p.view.armed = false;
+            p.view.verification = None;
+            return Ok(());
+        }
         if p.view.armed == armed {
             return Ok(());
         }
-        byte(
+        let result = byte(
             self.process()?,
             address,
             if armed { p.view.original_byte } else { 0xcc },
             if armed { 0xcc } else { p.view.original_byte },
-        )?;
+        );
+        if let Err(e) = result {
+            {
+                let p = self.points.get_mut(&address).unwrap();
+                p.uncertain = true;
+                p.view.verification = Some(e.message.clone());
+                self.resume_poisoned = true;
+            }
+            return Err(e);
+        }
         self.points.get_mut(&address).unwrap().view.armed = armed;
         Ok(())
     }
@@ -167,10 +203,14 @@ impl WindowsBackend {
     }
     pub(super) fn resume(&mut self, stepping: Option<bool>, pass_exception: bool) -> Result<()> {
         self.paused()?;
-        if self.step.is_some() {
+        self.hardware_ready()?;
+        if stepping.is_some() && !self.retired_causes.is_empty() {
+            return Err(DebugError::new("state","continue or detach to drain queued owned debug causes before starting another step"));
+        }
+        if !self.cleanup_threads.is_empty() {
             return Err(DebugError::new(
-                "state",
-                "interrupted displaced step: detach or terminate before resuming",
+                "cleanup",
+                "detach cleanup retains thread ownership; retry detach or terminate explicitly",
             ));
         }
         self.repair_breakpoint()?;
@@ -178,6 +218,30 @@ impl WindowsBackend {
             return Err(DebugError::new(
                 "repair",
                 "resume rollback incomplete; detach or terminate required",
+            ));
+        }
+        if let Some(step) = &self.step {
+            if self.displaced.is_some_and(|(_, tid)| tid != step.thread) {
+                return Err(DebugError::new("state", "a software breakpoint interrupted another thread's step; safe handoff is unavailable, detach or terminate required"));
+            }
+            if stepping.is_none()
+                && self
+                    .pending
+                    .as_ref()
+                    .is_some_and(|p| p.0.dwThreadId != step.thread)
+            {
+                let default = self.pending.as_ref().unwrap().1;
+                self.continue_pending(if default == DBG_EXCEPTION_NOT_HANDLED && pass_exception {
+                    DBG_EXCEPTION_NOT_HANDLED
+                } else {
+                    DBG_CONTINUE
+                })?;
+                self.view.state = State::Stepping;
+                return Ok(());
+            }
+            return Err(DebugError::new(
+                "state",
+                "interrupted step must complete in its owner thread; continue, detach or terminate",
             ));
         }
         let tid = self.pending.as_ref().unwrap().0.dwThreadId;
@@ -193,6 +257,8 @@ impl WindowsBackend {
             let mut failures = Vec::new();
             if let Err(e) = set_context(h, &original) {
                 failures.push(e.message);
+            } else if original.0.EFlags & 0x100 == 0 {
+                self.owned_traps.remove(&tid);
             }
             if let Some(step) = self.step.as_mut() {
                 step.rearm = None;
@@ -227,6 +293,10 @@ impl WindowsBackend {
         pass_exception: bool,
     ) -> Result<()> {
         self.paused()?;
+        self.hardware_ready()?;
+        if stepping.is_some() && !self.retired_causes.is_empty() {
+            return Err(DebugError::new("state","continue or detach to drain queued owned debug causes before starting another step"));
+        }
         if self.step.is_some() {
             return Err(DebugError::new("state","interrupted displaced step must be detached or terminated; unsafe resumption rejected"));
         }
@@ -272,6 +342,12 @@ impl WindowsBackend {
                 step_into = true;
             }
         }
+        if self.displaced.is_some_and(|(_, tid)| tid != event_thread) {
+            return Err(DebugError::new(
+                "state",
+                "displaced instruction belongs to another thread; detach or terminate required",
+            ));
+        }
         let rearm = self.displaced.map(|v| v.0);
         if step_into || rearm.is_some() {
             if c.0.EFlags & 0x100 != 0 {
@@ -280,8 +356,16 @@ impl WindowsBackend {
                     "target already owns trap flag; stepping refused",
                 ));
             }
-            let frozen = self.freeze_others(event_thread)?;
+            // Other threads must not cross a temporarily restored software BP.
+            // Ordinary TF stepping needs no such suspension; freezing a thread
+            // that owns a lock needed by this instruction can deadlock the target.
+            let frozen = if rearm.is_some() {
+                self.freeze_others(event_thread)?
+            } else {
+                vec![]
+            };
             c.0.EFlags |= 0x100;
+            self.owned_traps.insert(event_thread);
             if let Err(e) = set_context(handle, &c) {
                 self.step = Some(SingleStep {
                     thread: event_thread,

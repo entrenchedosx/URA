@@ -20,13 +20,19 @@ pub fn fixture() -> std::path::PathBuf {
                     "-C",
                     "opt-level=1",
                     "-C",
-                    "debuginfo=0",
+                    "debuginfo=2",
                     "-C",
                     "link-arg=/EXPORT:ura_marker",
                     "-C",
                     "link-arg=/EXPORT:ura_nested",
                     "-C",
                     "link-arg=/EXPORT:ura_existing_int3,DATA",
+                    "-C",
+                    "link-arg=/EXPORT:ura_watch,DATA",
+                    "-C",
+                    "link-arg=/EXPORT:ura_store",
+                    "-C",
+                    "link-arg=/EXPORT:ura_step_wait",
                 ])
                 .arg(root.join("tests/fixtures/debuggee.rs"))
                 .arg("-o")

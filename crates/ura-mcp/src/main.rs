@@ -24,6 +24,8 @@ struct Cli {
     #[arg(long)]
     enable_debug_launch: bool,
     #[arg(long)]
+    enable_debug_capture: bool,
+    #[arg(long)]
     enable_debug_attach: bool,
     #[arg(long)]
     enable_debug_terminate_attached: bool,
@@ -63,7 +65,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             attach_pids: cli.debug_pids,
         },
     )?
-    .with_project_writes(cli.enable_writes);
+    .with_project_writes(cli.enable_writes)
+    .with_memory_capture(cli.enable_debug_capture);
     let server = UraServer::new(service);
 
     tracing::info!(

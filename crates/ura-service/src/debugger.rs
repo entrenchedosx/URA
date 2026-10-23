@@ -4,6 +4,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use ura_debugger::{Command, Controller, LaunchConfig, Snapshot};
+#[path = "debugger_advanced.rs"]
+mod advanced;
 
 #[derive(Debug, Clone, Default)]
 pub struct DebugPermissions {
@@ -15,6 +17,7 @@ pub struct DebugPermissions {
     pub attach_pids: Vec<u32>,
 }
 pub struct DebugService {
+    memory_capture: bool,
     policy: PathPolicy,
     permissions: DebugPermissions,
     project_writes: bool,
@@ -36,6 +39,7 @@ impl DebugService {
             targets.push((path, loaded.view().sha256));
         }
         Ok(Self {
+            memory_capture: false,
             policy,
             permissions,
             targets,
@@ -46,6 +50,10 @@ impl DebugService {
     }
     pub fn with_project_writes(mut self, enabled: bool) -> Self {
         self.project_writes = enabled;
+        self
+    }
+    pub fn with_memory_capture(mut self, enabled: bool) -> Self {
+        self.memory_capture = enabled;
         self
     }
     /// Native UI only: explicitly grant the exact project the user selected.
@@ -148,6 +156,9 @@ impl DebugService {
     }
     /// Bounded local JSON-line/MCP adapter. Addresses stay lossless hexadecimal strings.
     pub fn rpc(&mut self, value: Value) -> Result<Value, ServiceError> {
+        if advanced::handles(&value) {
+            return self.advanced_rpc(value);
+        }
         let request: DebugRequest = serde_json::from_value(value)
             .map_err(|e| ServiceError::InvalidArgument(e.to_string()))?;
         let address = |text: &str| ura_core::parse_address(text).map_err(ServiceError::from);
@@ -274,6 +285,13 @@ impl DebugService {
                 return Err(ServiceError::WriteDisabled);
             }
 
+            if snapshot
+                .breakpoints
+                .iter()
+                .any(|p| p.owner == "user" && p.module == module.path && p.thread_filter.is_some())
+            {
+                return Err(ServiceError::InvalidArgument("thread-specific hardware definitions cannot persist unstable runtime thread IDs; save has not changed the project".into()));
+            }
             let definitions = snapshot
                 .breakpoints
                 .iter()
@@ -283,6 +301,15 @@ impl DebugService {
                         module_sha256: hash.clone(),
                         rva: rva.clone(),
                         enabled: p.enabled,
+                        kind: serde_json::to_value(p.kind)
+                            .unwrap()
+                            .as_str()
+                            .unwrap()
+                            .into(),
+                        length: p.length,
+                        condition: p.condition.clone(),
+                        hit_after: p.hit_after,
+                        hit_every: p.hit_every,
                     })
                 })
                 .collect::<Vec<_>>();
@@ -311,7 +338,7 @@ impl DebugService {
                 base.checked_add(rva).ok_or_else(|| {
                     ServiceError::InvalidArgument("runtime breakpoint overflow".into())
                 })?,
-                definition.enabled,
+                definition,
             ));
         }
         for (address, _) in &addresses {
@@ -325,24 +352,42 @@ impl DebugService {
         }
         let mut added = Vec::new();
         let result = (|| {
-            for (address, enabled) in addresses {
-                self.command(
+            for (address, definition) in addresses {
+                let kind: ura_debugger::BreakpointKind =
+                    serde_json::from_value(json!(definition.kind))
+                        .map_err(|e| ServiceError::InvalidArgument(e.to_string()))?;
+                let before = self
+                    .snapshot()
+                    .breakpoints
+                    .iter()
+                    .map(|p| p.id)
+                    .collect::<std::collections::BTreeSet<_>>();
+                let configured = self.command(
                     session,
-                    Command::Breakpoint {
-                        action: "set".into(),
-                        address: Some(address),
-                        id: None,
-                    },
-                )?;
+                    Command::ConfigureBreakpoint(ura_debugger::BreakpointConfig {
+                        address,
+                        kind,
+                        length: definition.length,
+                        thread: None,
+                        condition: definition.condition,
+                        hit_after: definition.hit_after,
+                        hit_every: definition.hit_every,
+                    }),
+                );
+                for point in self.snapshot().breakpoints {
+                    if !before.contains(&point.id) {
+                        added.push(point.id);
+                    }
+                }
+                configured?;
                 let id = self
                     .snapshot()
                     .breakpoints
                     .iter()
-                    .find(|p| p.address == ura_debugger::hex(address))
+                    .find(|p| p.address == ura_debugger::hex(address) && p.kind == kind)
                     .unwrap()
                     .id;
-                added.push(id);
-                if !enabled {
+                if !definition.enabled {
                     self.command(
                         session,
                         Command::Breakpoint {
@@ -380,6 +425,18 @@ impl DebugService {
     }
 
     pub fn command(&mut self, session: &str, command: Command) -> Result<Value, ServiceError> {
+        if matches!(
+            command,
+            Command::Capture(
+                ura_debugger::CaptureAction::Capture { .. }
+                    | ura_debugger::CaptureAction::Compare { other: None, .. }
+            )
+        ) && !self.memory_capture
+        {
+            return Err(ServiceError::InvalidArgument(
+                "memory capture requires separate --enable-debug-capture permission".into(),
+            ));
+        }
         if self.snapshot().reason.as_deref() == Some("cleanupPending") {
             return Err(ServiceError::InvalidArgument("debug owner is retrying required cleanup; status remains available and control commands are unavailable".into()));
         }

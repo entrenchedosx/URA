@@ -55,6 +55,177 @@ impl UraServer {
 #[tool_router]
 impl UraServer {
     #[tool(
+        name = "ura_debug_capabilities",
+        annotations(read_only_hint = true),
+        description = "Read implemented backend capabilities and bounds. Starts no process."
+    )]
+    fn ura_debug_capabilities(
+        &self,
+        Parameters(p): Parameters<crate::params::DebugParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let mut value =
+            serde_json::to_value(p).map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        value["operation"] = serde_json::Value::String("capabilities".into());
+        respond(
+            self.service()
+                .debugger
+                .rpc(value)
+                .map(|result| serde_json::json!({"schemaVersion":1,"result":result})),
+        )
+    }
+    #[tool(
+        name = "ura_debug_configure_breakpoint",
+        annotations(read_only_hint = false),
+        description = "Set a real software or per-thread hardwareExecute/write/readWrite breakpoint. Requires session,address; kind,length,thread,condition,hitAfter,hitEvery are optional. Hardware slots/alignment are enforced."
+    )]
+    fn ura_debug_configure_breakpoint(
+        &self,
+        Parameters(p): Parameters<crate::params::DebugParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let mut value =
+            serde_json::to_value(p).map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        value["operation"] = serde_json::Value::String("configureBreakpoint".into());
+        respond(
+            self.service()
+                .debugger
+                .rpc(value)
+                .map(|result| serde_json::json!({"schemaVersion":1,"result":result})),
+        )
+    }
+    #[tool(
+        name = "ura_debug_set_condition",
+        annotations(read_only_hint = false),
+        description = "Change a breakpoint register predicate and positive hitAfter/hitEvery policy. Requires paused session,id. No scripting or memory evaluation."
+    )]
+    fn ura_debug_set_condition(
+        &self,
+        Parameters(p): Parameters<crate::params::DebugParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let mut value =
+            serde_json::to_value(p).map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        value["operation"] = serde_json::Value::String("setCondition".into());
+        respond(
+            self.service()
+                .debugger
+                .rpc(value)
+                .map(|result| serde_json::json!({"schemaVersion":1,"result":result})),
+        )
+    }
+    #[tool(
+        name = "ura_debug_step_out",
+        annotations(read_only_hint = false),
+        description = "Resume to the validated metadata-unwound caller in the stopped thread. Refuses uncertain frames; temporary resources are managed."
+    )]
+    fn ura_debug_step_out(
+        &self,
+        Parameters(p): Parameters<crate::params::DebugParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let mut value =
+            serde_json::to_value(p).map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        value["operation"] = serde_json::Value::String("stepOut".into());
+        respond(
+            self.service()
+                .debugger
+                .rpc(value)
+                .map(|result| serde_json::json!({"schemaVersion":1,"result":result})),
+        )
+    }
+    #[tool(
+        name = "ura_debug_run_to",
+        annotations(read_only_hint = false),
+        description = "Run the stopped thread to an executable runtime address, preserving an existing user breakpoint. Requires paused session,address."
+    )]
+    fn ura_debug_run_to(
+        &self,
+        Parameters(p): Parameters<crate::params::DebugParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let mut value =
+            serde_json::to_value(p).map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        value["operation"] = serde_json::Value::String("runTo".into());
+        respond(
+            self.service()
+                .debugger
+                .rpc(value)
+                .map(|result| serde_json::json!({"schemaVersion":1,"result":result})),
+        )
+    }
+    #[tool(
+        name = "ura_debug_trace",
+        annotations(read_only_hint = false),
+        description = "Bounded observed tracing. action start/stop/clear/read/export; config controls events/instructions and limits; read accepts after,limit<=512. Export requires destination and --enable-writes. No Intel PT or inferred execution."
+    )]
+    fn ura_debug_trace(
+        &self,
+        Parameters(p): Parameters<crate::params::DebugParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let mut value =
+            serde_json::to_value(p).map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        value["operation"] = serde_json::Value::String("trace".into());
+        respond(
+            self.service()
+                .debugger
+                .rpc(value)
+                .map(|result| serde_json::json!({"schemaVersion":1,"result":result})),
+        )
+    }
+    #[tool(
+        name = "ura_debug_memory_regions",
+        annotations(read_only_hint = true),
+        description = "Enumerate up to256 actual VirtualQueryEx regions of the paused authorized target. Optional address and limit; returns continuation address."
+    )]
+    fn ura_debug_memory_regions(
+        &self,
+        Parameters(p): Parameters<crate::params::DebugParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let mut value =
+            serde_json::to_value(p).map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        value["operation"] = serde_json::Value::String("memoryRegions".into());
+        respond(
+            self.service()
+                .debugger
+                .rpc(value)
+                .map(|result| serde_json::json!({"schemaVersion":1,"result":result})),
+        )
+    }
+    #[tool(
+        name = "ura_debug_snapshot",
+        annotations(read_only_hint = false),
+        description = "Bounded captured runtime evidence. action capture/list/info/remove/compare/disassembly/export. Capture/live compare require --enable-debug-capture; export needs destination and --enable-writes. Captures are not executable reconstruction."
+    )]
+    fn ura_debug_snapshot(
+        &self,
+        Parameters(p): Parameters<crate::params::DebugParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let mut value =
+            serde_json::to_value(p).map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        value["operation"] = serde_json::Value::String("snapshot".into());
+        respond(
+            self.service()
+                .debugger
+                .rpc(value)
+                .map(|result| serde_json::json!({"schemaVersion":1,"result":result})),
+        )
+    }
+    #[tool(
+        name = "ura_debug_symbols",
+        annotations(read_only_hint = false),
+        description = "Explicit local matched main-image PDB load or bounded address lookup. action load needs base,pdb; lookup needs address. Enforces RSDS GUID/age; no network symbols or C++ type recovery."
+    )]
+    fn ura_debug_symbols(
+        &self,
+        Parameters(p): Parameters<crate::params::DebugParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let mut value =
+            serde_json::to_value(p).map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+        value["operation"] = serde_json::Value::String("symbols".into());
+        respond(
+            self.service()
+                .debugger
+                .rpc(value)
+                .map(|result| serde_json::json!({"schemaVersion":1,"result":result})),
+        )
+    }
+    #[tool(
         name = "ura_debug_launch",
         annotations(read_only_hint = false),
         description = "Execute an explicitly allowed native x64 PE target. Requires executable; optional arguments, workingDirectory, environment, breakAtEntry. Disabled by default; --enable-debug-launch and exact --debug-target required."

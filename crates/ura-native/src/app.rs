@@ -51,11 +51,12 @@ pub enum Panel {
     Memory,
     Modules,
     DebugEvents,
+    Trace,
     Breakpoints,
     Runtime,
 }
 impl Panel {
-    pub const ALL: [Self; 27] = [
+    pub const ALL: [Self; 28] = [
         Self::Explorer,
         Self::Disassembly,
         Self::Functions,
@@ -81,6 +82,7 @@ impl Panel {
         Self::Memory,
         Self::Modules,
         Self::DebugEvents,
+        Self::Trace,
         Self::Breakpoints,
         Self::Runtime,
     ];
@@ -111,6 +113,7 @@ impl Panel {
             Self::Memory => "Runtime Memory",
             Self::Modules => "Runtime Modules",
             Self::DebugEvents => "Debug Events",
+            Self::Trace => "Execution Trace",
             Self::Breakpoints => "Breakpoints",
             Self::Runtime => "Runtime Disassembly",
         }
@@ -142,6 +145,7 @@ impl Panel {
             Self::Memory => "runtimeMemory",
             Self::Modules => "runtimeModules",
             Self::DebugEvents => "debugEvents",
+            Self::Trace => "executionTrace",
             Self::Breakpoints => "breakpoints",
             Self::Runtime => "runtimeDisassembly",
         }
@@ -373,7 +377,7 @@ pub struct Workspace {
 }
 
 impl Workspace {
-    fn new(ctx: egui::Context, settings: Settings, recent: Vec<PathBuf>) -> Self {
+    pub(crate) fn new(ctx: egui::Context, settings: Settings, recent: Vec<PathBuf>) -> Self {
         let image = image::load_from_memory(include_bytes!("../assets/icon.png"))
             .expect("bundled icon")
             .into_rgba8();
@@ -2217,7 +2221,7 @@ mod tests {
             app.workspace.history.step(-1).unwrap().address,
             Some(0x140001000)
         );
-        assert_eq!(ura_project::SCHEMA_VERSION, 7);
+        assert_eq!(ura_project::SCHEMA_VERSION, 8);
     }
     #[test]
     fn patch_worker_reopens_effective_bytes_invalidates_analysis_and_preserves_annotations() {

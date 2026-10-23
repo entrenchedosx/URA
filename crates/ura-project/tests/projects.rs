@@ -53,12 +53,13 @@ fn v6_debug_definition_migration_is_explicit_bounded_and_preserves_data() {
         6
     );
     let migrated = open_project(&path).unwrap();
-    assert_eq!(migrated.project.schema_version, 7);
+    assert_eq!(migrated.project.schema_version, 8);
     assert_eq!(migrated.annotations[0].note, "retained");
     let definition = ura_project::DebugBreakpoint {
         module_sha256: identity.binary_hash.clone(),
         rva: "0x1020".into(),
         enabled: true,
+        ..Default::default()
     };
     ura_project::save_debug_breakpoints(&path, std::slice::from_ref(&definition)).unwrap();
     assert_eq!(
@@ -75,6 +76,41 @@ fn v6_debug_definition_migration_is_explicit_bounded_and_preserves_data() {
         )
         .unwrap();
     assert!(ura_project::read_project(&path).is_err());
+}
+#[test]
+fn v7_breakpoint_json_defaults_read_without_migration_and_v8_keeps_conditions() {
+    let (_dir, path) = setup();
+    let sample = fixture("ura64.exe");
+    let id = identity(&sample);
+    create_project(&path, "legacy debug", &id).unwrap();
+    let c = rusqlite::Connection::open(&path).unwrap();
+    let old = serde_json::json!([{"moduleSha256":id.binary_hash,"rva":"0x1020","enabled":true}])
+        .to_string();
+    c.execute(
+        "INSERT INTO debug_breakpoints(id,definitions_json) VALUES(1,?1)",
+        [old],
+    )
+    .unwrap();
+    c.execute_batch("PRAGMA user_version=7;").unwrap();
+    drop(c);
+    let before = std::fs::read(&path).unwrap();
+    let read = ura_project::read_project(&path).unwrap();
+    assert_eq!(read.project.schema_version, 7);
+    assert_eq!(read.debug_breakpoints[0].kind, "software");
+    assert_eq!(read.debug_breakpoints[0].hit_after, 1);
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    open_project(&path).unwrap();
+    let mut definition = read.debug_breakpoints[0].clone();
+    definition.condition = Some("rcx == 2".into());
+    definition.hit_every = 10;
+    ura_project::save_debug_breakpoints(&path, &[definition]).unwrap();
+    let read = ura_project::read_project(&path).unwrap();
+    assert_eq!(read.project.schema_version, 8);
+    assert_eq!(read.debug_breakpoints[0].hit_every, 10);
+    assert_eq!(
+        read.debug_breakpoints[0].condition.as_deref(),
+        Some("rcx == 2")
+    );
 }
 
 #[test]
@@ -94,7 +130,7 @@ fn v5_patch_migration_revision_history_and_corrupt_metadata_are_checked() {
         .patch_state
         .is_none());
     assert_eq!(before, std::fs::read(&path).unwrap());
-    assert_eq!(open_project(&path).unwrap().project.schema_version, 7);
+    assert_eq!(open_project(&path).unwrap().project.schema_version, 8);
     let mut doc = PatchDocument::new(std::fs::read(sample).unwrap()).unwrap();
     let p = doc
         .preview(Address::FileOffset(0x220), &[0x55], &[0xc3], "return early")
@@ -134,7 +170,7 @@ fn migrates_v4_and_persists_validated_type_libraries_without_losing_user_data() 
         .is_none());
     assert_eq!(before, std::fs::read(&path).unwrap());
     let migrated = open_project(&path).unwrap();
-    assert_eq!(migrated.project.schema_version, 7);
+    assert_eq!(migrated.project.schema_version, 8);
     assert_eq!(migrated.annotations[0].note, "keep me");
     let mut db = TypeDatabase::new(64);
     db.structures.insert(

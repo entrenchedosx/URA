@@ -1,8 +1,13 @@
 mod breakpoints;
+mod control;
 mod events;
+mod evidence;
+mod hardware;
 mod os;
+mod symbols;
 #[cfg(test)]
 mod tests;
+mod tracing;
 use crate::*;
 use os::*;
 use serde_json::{json, Value};
@@ -19,6 +24,8 @@ use windows_sys::Win32::{
 
 static NEXT_SESSION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 struct Point {
+    uncertain: bool,
+    protection: u32,
     view: Breakpoint,
     temporary: Option<(u32, u64)>,
 }
@@ -37,12 +44,21 @@ pub struct WindowsBackend {
     process: Option<Handle>,
     threads: BTreeMap<u32, Handle>,
     points: BTreeMap<u64, Point>,
+    hardware: BTreeMap<u64, hardware::Hardware>,
+    retired_causes: BTreeMap<u32, (u64, bool)>,
+    draining_hardware: bool,
+    cleanup_threads: std::collections::BTreeSet<u32>,
+    trace: tracing::TraceStore,
+    captures: evidence::Captures,
+    symbols: BTreeMap<u64, symbols::SymbolFile>,
+    control: Option<(u64, u32, Option<u64>, String)>,
     // Windows owns these event handles until exit continuation. We use duplicates.
     event_process: Option<HANDLE>,
     event_threads: BTreeMap<u32, HANDLE>,
     pending: Option<(DEBUG_EVENT, NTSTATUS)>,
     displaced: Option<(u64, u32)>,
     step: Option<SingleStep>,
+    owned_traps: std::collections::BTreeSet<u32>,
     image: Option<Image>,
     initial_break: bool,
     system_break: Option<u64>,
@@ -68,11 +84,20 @@ impl WindowsBackend {
             process: None,
             threads: BTreeMap::new(),
             points: BTreeMap::new(),
+            hardware: BTreeMap::new(),
+            retired_causes: BTreeMap::new(),
+            draining_hardware: false,
+            cleanup_threads: Default::default(),
+            trace: Default::default(),
+            captures: Default::default(),
+            symbols: Default::default(),
+            control: None,
             event_process: None,
             event_threads: BTreeMap::new(),
             pending: None,
             displaced: None,
             step: None,
+            owned_traps: Default::default(),
             image: None,
             initial_break: true,
             system_break: None,
@@ -89,7 +114,16 @@ impl WindowsBackend {
         }
     }
     fn publish(&mut self) {
-        self.view.breakpoints = self.points.values().map(|p| p.view.clone()).collect();
+        self.view.breakpoints = self
+            .points
+            .values()
+            .map(|p| p.view.clone())
+            .chain(self.hardware.values().map(|h| h.view.clone()))
+            .collect();
+        self.trace.expire();
+        self.view.trace = self.trace.summary();
+        self.view.trace["pendingInstructionCleanup"] =
+            json!(!self.trace.active && !self.owned_traps.is_empty());
         *self.shared.lock().unwrap_or_else(|e| e.into_inner()) = self.view.clone();
     }
     fn event(&mut self, thread: u32, kind: &str, message: impl Into<String>) {
@@ -98,12 +132,19 @@ impl WindowsBackend {
             self.view.events.remove(0);
             self.view.events_dropped += 1;
         }
+        let message = message.into();
+        self.trace_record(
+            thread,
+            kind,
+            None,
+            json!({"message":message.chars().take(2048).collect::<String>()}),
+        );
         self.view.events.push(Event {
             sequence,
             elapsed_micros: self.started.elapsed().as_micros().min(u64::MAX as u128) as u64,
             thread,
             kind: kind.into(),
-            message: message.into(),
+            message,
         });
     }
     fn process(&self) -> Result<HANDLE> {
@@ -181,9 +222,18 @@ impl WindowsBackend {
         self.pause_requested = false;
         self.next_breakpoint = 1;
         self.points.clear();
+        self.hardware.clear();
+        self.retired_causes.clear();
+        self.draining_hardware = false;
+        self.cleanup_threads.clear();
+        self.trace = Default::default();
+        self.captures = Default::default();
+        self.symbols.clear();
+        self.control = None;
         self.threads.clear();
         self.displaced = None;
         self.step = None;
+        self.owned_traps.clear();
         self.pending = None;
         self.repair = None;
         self.resume_poisoned = false;
@@ -340,6 +390,12 @@ impl WindowsBackend {
         *default = status;
         let tid = event.dwThreadId;
         self.view.state = State::Paused;
+        self.trace_record(
+            tid,
+            "state",
+            None,
+            json!({"state":"paused","reason":reason}),
+        );
         self.view.selected_thread = Some(tid);
         self.view.reason = Some(reason.into());
         if let Some(h) = self.threads.get(&tid) {
@@ -347,44 +403,92 @@ impl WindowsBackend {
         }
         Ok(())
     }
+    fn finish_cleanup_thread(&mut self, tid: u32) -> Result<()> {
+        if self.owned_traps.contains(&tid) {
+            if let Some(thread) = self.threads.get(&tid) {
+                let mut c = context(thread.0)?;
+                c.0.EFlags &= !0x100;
+                c.0.Dr6 &= !(1 << 14);
+                set_context(thread.0, &c)?;
+            }
+            self.owned_traps.remove(&tid);
+        }
+        self.hardware_finish_disabled(tid)?;
+        self.cleanup_threads.remove(&tid);
+        Ok(())
+    }
     fn detach_paused(&mut self) -> Result<()> {
         unsafe {
             self.paused()?;
-            // A requested DebugBreakProcess thread must deliver its breakpoint
-            // before detaching; otherwise its later INT3 would be unhandled.
-            let deadline = Instant::now() + std::time::Duration::from_secs(2);
-            while self.pause_requested && self.view.state.active() {
-                if Instant::now() >= deadline {
-                    return Err(DebugError::new(
-                        "cleanup",
-                        "requested pause is still in flight; event owner retained",
-                    ));
-                }
-                if self.pending.is_some() {
-                    self.abort_step()?;
-                    self.resume(None, true)?;
-                }
-                self.poll();
-            }
-            if !self.view.state.active() {
-                return Ok(());
-            }
-            self.paused()?;
+            self.trace.finish("detach");
             self.repair_breakpoint()?;
-            // Restore the stopped IP first; clear only a trap flag this debugger owns.
-            if let Some(step) = &self.step {
-                if let Some(h) = self.threads.get(&step.thread) {
-                    let mut c = context(h.0)?;
-                    c.0.EFlags &= !0x100;
-                    set_context(h.0, &c)?;
-                }
+            if let Some(step) = self.step.as_mut() {
+                step.rearm = None;
             }
-            self.release_step()?;
             let addresses = self.points.keys().copied().collect::<Vec<_>>();
             for address in addresses {
                 self.remove_point(address)?;
             }
             self.displaced = None;
+            self.control = None;
+            self.release_step()?;
+            self.cleanup_threads = self.hardware_cleanup_threads();
+            self.cleanup_threads
+                .extend(self.owned_traps.iter().copied());
+            let current = self.pending.as_ref().unwrap().0.dwThreadId;
+            self.finish_cleanup_thread(current)?;
+            for tid in self.cleanup_threads.iter().copied().collect::<Vec<_>>() {
+                if let Some(thread) = self.threads.get(&tid) {
+                    let mut c = context(thread.0)?;
+                    if c.0.EFlags & 0x100 == 0 {
+                        c.0.EFlags |= 0x100;
+                        self.owned_traps.insert(tid);
+                        set_context(thread.0, &c)?;
+                    }
+                }
+            }
+            self.draining_hardware = true;
+            let deadline = Instant::now() + std::time::Duration::from_secs(3);
+            let mut stop_error = None;
+            let drained = (|| {
+                while (!self.cleanup_threads.is_empty()
+                    || self.pause_requested
+                    || self.pending.is_none())
+                    && self.view.state.active()
+                {
+                    if Instant::now() >= deadline {
+                        return Err(DebugError::new("cleanup",format!("thread handoff is still pending (possibly a blocked instruction); owner retained, retry detach{}", stop_error.as_ref().map_or(String::new(), |e| format!("; final stop: {e}")))));
+                    }
+                    if let Some((_, status)) = self.pending.as_ref() {
+                        let status = *status;
+                        self.continue_pending(status)?;
+                        self.view.state = State::Running;
+                    }
+                    if self.cleanup_threads.is_empty()
+                        && self.pending.is_none()
+                        && !self.pause_requested
+                        && stop_error.is_none()
+                    {
+                        match check(
+                            DebugBreakProcess(self.process()?),
+                            "DebugBreakProcess cleanup stop",
+                        ) {
+                            Ok(()) => self.pause_requested = true,
+                            // The target can have exited between continuation and
+                            // this request. Drain its real exit event before deciding.
+                            Err(e) => stop_error = Some(e.message),
+                        }
+                    }
+                    self.poll();
+                }
+                Ok(())
+            })();
+            self.draining_hardware = false;
+            drained?;
+            if !self.view.state.active() {
+                return Ok(());
+            }
+            self.paused()?;
             self.view.state = State::Detaching;
             let status = self.pending.as_ref().unwrap().1;
             self.continue_pending(status)?;
@@ -396,6 +500,8 @@ impl WindowsBackend {
                 return Err(e);
             }
             self.close_event_handles();
+            self.hardware.clear();
+            self.owned_traps.clear();
             self.process = None;
             self.threads.clear();
             self.image = None;
@@ -457,6 +563,48 @@ impl WindowsBackend {
             ));
         }
         match command {
+            Command::Capabilities => {
+                return Ok(
+                    json!({"backend":"windows-user-mode","architecture":"x64","hardwareSlotsPerThread":4,"watchSizes":[1,2,4,8],"watchAccess":["write","readWrite"],"conditionalRegisters":true,"stepOut":"validated unwind caller","runTo":true,"trace":["events","instructions"],"snapshotMaxBytes":1048576,"wow64":false,"remote":false}),
+                )
+            }
+            Command::ConfigureBreakpoint(config) => self.configure_point(config)?,
+            Command::SetCondition {
+                id,
+                condition,
+                hit_after,
+                hit_every,
+            } => {
+                if hit_after == 0 || hit_every == 0 {
+                    return Err(DebugError::new("condition", "hit counts must be positive"));
+                }
+                if let Some(text) = &condition {
+                    Condition::parse(text)?;
+                }
+                self.paused()?;
+                let view = if let Some(h) = self.hardware.get_mut(&id) {
+                    &mut h.view
+                } else {
+                    &mut self
+                        .points
+                        .values_mut()
+                        .find(|p| p.view.id == id)
+                        .ok_or_else(|| DebugError::new("breakpoint", "unknown point"))?
+                        .view
+                };
+                view.condition = condition;
+                view.hit_after = hit_after;
+                view.hit_every = hit_every;
+            }
+            Command::StepOut => self.step_out()?,
+            Command::RunTo { address } => self.run_to(address, None, "runTo")?,
+            Command::Trace(action) => return self.trace_action(action),
+            Command::Regions { address, limit } => {
+                self.paused()?;
+                return evidence::regions(self.process()?, address, limit);
+            }
+            Command::Capture(action) => return self.capture_action(action),
+            Command::Symbols(action) => return self.symbol_action(action),
             Command::Launch(config) => self.launch(config, cancelled)?,
             Command::Attach {
                 pid,
@@ -537,6 +685,7 @@ impl WindowsBackend {
                         }
                     }
                 }
+                self.symbolize_stack(&mut result);
                 return Ok(result);
             }
             Command::Disassembly { address, count } => {
@@ -574,6 +723,8 @@ impl WindowsBackend {
                         None,
                         "user",
                     )?;
+                } else if let Some(id) = id.filter(|id| self.hardware.contains_key(id)) {
+                    self.hardware_action(id, &action)?;
                 } else {
                     let address = self
                         .points
@@ -613,7 +764,7 @@ impl WindowsBackend {
 }
 impl Backend for WindowsBackend {
     fn stable(&self) -> bool {
-        self.pending.is_some() || !self.view.state.active()
+        (self.pending.is_some() || !self.view.state.active()) && !self.trace.active
     }
     fn command(
         &mut self,
@@ -634,7 +785,30 @@ impl Backend for WindowsBackend {
         result
     }
     fn poll(&mut self) {
+        let was_tracing = self.trace.active;
+        self.trace.expire();
+        if was_tracing && !self.trace.active {
+            self.publish();
+        }
         unsafe {
+            if self.trace.inflight
+                && !self.trace.active
+                && self.pending.is_none()
+                && !self.pause_requested
+                && self.view.state.active()
+            {
+                if let Err(e) = check(
+                    DebugBreakProcess(self.process().unwrap()),
+                    "DebugBreakProcess to stop tracing",
+                ) {
+                    self.event(0, "traceStopError", e.message);
+                } else {
+                    self.pause_requested = true;
+                }
+            }
+            if self.pending.is_some() && self.trace.active {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
             if !self.view.state.active() || self.pending.is_some() || self.process.is_none() {
                 return;
             }

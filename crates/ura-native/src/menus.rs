@@ -237,6 +237,7 @@ impl Workspace {
                     Panel::Memory,
                     Panel::Modules,
                     Panel::DebugEvents,
+                    Panel::Trace,
                     Panel::Breakpoints,
                     Panel::Runtime,
                 ] {

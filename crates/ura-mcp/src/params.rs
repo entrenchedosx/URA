@@ -380,6 +380,26 @@ pub struct SetVariableTypeParams {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DebugParams {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub condition: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hit_after: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hit_every: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub after: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub other: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub destination: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pdb: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub project: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session: Option<String>,

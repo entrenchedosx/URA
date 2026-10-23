@@ -1,3 +1,7 @@
+> This document records the v0.11 debugger foundation. Current advanced behavior,
+> including deferred hardware/TF cleanup, schema8 and additional permissions, is
+> specified in [ADVANCED-DEBUGGER.md](ADVANCED-DEBUGGER.md).
+
 # v0.11 native Windows debugger
 
 Development version `0.11.0-dev`, branch `v0.11-windows-debugger`. This is a real

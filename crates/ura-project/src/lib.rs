@@ -8,7 +8,7 @@ use ura_core::decomp::signature::SignatureOverride;
 use ura_core::decomp::types::{TypeDatabase, TypeRef};
 use ura_core::{format_address, parse_address, sha256_hex};
 
-pub const SCHEMA_VERSION: i64 = 7;
+pub const SCHEMA_VERSION: i64 = 8;
 pub const MAX_VIEW_STATE_BYTES: usize = 512 * 1024;
 
 #[derive(Debug, Error)]
@@ -932,6 +932,10 @@ fn migrate_schema(connection: &Connection) -> ProjectResult<()> {
         connection.execute_batch("BEGIN; CREATE TABLE IF NOT EXISTS debug_breakpoints (id INTEGER PRIMARY KEY CHECK (id=1), definitions_json TEXT NOT NULL); PRAGMA user_version=7; COMMIT;")?;
     }
     let version: i64 = connection.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    if version == 7 {
+        connection.execute_batch("PRAGMA user_version=8;")?;
+    }
+    let version: i64 = connection.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if version != SCHEMA_VERSION {
         return Err(ProjectError::InvalidProject(format!(
             "expected schema version {}, found {}",
@@ -994,7 +998,7 @@ fn initialize_schema(connection: &Connection) -> ProjectResult<()> {
          CREATE TABLE type_library (id INTEGER PRIMARY KEY CHECK (id = 1), library_json TEXT NOT NULL);
          CREATE TABLE patch_state (id INTEGER PRIMARY KEY CHECK (id = 1), state_json TEXT NOT NULL);
          CREATE TABLE debug_breakpoints (id INTEGER PRIMARY KEY CHECK (id=1), definitions_json TEXT NOT NULL);
-         PRAGMA user_version = 7;
+         PRAGMA user_version = 8;
          COMMIT;",
     )?;
     Ok(())

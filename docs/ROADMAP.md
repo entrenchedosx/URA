@@ -7,6 +7,27 @@ multi-release requirement. Update [FEATURE-PARITY.md](FEATURE-PARITY.md) on ever
 milestone, with source, automated/manual evidence, coverage and remaining gaps.
 No release may equate a panel/API with verified feature parity.
 
+## v0.12 — advanced debugging source checkpoint; incomplete milestone
+
+- [x] Real x64 DR0-3 execution/write/readWrite points, per-thread ownership and new-thread binding.
+- [x] Bounded register conditions, hit policies, run-to and unwind-validated step-out.
+- [x] Bounded observed event/instruction/register-change tracing and new-file JSON export.
+- [x] Actual memory regions, bounded snapshots, compare, captured decode and explicit export.
+- [x] GUID/age-checked local main-image PDB names/lines and symbolized call stacks.
+- [x] Shared native/CLI/MCP operations, 64 tools and separate capture/output permissions.
+- [x] Schema8 point definitions and legacy compatibility; no trace/dump project persistence.
+- [x] Real owned-process regressions and focused independent ownership review.
+- [ ] Real WOW64 contexts, stepping, disassembly and owned x86 process qualification.
+- [ ] Full optimized/recursive/missing-unwind stepping corpus and broader PDB/module/type coverage.
+- [ ] Native interaction and trace-view acceptance; headless rendering is separate evidence.
+- [ ] General hardware slowdown, total trace heap and GPU/presentation measurements.
+- [ ] Accepted public release and downloaded-artifact qualification.
+
+See [advanced scope](ADVANCED-DEBUGGER.md) and [verification](VERIFICATION-0.12.md).
+Carry unfinished architecture/stepping and acceptance work into v0.13 alongside
+emulation foundations. Remote authentication/transport remains a documented
+proposal, not an implemented backend. No previous milestone is relabelled accepted.
+
 ## v0.11 — native Windows debugger source checkpoint; acceptance pending
 
 - [x] Real Windows x64 event-owner backend and explicit launch/attach lifecycle.

@@ -4,7 +4,29 @@ impl WindowsBackend {
         unsafe {
             let tid = event.dwThreadId;
             let code = event.dwDebugEventCode;
-            self.pending = Some((event, DBG_CONTINUE));
+            // Fallible cleanup may run before exception classification. Preserve
+            // application exceptions unless debugger ownership is established.
+            self.pending = Some((
+                event,
+                if code == EXCEPTION_DEBUG_EVENT {
+                    DBG_EXCEPTION_NOT_HANDLED
+                } else {
+                    DBG_CONTINUE
+                },
+            ));
+            let single = code == EXCEPTION_DEBUG_EVENT
+                && event.u.Exception.ExceptionRecord.ExceptionCode == EXCEPTION_SINGLE_STEP;
+            if self.threads.contains_key(&tid)
+                && !single
+                && code != EXIT_THREAD_DEBUG_EVENT
+                && code != EXIT_PROCESS_DEBUG_EVENT
+            {
+                if self.draining_hardware && self.cleanup_threads.contains(&tid) {
+                    self.finish_cleanup_thread(tid)?;
+                } else {
+                    self.hardware_finish_disabled(tid)?;
+                }
+            }
             match code {
                 CREATE_PROCESS_DEBUG_EVENT => {
                     let data = event.u.CreateProcessInfo;
@@ -79,6 +101,7 @@ impl WindowsBackend {
                         }
                     }
                     self.threads.insert(tid, handle);
+                    self.hardware_new_thread(tid)?;
                     self.view.threads.push(Thread {
                         id: tid,
                         start_address: hex(data.lpStartAddress.map_or(0, |p| p as usize as u64)),
@@ -99,6 +122,9 @@ impl WindowsBackend {
                     self.continue_pending(DBG_CONTINUE)?;
                     self.event_threads.remove(&tid);
                     self.threads.remove(&tid);
+                    self.hardware_thread_exited(tid);
+                    self.owned_traps.remove(&tid);
+                    self.cleanup_threads.remove(&tid);
                     self.view.threads.retain(|t| t.id != tid);
                     return Ok(());
                 }
@@ -122,6 +148,19 @@ impl WindowsBackend {
                     if let Some(module) = self.view.modules.iter().find(|m| m.base == hex(base)) {
                         let end = base.saturating_add(module.size);
                         self.points.retain(|&a, _| a < base || a >= end);
+                        let ids = self
+                            .hardware
+                            .iter()
+                            .filter_map(|(&id, h)| {
+                                ura_core::parse_address(&h.view.address)
+                                    .ok()
+                                    .filter(|a| *a >= base && *a < end)
+                                    .map(|_| id)
+                            })
+                            .collect::<Vec<_>>();
+                        for id in ids {
+                            self.hardware_action(id, "remove")?;
+                        }
                     }
                     self.view.modules.retain(|m| m.base != hex(base));
                     self.event(tid, "moduleUnloaded", hex(base));
@@ -139,7 +178,12 @@ impl WindowsBackend {
                     self.process = None;
                     self.threads.clear();
                     self.points.clear();
+                    self.hardware.clear();
+                    self.retired_causes.clear();
+                    self.cleanup_threads.clear();
+                    self.trace.finish("processExited");
                     self.step = None;
+                    self.owned_traps.clear();
                     self.displaced = None;
                     self.image = None;
                     self.view.state = State::Exited;
@@ -179,39 +223,59 @@ impl WindowsBackend {
                             exception.dwFirstChance != 0
                         ),
                     );
-                    if code == EXCEPTION_SINGLE_STEP
-                        && self.step.as_ref().is_some_and(|s| s.thread == tid)
-                    {
-                        let handle = self.threads[&tid].0;
-                        let mut c = context(handle)?;
-                        c.0.EFlags &= !0x100;
-                        set_context(handle, &c)?;
-                        let step = self.release_step()?.unwrap();
-                        if step.stop {
-                            self.cancel_temporary()?;
-                            return self.pause_event("singleStep", DBG_CONTINUE);
-                        }
-                        self.view.state = State::Running;
+                    if code == EXCEPTION_SINGLE_STEP {
+                        return self.single_step_event(tid);
                     } else if code == EXCEPTION_BREAKPOINT
                         && self.points.get(&address).is_some_and(|p| p.view.armed)
                     {
+                        self.pending.as_mut().unwrap().1 = DBG_CONTINUE;
+                        let trace_inflight = self.trace.inflight;
+                        let continue_trace = trace_inflight && self.trace.active;
+                        self.abort_step()?;
+                        self.trace.inflight = false;
                         self.repair = Some((address, tid));
                         self.repair_breakpoint()?;
                         let c = context(self.threads[&tid].0)?;
                         let point = self.points.get_mut(&address).unwrap();
-                        point.view.hits += 1;
-                        let stop = point
-                            .temporary
-                            .map_or(true, |(thread, stack)| thread == tid && stack == c.0.Rsp);
+                        let matches =
+                            hardware::matches_condition(&mut point.view, &registers(tid, &c));
+                        let stop = point.temporary.map_or(true, |(thread, stack)| {
+                            thread == tid && (stack == u64::MAX || stack == c.0.Rsp)
+                        });
+                        let condition_error = matches.as_ref().err().map(|e| e.message.clone());
+                        let stop = stop && matches.unwrap_or(true);
+                        let control_stop = self.control.as_ref().is_some_and(|(a, t, sp, _)| {
+                            *a == address && *t == tid && sp.map_or(true, |s| s == c.0.Rsp)
+                        });
+                        let stop = stop || control_stop || (trace_inflight && !continue_trace);
                         let owner = point.view.owner.clone();
                         self.displaced = Some((address, tid));
+                        self.trace_record(
+                            tid,
+                            "softwareBreakpoint",
+                            Some(address),
+                            json!({"owner":owner}),
+                        );
                         self.pause_event("breakpoint", DBG_CONTINUE)?;
+                        if let Some(message) = condition_error {
+                            self.event(tid, "conditionError", message);
+                            self.view.reason = Some("conditionError".into());
+                        }
                         if stop {
-                            if owner == "stepOver" || owner == "entry" {
+                            self.stop_instruction_trace("breakpoint");
+                            if owner == "stepOver"
+                                || owner == "entry"
+                                || owner == "runTo"
+                                || owner == "stepOut"
+                            {
                                 self.points.remove(&address);
                                 self.displaced = None;
                             }
                             self.cancel_temporary()?;
+                            return Ok(());
+                        }
+                        if continue_trace {
+                            self.trace_next()?;
                             return Ok(());
                         }
                         return self.resume(None, true);
@@ -227,9 +291,11 @@ impl WindowsBackend {
                         && (self.initial_break
                             || (self.pause_requested && self.break_threads.contains(&tid)))
                     {
+                        self.pending.as_mut().unwrap().1 = DBG_CONTINUE;
                         let initial = self.initial_break;
                         self.initial_break = false;
                         self.pause_requested = false;
+                        self.stop_instruction_trace("interrupted");
                         self.abort_step()?;
                         self.cancel_temporary()?;
                         if !(initial && self.break_at_entry) {
@@ -244,6 +310,7 @@ impl WindowsBackend {
                         }
                     } else {
                         // Application first/second chance exceptions remain pending and default to NOT_HANDLED.
+                        self.stop_instruction_trace("interrupted");
                         self.abort_step()?;
                         self.cancel_temporary()?;
                         return self.pause_event("applicationException", DBG_EXCEPTION_NOT_HANDLED);
@@ -256,26 +323,45 @@ impl WindowsBackend {
                 ),
                 _ => self.event(tid, "debugEvent", format!("event {code}")),
             }
+            if self.draining_hardware && self.cleanup_threads.is_empty() && !self.pause_requested {
+                return self.pause_event("cleanupThread", DBG_CONTINUE);
+            }
             self.continue_pending(DBG_CONTINUE)?;
             Ok(())
         }
     }
     pub(super) fn abort_step(&mut self) -> Result<()> {
-        if let Some(step) = &self.step {
-            if let Some(thread) = self.threads.get(&step.thread) {
-                let mut c = context(thread.0)?;
-                c.0.EFlags &= !0x100;
-                set_context(thread.0, &c)?;
+        let current = self.pending.as_ref().map(|p| p.0.dwThreadId);
+        if let Some(step) = self.step.as_mut() {
+            if Some(step.thread) != current {
+                step.stop = true;
+                return Ok(());
+            }
+        }
+        if let Some(tid) = current {
+            if self.owned_traps.contains(&tid)
+                || self.step.as_ref().is_some_and(|s| s.thread == tid)
+            {
+                if let Some(thread) = self.threads.get(&tid) {
+                    let mut c = context(thread.0)?;
+                    c.0.EFlags &= !0x100;
+                    c.0.Dr6 &= !(1 << 14);
+                    set_context(thread.0, &c)?;
+                }
+                self.owned_traps.remove(&tid);
             }
         }
         self.release_step()?;
         Ok(())
     }
     pub(super) fn cancel_temporary(&mut self) -> Result<()> {
+        self.control = None;
         let remove = self
             .points
             .iter()
-            .filter_map(|(&a, p)| (p.view.owner == "stepOver").then_some(a))
+            .filter_map(|(&a, p)| {
+                matches!(p.view.owner.as_str(), "stepOver" | "runTo" | "stepOut").then_some(a)
+            })
             .collect::<Vec<_>>();
         for address in remove {
             self.remove_point(address)?;

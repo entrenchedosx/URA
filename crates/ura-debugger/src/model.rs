@@ -75,6 +75,25 @@ fn yes() -> bool {
 
 #[derive(Debug, Clone)]
 pub enum Command {
+    Capabilities,
+    ConfigureBreakpoint(crate::BreakpointConfig),
+    SetCondition {
+        id: u64,
+        condition: Option<String>,
+        hit_after: u64,
+        hit_every: u64,
+    },
+    StepOut,
+    RunTo {
+        address: u64,
+    },
+    Trace(crate::TraceAction),
+    Regions {
+        address: u64,
+        limit: usize,
+    },
+    Capture(crate::CaptureAction),
+    Symbols(crate::SymbolAction),
     Launch(LaunchConfig),
     Attach {
         pid: u32,
@@ -140,6 +159,24 @@ pub struct Module {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Breakpoint {
+    #[serde(default)]
+    pub thread_filter: Option<u32>,
+    #[serde(default)]
+    pub verification: Option<String>,
+    #[serde(default)]
+    pub kind: crate::BreakpointKind,
+    #[serde(default)]
+    pub length: u8,
+    #[serde(default)]
+    pub threads: Vec<u32>,
+    #[serde(default)]
+    pub condition: Option<String>,
+    #[serde(default)]
+    pub hit_after: u64,
+    #[serde(default)]
+    pub hit_every: u64,
+    #[serde(default)]
+    pub slots: BTreeMap<u32, u8>,
     pub id: u64,
     pub session: String,
     pub address: String,
@@ -161,6 +198,8 @@ pub struct Registers {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
+    #[serde(default)]
+    pub trace: serde_json::Value,
     pub schema_version: u32,
     pub session: Option<String>,
     pub state: State,

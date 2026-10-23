@@ -50,3 +50,28 @@ attached target needs its own flag. There is no arbitrary runtime memory-write
 endpoint. Command waits are bounded; poll status for asynchronous execution stops.
 Target data/debug output never changes policy. Full scope and examples are in
 [DEBUGGER.md](DEBUGGER.md). Static analysis remains non-executing.
+
+## v0.12 advanced debugger tools (64 total)
+
+All 55 prior tools remain. Nine implemented tools share the backend and typed
+service requests with the native UI and CLI:
+
+| Tool | Operation |
+|---|---|
+| `ura_debug_capabilities` | Read available host/backend capabilities; no target execution |
+| `ura_debug_configure_breakpoint` | Software/hardware execution/write/readWrite point, length, optional thread and condition/hit policy |
+| `ura_debug_set_condition` | Change/remove bounded register condition and hit policy |
+| `ura_debug_step_out` | Run to a validated caller PC/SP |
+| `ura_debug_run_to` | Run to a readable executable runtime VA |
+| `ura_debug_trace` | Start/stop/clear/read/export observed event or instruction evidence |
+| `ura_debug_memory_regions` | Bounded actual VirtualQueryEx region page |
+| `ura_debug_snapshot` | Capture/list/info/remove/compare/disassembly/export |
+| `ura_debug_symbols` | Explicit matched local PDB load and runtime address lookup |
+
+Bulk capture/live snapshot comparison requires `--enable-debug-capture` in
+addition to an authorized session. Trace/snapshot export requires
+`--enable-writes`, an allowed destination and a new filename. These flags grant
+no launch or attach permission. There is no network backend or network permission
+switch. Dynamic evidence stays in memory until an explicit export; project files
+store only validated breakpoint definitions. See
+[advanced contracts and limits](ADVANCED-DEBUGGER.md).

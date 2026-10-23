@@ -1,6 +1,10 @@
 //! Event-thread-owned user-mode debugger. No target is executed by construction.
 mod model;
 pub use model::*;
+mod advanced;
+pub use advanced::*;
+mod condition;
+pub use condition::Condition;
 #[cfg(all(windows, target_arch = "x86_64"))]
 mod windows;
 use serde_json::Value;
@@ -9,6 +13,9 @@ use std::sync::{
     mpsc, Arc, Mutex,
 };
 use std::time::Duration;
+pub fn capabilities() -> Value {
+    serde_json::json!({"backend":"windows-user-mode","available":cfg!(all(windows,target_arch="x86_64")),"architectures":["windows-x64"],"hardwareSlotsPerThread":4,"watchSizes":[1,2,4,8],"watchAccess":["write","readWrite"],"conditions":"unsigned register predicates; per-session hit counts","traceModes":["events","instructions"],"maxSnapshotBytes":1048576,"wow64":false,"remote":false,"kernel":false})
+}
 
 /// All OS operations, including launch/attach and continuation, stay on this owner.
 pub trait Backend {

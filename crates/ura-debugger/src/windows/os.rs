@@ -220,6 +220,7 @@ pub struct Image {
     pub preferred: u64,
     pub entry: u64,
     pub exports: std::collections::BTreeMap<u64, String>,
+    pub pdb_identity: Option<([u8; 16], u32)>,
     pub _file: std::fs::File,
 }
 pub fn image(path: &Path) -> Result<Image> {
@@ -261,7 +262,13 @@ pub fn image(path: &Path) -> Result<Image> {
             "debug launch requires a native x64 PE executable",
         ));
     }
+    let pdb_identity = parsed
+        .pdb_info()
+        .ok()
+        .flatten()
+        .map(|p| (p.guid(), p.age()));
     Ok(Image {
+        pdb_identity,
         path,
         hash: ura_core::sha256_hex(&bytes),
         preferred: parsed.relative_address_base(),
@@ -392,23 +399,47 @@ pub fn byte(process: HANDLE, address: u64, expected: u8, replacement: u8) -> Res
                 "FlushInstructionCache",
             )
         });
+        #[cfg(test)]
+        let injected = BYTE_ROLLBACK_FAILURE.with(|flag| flag.replace(0));
+        #[cfg(not(test))]
+        let injected = 0;
+        if injected == 1 {
+            return Err(DebugError::new(
+                "critical",
+                "injected protection/rollback failure after actual breakpoint write",
+            ));
+        }
         let mut ignored = 0;
         let protection = check(
-            VirtualProtectEx(process, address as *const c_void, 1, old, &mut ignored),
+            if injected == 2 {
+                0
+            } else {
+                VirtualProtectEx(process, address as *const c_void, 1, old, &mut ignored)
+            },
             "restore memory protection",
         );
         if result.is_err() || protection.is_err() {
             let mut rollback_old = 0;
             check(
-                VirtualProtectEx(
-                    process,
-                    address as *const c_void,
-                    1,
-                    PAGE_EXECUTE_READWRITE,
-                    &mut rollback_old,
-                ),
+                if injected == 2 {
+                    0
+                } else {
+                    VirtualProtectEx(
+                        process,
+                        address as *const c_void,
+                        1,
+                        PAGE_EXECUTE_READWRITE,
+                        &mut rollback_old,
+                    )
+                },
                 "rollback protection",
-            )?;
+            )
+            .map_err(|e| {
+                DebugError::new(
+                    "critical",
+                    format!("breakpoint rollback protection failed after mutation: {e}"),
+                )
+            })?;
             let restored = WriteProcessMemory(
                 process,
                 address as *const c_void,
@@ -427,6 +458,64 @@ pub fn byte(process: HANDLE, address: u64, expected: u8, replacement: u8) -> Res
             }
         }
         result.and(protection)
+    }
+}
+#[cfg(test)]
+thread_local! {pub(super) static BYTE_ROLLBACK_FAILURE:std::cell::Cell<u8>=const{std::cell::Cell::new(0)};}
+/// Recover uncertain debugger byte/protection ownership, checking both values.
+pub fn repair_byte(process: HANDLE, address: u64, original: u8, protection: u32) -> Result<()> {
+    unsafe {
+        let current = read(process, address, 1)?[0];
+        if current != original && current != 0xcc {
+            return Err(DebugError::new(
+                "conflict",
+                "uncertain breakpoint changed externally; owner retained",
+            ));
+        }
+        let mut previous = 0;
+        check(
+            VirtualProtectEx(
+                process,
+                address as *const _,
+                1,
+                PAGE_EXECUTE_READWRITE,
+                &mut previous,
+            ),
+            "repair breakpoint protection",
+        )?;
+        let mut written = 0;
+        let write = check(
+            WriteProcessMemory(
+                process,
+                address as *const _,
+                (&original as *const u8).cast(),
+                1,
+                &mut written,
+            ),
+            "repair breakpoint byte",
+        );
+        let flush = check(
+            FlushInstructionCache(process, address as *const _, 1),
+            "repair instruction cache",
+        );
+        let restore = check(
+            VirtualProtectEx(process, address as *const _, 1, protection, &mut previous),
+            "repair original page protection",
+        );
+        write?;
+        flush?;
+        restore?;
+        if written != 1
+            || read(process, address, 1)?[0] != original
+            || memory(process, address, 1)?["region"]["protection"].as_u64()
+                != Some(protection as u64)
+        {
+            return Err(DebugError::new(
+                "critical",
+                "breakpoint byte/protection recovery could not be verified",
+            ));
+        }
+        Ok(())
     }
 }
 pub fn module(process: HANDLE, base: u64, mut path: Option<String>) -> Module {
@@ -465,7 +554,7 @@ pub fn module(process: HANDLE, base: u64, mut path: Option<String>) -> Module {
         }
     }
 }
-static DBGHELP: std::sync::Mutex<()> = std::sync::Mutex::new(());
+pub(super) static DBGHELP: std::sync::Mutex<()> = std::sync::Mutex::new(());
 pub fn stack(
     process: HANDLE,
     thread: HANDLE,
@@ -526,25 +615,39 @@ pub fn stack(
         frame.AddrStack.Mode = AddrModeFlat;
         frame.AddrFrame.Mode = AddrModeFlat;
         let mut frames = Vec::new();
-        let mut previous = None;
+        let mut seen = std::collections::BTreeSet::new();
+        let mut duplicate_first = false;
         for _ in 0..limit * 2 {
             let ip = frame.AddrPC.Offset;
             let sp = frame.AddrStack.Offset;
             if ip == 0 || frames.len() >= limit {
                 break;
             }
-            let module = modules.iter().find(|m| {
-                ura_core::parse_address(&m.base).is_ok_and(|b| ip >= b && ip - b < m.size)
-            });
-            if previous != Some((ip, sp)) {
-                frames.push(json!({"index":frames.len(),"instructionPointer":hex(ip),"stackPointer":hex(sp),"module":module.and_then(|m|m.path.as_ref()),"symbol":null,"returnAddress":if frame.AddrReturn.Offset==0{None}else{Some(hex(frame.AddrReturn.Offset))}}));
-            }
-            if let Some(last) = frames.last_mut() {
-                if frame.AddrReturn.Offset != 0 {
-                    last["returnAddress"] = json!(hex(frame.AddrReturn.Offset));
+            if !seen.insert((ip, sp)) {
+                if frames.len() == 1 && !duplicate_first {
+                    duplicate_first = true;
+                } else {
+                    warnings.push("unwind cycle detected".into());
+                    break;
                 }
+            } else {
+                if let Some(last) = frames.last_mut() {
+                    let last: &mut Value = last;
+                    let previous = last["stackPointer"]
+                        .as_str()
+                        .and_then(|v| ura_core::parse_address(v).ok())
+                        .unwrap_or(0);
+                    if sp < previous {
+                        warnings.push("non-advancing unwind stack".into());
+                        break;
+                    }
+                    last["returnAddress"] = json!(hex(ip));
+                }
+                let module = modules.iter().find(|m| {
+                    ura_core::parse_address(&m.base).is_ok_and(|b| ip >= b && ip - b < m.size)
+                });
+                frames.push(json!({"index":frames.len(),"instructionPointer":hex(ip),"stackPointer":hex(sp),"module":module.and_then(|m|m.path.as_ref()),"symbol":null,"returnAddress":null}));
             }
-            previous = Some((ip, sp));
             if StackWalk64(
                 0x8664,
                 process,

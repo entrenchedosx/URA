@@ -35,3 +35,13 @@ The static/patch commands remain available. `debug` runs one interactive JSON-li
 controller with schemaVersion/result replies; another CLI invocation cannot access
 its in-memory session. Separate launch/attach flags and exact targets/PIDs are
 required. See [commands, ownership, shutdown and permissions](DEBUGGER.md).
+
+## v0.12 advanced debugger
+
+The same interactive `debug` process now accepts `capabilities`,
+`configureBreakpoint`, `setCondition`, `stepOut`, `runTo`, `trace`,
+`memoryRegions`, `snapshot` and `symbols`. Addresses are hexadecimal strings.
+Launch/attach, bulk capture and file output have separate permissions. Complete
+JSON-line examples, bounds and cleanup limitations are in
+[ADVANCED-DEBUGGER.md](ADVANCED-DEBUGGER.md). These are runtime commands, not
+operations on the static file overlay.

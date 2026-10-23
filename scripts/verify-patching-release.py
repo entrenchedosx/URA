@@ -112,7 +112,7 @@ class Client:
 writer = Client(True)
 reader = None
 try:
-    assert len(writer.request('tools/list', {})['tools']) == 55
+    assert len(writer.request('tools/list', {})['tools']) == 64
     handle = writer.tool('ura_open_binary', {'binary': str(sample)})['handle']
     mcp_project = folder/'mcp.ura'
     writer.tool('ura_save_project', {'handle': handle, 'project': str(mcp_project)})
@@ -143,7 +143,7 @@ finally:
         reader.close()
 
 assert sample.read_bytes() == original
-summary = {'version': '0.11.0-dev', 'mcpTools': 55, 'cliPatchWorkflow': True,
+summary = {'version': '0.12.0-dev', 'mcpTools': 64, 'cliPatchWorkflow': True,
            'mcpPatchWorkflow': True, 'readOnlyDenied': True, 'originalUnchanged': True,
            'exactUntouchedBytes': True, 'reimportedExports': True, 'stalePreviewRejected': True,
            'undoRedo': True, 'manifestExport': True, 'cliMcpByteEquality': True,

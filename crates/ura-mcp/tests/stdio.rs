@@ -128,6 +128,7 @@ fn stdio_debugger_launch_step_and_separate_permission_boundary() {
         false,
         &[
             "--enable-debug-launch".into(),
+            "--enable-debug-capture".into(),
             "--debug-target".into(),
             target.display().to_string(),
         ],
@@ -156,6 +157,42 @@ fn stdio_debugger_launch_step_and_separate_permission_boundary() {
     client.tool("ura_debug_step", json!({"session":session}));
     let stepped = wait(&mut client, "paused");
     assert_eq!(stepped["reason"], "singleStep");
+    let caps = client.tool("ura_debug_capabilities", json!({}));
+    assert_eq!(caps["result"]["hardwareSlotsPerThread"], 4);
+    let capture=client.tool("ura_debug_snapshot",json!({"session":session,"action":"capture","address":stepped["registers"]["values"]["rip"],"length":32}));
+    assert_eq!(capture["result"]["captured"], 32);
+    let export=client.tool_result("ura_debug_snapshot",json!({"session":session,"action":"export","id":capture["result"]["id"],"destination":root.join("target/denied-mcp-capture.json")}));
+    assert_eq!(export["isError"], true);
+    client.tool(
+        "ura_debug_trace",
+        json!({"session":session,"action":"start","config":{"mode":"instructions","maxSteps":4}}),
+    );
+    assert_eq!(wait(&mut client, "paused")["trace"]["steps"], 4);
+    assert!(client.tool(
+        "ura_debug_trace",
+        json!({"session":session,"action":"read","limit":128})
+    )["result"]["events"]
+        .is_array());
+    client.tool("ura_debug_symbols",json!({"session":session,"action":"load","base":paused["modules"][0]["base"],"pdb":target.with_extension("pdb")}));
+    let binary = ura_core::analyze_path(&target).unwrap();
+    let marker = ura_core::parse_address(paused["modules"][0]["base"].as_str().unwrap()).unwrap()
+        + ura_core::parse_address(
+            &binary
+                .analysis()
+                .export_view_list()
+                .iter()
+                .find(|e| e.name == "ura_marker")
+                .unwrap()
+                .address,
+        )
+        .unwrap()
+        - ura_core::parse_address(&binary.view().image_base).unwrap();
+    client.tool("ura_debug_configure_breakpoint",json!({"session":session,"address":ura_core::format_address(marker),"kind":"hardwareExecute","condition":"ecx == 2"}));
+    client.tool("ura_debug_continue", json!({"session":session}));
+    let hit = wait(&mut client, "paused");
+    assert_eq!(hit["reason"], "hardwareBreakpoint");
+    assert_eq!(hit["registers"]["values"]["rcx"], "0x2");
+    assert_eq!(client.tool("ura_debug_symbols",json!({"session":session,"action":"lookup","address":ura_core::format_address(marker+1)}))["result"]["found"],true);
     let denied = client.tool_result("ura_debug_attach", json!({"pid":4,"executable":target}));
     assert_eq!(denied["isError"], true);
     client.tool("ura_debug_terminate", json!({"session":session}));
@@ -256,7 +293,7 @@ fn stdio_queries_errors_and_read_only_permissions() {
     let mut client = Client::start(directory.path(), false);
     let tools = client.request("tools/list", json!({}));
     let listed = tools["result"]["tools"].as_array().unwrap();
-    assert_eq!(listed.len(), 55);
+    assert_eq!(listed.len(), 64);
     for tool in listed {
         let expected = !matches!(
             tool["name"].as_str().unwrap(),
@@ -280,6 +317,13 @@ fn stdio_queries_errors_and_read_only_permissions() {
                 | "ura_debug_detach"
                 | "ura_debug_terminate"
                 | "ura_debug_breakpoints"
+                | "ura_debug_configure_breakpoint"
+                | "ura_debug_set_condition"
+                | "ura_debug_step_out"
+                | "ura_debug_run_to"
+                | "ura_debug_trace"
+                | "ura_debug_snapshot"
+                | "ura_debug_symbols"
         );
         assert_eq!(tool["annotations"]["readOnlyHint"], expected, "{tool}");
     }

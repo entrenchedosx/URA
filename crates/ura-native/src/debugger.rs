@@ -15,6 +15,25 @@ type PendingDebugService = Arc<Mutex<Option<SharedDebugService>>>;
 type Reply = (String, std::result::Result<Value, String>, Snapshot);
 #[derive(Default)]
 pub struct DebugUi {
+    advanced: Value,
+    breakpoint_kind: usize,
+    breakpoint_length: u8,
+    breakpoint_condition: String,
+    breakpoint_thread: String,
+    hit_after: u64,
+    hit_every: u64,
+    trace_thread: String,
+    trace_module: String,
+    trace_address: String,
+    trace_after: u64,
+    trace_instructions: bool,
+    trace_steps: u64,
+    capture_length: usize,
+    capture_id: u64,
+    capture_other: String,
+    export_path: String,
+    pdb_path: String,
+    symbol_address: String,
     pending_service: Option<PendingDebugService>,
     service: Option<SharedDebugService>,
     receiver: Option<mpsc::Receiver<Reply>>,
@@ -38,6 +57,8 @@ impl DebugUi {
         if self.busy || self.snapshot.state.active() {
             return;
         }
+        self.advanced = json!({});
+        self.capture_id = 0;
         let path = PathBuf::from(&self.path);
         let pid = self.pid.parse::<u32>().ok();
         if attach && pid.is_none() {
@@ -78,7 +99,8 @@ impl DebugUi {
                 let policy = PathPolicy::new(roots).map_err(|e| e.to_string())?;
                 let mut service = DebugService::new(policy, permissions)
                     .map_err(|e| e.to_string())?
-                    .with_project_writes(true);
+                    .with_project_writes(true)
+                    .with_memory_capture(true);
                 let result = service.rpc(request).map_err(|e| e.to_string());
                 let snapshot = service.snapshot();
                 *out.lock().unwrap() = Some(Arc::new(Mutex::new(service)));
@@ -173,11 +195,30 @@ impl DebugUi {
                         self.inspection = json!({});
                     }
                     if kind == "inspect" {
-                        self.inspection = value;
+                        self.inspection = value.clone();
                     } else if kind == "memory" {
-                        self.inspection["memory"] = value;
+                        self.inspection["memory"] = value.clone();
                     } else if kind == "runtime" {
-                        self.inspection["runtime"] = value;
+                        self.inspection["runtime"] = value.clone();
+                    }
+                    if matches!(
+                        kind.as_str(),
+                        "trace"
+                            | "capture"
+                            | "captures"
+                            | "compare"
+                            | "snapshotDisasm"
+                            | "regions"
+                            | "symbols"
+                            | "export"
+                    ) {
+                        if !self.advanced.is_object() {
+                            self.advanced = json!({});
+                        }
+                        if kind == "capture" {
+                            self.capture_id = value["id"].as_u64().unwrap_or(0);
+                        }
+                        self.advanced[&kind] = value;
                     }
                     self.error = None;
                 }
@@ -270,6 +311,7 @@ impl DebugUi {
                 ("Pause", running, "pause", false),
                 ("Step into", execution, "step", false),
                 ("Step over", execution, "step", true),
+                ("Step out", execution, "stepOut", false),
                 ("Detach", paused, "detach", false),
                 (
                     "Terminate",
@@ -370,10 +412,7 @@ impl Workspace {
                 view.session.as_deref().unwrap_or("none")
             ));
             if view.state != State::Paused
-                && matches!(
-                    panel,
-                    Panel::Registers | Panel::DebugStack | Panel::Memory | Panel::Runtime
-                )
+                && matches!(panel, Panel::Registers | Panel::DebugStack | Panel::Runtime)
             {
                 ui.label("Pause the target to capture current runtime state.");
                 return;
@@ -430,7 +469,11 @@ impl Workspace {
                             ui.label(format!("{} older events discarded", view.events_dropped));
                         });
                 }
+                Panel::Trace => {
+                    self.trace_panel(ui);
+                }
                 Panel::Breakpoints => {
+                    self.debugger.advanced_breakpoint_controls(ui);
                     if let Some((project, _)) = &self.project {
                         let project = project.clone();
                         ui.horizontal(|ui|{for(label,action)in [("Save module/RVA definitions","save"),("Restore definitions for this image","restore")] {if ui.add_enabled(!self.debugger.busy&&view.state==State::Paused,egui::Button::new(label)).clicked(){self.debugger.request("breakpoint",json!({"operation":"breakpoints","action":action,"project":project}),ui.ctx());}}});
@@ -447,11 +490,12 @@ impl Workspace {
                             self.debugger.request("runtime",json!({"operation":"disassembly","address":point.address,"count":32}),ui.ctx());
                             self.actions.push(Action::Show(Panel::Runtime));
                         }
-                        ui.horizontal(|ui|{ui.monospace(format!("#{} {} · {} · {} hits · byte {:02X}",point.id,point.address,point.owner,point.hits,point.original_byte));for(label,action)in [(if point.enabled{"Disable"}else{"Enable"},if point.enabled{"disable"}else{"enable"}),("Remove","remove")] {if ui.add_enabled(!self.debugger.busy&&view.state==State::Paused,egui::Button::new(label)).clicked(){self.debugger.request("breakpoint",json!({"operation":"breakpoints","action":action,"id":point.id}),ui.ctx());}}});
+                        ui.horizontal(|ui|{ui.monospace(format!("#{} {} · {:?}/{} · {} hits · threads {:?} · condition {:?} · {:?}",point.id,point.address,point.kind,point.length,point.hits,point.threads,point.condition,point.verification));for(label,action)in [(if point.enabled{"Disable"}else{"Enable"},if point.enabled{"disable"}else{"enable"}),("Remove","remove")] {if ui.add_enabled(!self.debugger.busy&&view.state==State::Paused,egui::Button::new(label)).clicked(){self.debugger.request("breakpoint",json!({"operation":"breakpoints","action":action,"id":point.id}),ui.ctx());}}});
                     }
                 }
                 Panel::Memory => {
-                    ui.horizontal(|ui|{ui.label("Runtime address");ui.text_edit_singleline(&mut self.debugger.memory_address);if ui.add_enabled(!self.debugger.busy,egui::Button::new("Read 256 bytes")).clicked(){self.debugger.request("memory",json!({"operation":"readMemory","address":self.debugger.memory_address,"length":256}),ui.ctx());}});
+                    self.debugger.snapshot_controls(ui);
+                    ui.horizontal(|ui|{ui.label("Runtime address");ui.text_edit_singleline(&mut self.debugger.memory_address);if ui.add_enabled(!self.debugger.busy&&view.state==State::Paused,egui::Button::new("Read 256 bytes")).clicked(){self.debugger.request("memory",json!({"operation":"readMemory","address":self.debugger.memory_address,"length":256}),ui.ctx());}});
                     let memory = &self.debugger.inspection["memory"];
                     if let Some(bytes) = memory["bytes"].as_array() {
                         let base = memory["address"]
@@ -487,6 +531,7 @@ impl Workspace {
                     }
                 }
                 Panel::DebugStack => {
+                    self.debugger.symbol_controls(ui);
                     let mut navigate = None;
                     if let Some(frames) = self.debugger.inspection["stack"]["frames"].as_array() {
                         for frame in frames {
@@ -515,6 +560,7 @@ impl Workspace {
                     }
                 }
                 Panel::Runtime => {
+                    ui.horizontal(|ui|{ui.label("Run to runtime address");ui.text_edit_singleline(&mut self.debugger.breakpoint_address);if ui.add_enabled(!self.debugger.busy,egui::Button::new("Run to")).clicked(){self.debugger.request("control",json!({"operation":"runTo","address":self.debugger.breakpoint_address}),ui.ctx());}});
                     let mut navigate = None;
                     if let Some(instructions) =
                         self.debugger.inspection["runtime"]["instructions"].as_array()
@@ -571,3 +617,6 @@ impl Workspace {
 #[cfg(all(test, windows, target_arch = "x86_64"))]
 #[path = "debugger_tests.rs"]
 mod tests;
+
+#[path = "debugger_advanced.rs"]
+mod advanced_ui;

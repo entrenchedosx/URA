@@ -9,6 +9,8 @@ pub struct DebugOptions {
     #[arg(long, global = true)]
     pub enable_debug_launch: bool,
     #[arg(long, global = true)]
+    pub enable_debug_capture: bool,
+    #[arg(long, global = true)]
     pub enable_debug_attach: bool,
     #[arg(long, global = true)]
     pub enable_debug_terminate_attached: bool,
@@ -30,8 +32,10 @@ impl DebugOptions {
 }
 /// One process owns the session until EOF. No session survives a CLI restart.
 pub fn run(policy: PathPolicy, options: DebugOptions, writes: bool) -> Result<(), ServiceError> {
-    let mut debugger =
-        DebugService::new(policy, options.permissions())?.with_project_writes(writes);
+    let capture = options.enable_debug_capture;
+    let mut debugger = DebugService::new(policy, options.permissions())?
+        .with_project_writes(writes)
+        .with_memory_capture(capture);
     let stdin = std::io::stdin();
     let mut input = stdin.lock();
     let mut output = std::io::stdout().lock();

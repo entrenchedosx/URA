@@ -1,0 +1,15 @@
+{
+  "iterationsPerRun": 100000,
+  "nanosecondsPerEvaluation": [
+    189.841,
+    209.63,
+    199.388,
+    253.837,
+    271.494
+  ],
+  "runs": 5,
+  "scope": "compiled predicate over captured registers; excludes Windows breakpoint and transport overhead",
+  "version": "0.12.0-dev",
+  "includesParsing": false,
+  "nativeDesktopLaunched": false
+}
