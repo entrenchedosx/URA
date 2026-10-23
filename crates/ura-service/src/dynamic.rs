@@ -466,6 +466,9 @@ impl DynamicService {
                                     .collect(),
                                 missing: vec![],
                                 original_sha256: None,
+                                capture_metadata: Some(
+                                    json!({"mode":"emulated","state":cpu.state()}),
+                                ),
                             }
                         };
                         let id = self.next("image");
@@ -572,7 +575,7 @@ impl DynamicService {
                     .ok_or_else(|| invalid("unknown image handle"))?;
                 match action.as_str() {
                     "info" => Ok(
-                        json!({"mode":"capturedImage","bitness":image.bitness,"provenance":image.provenance,"missing":image.missing,"segments":image.segments.iter().map(|s|json!({"base":s.base,"bytes":s.bytes.len(),"permissions":s.permissions})).collect::<Vec<_>>(),"portableExecutableReconstructed":false}),
+                        json!({"mode":"capturedImage","bitness":image.bitness,"provenance":image.provenance,"captureMetadata":image.capture_metadata,"missing":image.missing,"segments":image.segments.iter().map(|s|json!({"base":s.base,"bytes":s.bytes.len(),"permissions":s.permissions})).collect::<Vec<_>>(),"portableExecutableReconstructed":false}),
                     ),
                     "analyze" => engine(image.analyze(address(entry, "entry")?)),
                     "memory" => {

@@ -23,12 +23,18 @@ pub struct Image {
     pub segments: Vec<Segment>,
     pub missing: Vec<(Address, u64)>,
     pub original_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capture_metadata: Option<Value>,
 }
 impl Image {
     pub fn validate(&self) -> Result<()> {
         if self.format != "ura-memory-image"
             || self.schema_version != 1
             || self.provenance.len() > 1024
+            || self
+                .capture_metadata
+                .as_ref()
+                .is_some_and(|v| serde_json::to_vec(v).map_or(true, |b| b.len() > 65536))
             || self.segments.len() > 256
             || self.missing.len() > 256
             || self
@@ -123,6 +129,7 @@ impl Image {
             segments: vec![],
             missing: vec![],
             original_sha256: None,
+            capture_metadata:Some(json!({"mode":"observed","session":v["session"],"pid":v["pid"],"captureEventSequence":v["captureEventSequence"],"elapsedMicros":v["elapsedMicros"],"modules":v["modules"],"hashScope":v["hashScope"],"metadataTrust":"Imported evidence; not independently verified runtime identity"})),
         };
         let mut ranges = vec![];
         let mut captured = vec![];
@@ -138,6 +145,7 @@ impl Image {
                 .filter(|n| *n <= end)
                 .ok_or_else(|| Fault::new("imageFormat", address, "chunk overflow"))?;
             if address < base
+                || ranges.last().is_some_and(|&(_, last)| address < last)
                 || requested == 0
                 || data.len() as u64 > requested
                 || c["missing"].as_u64() != Some(requested - data.len() as u64)
@@ -215,6 +223,7 @@ impl Image {
             segments: vec![],
             missing: vec![],
             original_sha256: Some(crate::sha256_hex(binary.bytes())),
+            capture_metadata: None,
         };
         if a.format == "ELF" {
             use object::{Object, ObjectSegment, SegmentFlags};
@@ -235,17 +244,17 @@ impl Image {
                 ));
             }
             for segment in segments {
-                let mut bytes = segment
+                let data = segment
                     .data()
-                    .map_err(|e| Fault::new("loader", segment.address(), e.to_string()))?
-                    .to_vec();
-                if bytes.len() as u64 > segment.size() {
+                    .map_err(|e| Fault::new("loader", segment.address(), e.to_string()))?;
+                if data.len() as u64 > segment.size() {
                     return Err(Fault::new(
                         "loader",
                         segment.address(),
                         "ELF filesz exceeds memsz",
                     ));
                 }
+                let mut bytes = data.to_vec();
                 bytes.resize(segment.size() as usize, 0);
                 let SegmentFlags::Elf { p_flags } = segment.flags() else {
                     return Err(Fault::new(

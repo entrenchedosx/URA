@@ -54,6 +54,7 @@ fn main() {
         }],
         missing: vec![],
         original_sha256: Some(ura_core::sha256_hex(&code)),
+        capture_metadata: None,
     };
     let start = Instant::now();
     let analyzed = image.analyze(0x1000).unwrap();

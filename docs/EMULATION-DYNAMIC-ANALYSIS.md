@@ -146,7 +146,10 @@ reconstructed beyond captured module metadata.
 ## Sparse captured-memory analysis
 
 `ura-memory-image` schema1 stores bitness, provenance, known virtual ranges and
-permissions, explicit missing ranges and optional original identity. Import also
+permissions, explicit missing ranges and optional original identity. Bounded
+`captureMetadata` preserves imported session/PID, event/time and module evidence
+without upgrading it to independently verified identity; emulated copies retain
+their actual virtual-state metadata. Import also
 accepts bounded v0.12 `ura-memory-snapshot` exports and verifies their known-byte
 hash and sizes. Legacy snapshots lack CPU mode: x64 is an explicitly labelled
 assumption unless `image/open` supplies bitness32/64. A contradictory architecture

@@ -362,9 +362,17 @@ fn emulation_trace_replay_reports_post_instruction_timing() {
 #[test]
 fn sparse_snapshot_image_preserves_holes_hash_permissions_and_analysis() {
     let code = vec![0xb8, 42, 0, 0, 0, 0xc3];
-    let snapshot = json!({"format":"ura-memory-snapshot","schemaVersion":1,"address":"0x1000","requested":10,"captured":6,"missing":4,"capturedBytesSha256":ura_core::sha256_hex(&code),"chunks":[{"address":"0x1000","requested":10,"bytes":code,"missing":4,"region":{"protection":0x20}}]});
+    let snapshot = json!({"format":"ura-memory-snapshot","schemaVersion":1,"session":"fixture","pid":7,"captureEventSequence":3,"modules":[],"address":"0x1000","requested":10,"captured":6,"missing":4,"capturedBytesSha256":ura_core::sha256_hex(&code),"chunks":[{"address":"0x1000","requested":10,"bytes":code,"missing":4,"region":{"protection":0x20}}]});
     let image = Image::load(&serde_json::to_vec(&snapshot).unwrap()).unwrap();
     assert_eq!(image.missing, vec![(Address(0x1006), 4)]);
+    assert_eq!(
+        image.capture_metadata.as_ref().unwrap()["session"],
+        "fixture"
+    );
+    assert_eq!(
+        image.capture_metadata.as_ref().unwrap()["captureEventSequence"],
+        3
+    );
     assert!(image.read(0x1006, 1).is_err());
     let analysis = image.analyze(0x1000).unwrap();
     assert!(analysis["ir"].is_object());

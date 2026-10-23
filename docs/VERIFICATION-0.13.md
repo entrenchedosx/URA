@@ -41,7 +41,9 @@ transactional stores, execute-only fetch and re-decode after self-modification.
 All memory belongs to the emulator; external calls never invoke host APIs. An
 explicit exact-target scalar-return assumption is separately recorded. Preferred
 PE sections, ELF PT_LOAD and explicit raw/captured code are supported; architecture,
-endianness, size and overlap are validated before execution. Native rebasing,
+endianness, size and overlap are validated before execution. ELF filesz/memsz
+consistency is checked before copying segment backing bytes, and snapshot chunks
+must follow ascending nonoverlapping ranges matching their hash-scope contract. Native rebasing,
 relocations, imports/TLS/dynamic linking and general OS models remain absent.
 
 Run/step/breakpoint/run-to/stop/reset and COW checkpoint restore operate real CPU
@@ -74,7 +76,9 @@ currently lack module identities, so automatic emulated/static overlays are
 incomplete. Original-image mapping rejects active static patch overlays.
 
 Sparse image bundles preserve known bytes, permissions, missing ranges and
-provenance. Imported legacy captures verify hashes/counts and label assumed CPU
+provenance. Captured session/PID, event/time and module metadata survive as
+bounded imported evidence; emulated image exports include the actual captured
+virtual state metadata. Imported legacy captures verify hashes/counts and label assumed CPU
 mode; explicit32/64 mode can be supplied. Hex/disassembly/discovery/CFG/IR/SSA use
 captured VAs. Pseudocode currently covers the selected contiguous executable
 range; discovery is capped at5000 instructions/256 functions/2048 blocks. Images
@@ -187,7 +191,7 @@ hash accounting, zero missing license texts, icon equality, all-three-binary
 identity, CLI/MCP versions, static/decompiler/type workflows and extracted MCP
 transport. Its working-tree receipt explicitly marks dirtySource, so this is
 local evidence and cannot authorize publication. A final committed-source audit
-is written under `target/v13-committed-package` without changing this report's
+is written under `target/v13-final-package` without changing this report's
 containing commit; consult that package's BUILD-INFO and verification JSON for
 its exact source/binary/archive hashes. No source-only checkpoint is advertised
 as a published software release. Public accepted release,
