@@ -1,6 +1,6 @@
 # v0.15 symbolic analysis and deobfuscation verification
 
-Date: 2026-10-24. Version **0.15.0-dev**, branch `v0.15-symbolic-deobfuscation`.
+Date: 2026-10-24. Version **0.15.0-dev.1**, branch `v0.15-symbolic-deobfuscation`.
 The containing commit identifies this report's source. Baseline: accepted public
 `v0.14.0-dev.2`, commit `18388805070c4d9f093dfcfec722cb8409e19f78`, initially
 clean with 369 passing tests. Historical releases/tags and main are preserved.
@@ -179,7 +179,7 @@ schema regression compatibility remain intact. No live GUI was launched.
 
 Three independent static review passes covered expressions/solver/value sets,
 engine proof/refinement/resources, and interfaces/permissions/releases. All
-eight concrete findings were repaired, reread within scope and regression-tested.
+eight original concrete findings were repaired, reread within scope and regression-tested.
 Reviewers ran no tests; implementing-agent checks are not independent review.
 See [review details](REVIEW-0.15.md).
 
@@ -197,7 +197,7 @@ operation-budget guard is regression-tested separately; the tag workflow rebuild
 and audits the final source again. No precommit EXE is a final release input.
 
 Required assets: `ura-native.exe`, `ura-cli.exe`, `ura-mcp.exe`,
-`URA-0.15.0-dev-windows-x64.zip`, `SHA256SUMS.txt`. Publication verifies a new
+`URA-0.15.0-dev.1-windows-x64.zip`, `SHA256SUMS.txt`. Publication verifies a new
 draft, then actual public downloads. Failed candidates require a new unique
 version/tag; historical assets are immutable. Final full commit/hash/download
 results belong to the workflow receipts and final engineering report.
@@ -207,3 +207,17 @@ results belong to the workflow receipts and final engineering report.
 percentage. [Roadmap](ROADMAP.md) retains v0.16 scripting/plugins, v0.17 debug
 symbols/C++, v0.18 diffing, v0.19 remote/kernel work and v0.20+ remaining gaps.
 Full IDA/Hex-Rays/Ghidra feature parity remains unfinished.
+
+## Checkout correction and candidate history
+
+Initial tag `v0.15.0-dev`, source `9e7d3a4febcf9618d5323c5a7b747656fa635727`,
+is not an accepted release. Local exact-source tests/package passed, but an
+explicit Windows Git checkout simulation reproduced a fixture-source hash change
+from LF to CRLF. The correction pins LF for both symbolic fixture sources and
+binary treatment for the compiled images, matching the retained processor corpus
+policy. The new unique version is `0.15.0-dev.1`; historical tags are unchanged.
+The committed baseline benchmark reports were measured on the initial candidate
+with identical engine semantics; final candidate receipts repeat the full suite.
+Independent rereview of this correction also found a Python-optimization bypass
+in the new preflight; explicit exceptions fix it. The checkout check passes on
+the corrected real Git filter output and rejects injected CRLF even under `-O`.

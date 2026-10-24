@@ -49,6 +49,7 @@ Invoke-Checked -Program python -Arguments @('-c','import sys; assert sys.version
 Invoke-Checked -Program python -Arguments @('-m','pip','install','--disable-pip-version-check','--upgrade','--target',$verificationPython,'-r',"$root/scripts/requirements-release.txt")
 Invoke-Checked -Program python -Arguments @('-I','-S','-c','import sys; sys.path.insert(0,sys.argv[1]); import psutil, unicorn; assert psutil.__version__ == "7.2.2"; assert unicorn.__version__ == "2.1.4"',$verificationPython)
 $env:PYTHONPATH = if ($env:PYTHONPATH) { $verificationPython + [IO.Path]::PathSeparator + $env:PYTHONPATH } else { $verificationPython }
+if ($ApprovedTag -or -not $AllowDirty) { Invoke-Checked -Program python -Arguments @("$root/scripts/verify-symbolic-checkout.py") }
 Invoke-Checked -Program cargo -Arguments @('fmt','--all','--','--check')
 Invoke-Checked -Program cargo -Arguments @('clippy','--workspace','--all-targets','--locked','--','-D','warnings')
 Invoke-Checked -Program cargo -Arguments @('test','--workspace','--locked')

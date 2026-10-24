@@ -3,3 +3,7 @@ tests/samples/processors.c text eol=lf
 tests/samples/aarch64-edges.s text eol=lf
 tests/fixtures/processors/*.elf -text
 tests/fixtures/processors/*.exe -text
+tests/samples/symbolic.c text eol=lf
+tests/samples/symbolic-flat.S text eol=lf
+tests/fixtures/symbolic/*.elf -text
+tests/fixtures/symbolic/*.exe -text

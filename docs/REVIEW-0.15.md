@@ -47,6 +47,13 @@ That reviewer reread both fixes and found no missed integration or further
 concrete issue in those fixes. All three reviews were static; no reviewer ran
 tests, desktop automation or native GUI processes.
 
+The checkout-only dev.1 correction was reread separately by the interface reviewer.
+It confirmed the LF rules and filtered Git hash comparison, and found that Python
+optimization could disable the new preflight's assertions. The gate now raises
+explicit exceptions on mismatch, including under optimized Python; approved tags
+always run it. The original checkout mismatch was found by the implementing
+agent's real Windows Git-filter test, not by an independent reviewer.
+
 The implementing agent additionally audited and tested cancellation/completion
 races, stale context/byte identity, metadata merging, retained-state accounting,
 actual solver timeouts, and Windows static-runtime packaging. Those checks are

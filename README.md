@@ -4,7 +4,7 @@
 
 Ultimate Reverse Engineer
 
-Current development is **0.15.0-dev** on `v0.15-symbolic-deobfuscation`:
+Current development is **0.15.0-dev.1** on `v0.15-symbolic-deobfuscation`:
 real Z3 bitvector reasoning, bounded symbolic execution, proof-validated branch
 pruning and original/derived C-like pseudocode. Dispatcher transitions and finite
 indirect targets carry explicit prefix scope and evidence. Desktop, CLI and

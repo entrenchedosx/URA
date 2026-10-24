@@ -6105,7 +6105,7 @@ checksum = "b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254"
 
 [[package]]
 name = "ura-app"
-version = "0.15.0-dev"
+version = "0.15.0-dev.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -6119,7 +6119,7 @@ dependencies = [
 
 [[package]]
 name = "ura-cli"
-version = "0.15.0-dev"
+version = "0.15.0-dev.1"
 dependencies = [
  "clap",
  "serde",
@@ -6132,7 +6132,7 @@ dependencies = [
 
 [[package]]
 name = "ura-core"
-version = "0.15.0-dev"
+version = "0.15.0-dev.1"
 dependencies = [
  "capstone",
  "iced-x86",
@@ -6148,7 +6148,7 @@ dependencies = [
 
 [[package]]
 name = "ura-debugger"
-version = "0.15.0-dev"
+version = "0.15.0-dev.1"
 dependencies = [
  "iced-x86",
  "object",
@@ -6163,7 +6163,7 @@ dependencies = [
 
 [[package]]
 name = "ura-mcp"
-version = "0.15.0-dev"
+version = "0.15.0-dev.1"
 dependencies = [
  "clap",
  "rmcp",
@@ -6182,7 +6182,7 @@ dependencies = [
 
 [[package]]
 name = "ura-native"
-version = "0.15.0-dev"
+version = "0.15.0-dev.1"
 dependencies = [
  "eframe",
  "egui_dock",
@@ -6202,7 +6202,7 @@ dependencies = [
 
 [[package]]
 name = "ura-project"
-version = "0.15.0-dev"
+version = "0.15.0-dev.1"
 dependencies = [
  "rusqlite",
  "serde",
@@ -6214,7 +6214,7 @@ dependencies = [
 
 [[package]]
 name = "ura-service"
-version = "0.15.0-dev"
+version = "0.15.0-dev.1"
 dependencies = [
  "serde",
  "serde_json",
