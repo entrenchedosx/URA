@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "version": "0.16.0-dev",
+  "version": "0.16.0-dev.1",
   "publishable": true,
   "status": "headless-development-qualified-exact-tag-publication-pending",
-  "reason": "Clean checkpoint passed415 tests, strict formatting/clippy, Release/oracles, all fresh EXEs, complete715-file package/288-license audit and extracted Python/plugin/batch checks. Final overflow guard has regression coverage. Exact-tag workflow must rebuild/requalify and verify all five public downloads; native visual acceptance remains unverified.",
+  "reason": "The final v0.16 source passed exact-tag clean qualification:415 tests, strict formatting/clippy, Release/oracles, fresh EXEs and full715-file package/288-license audit. Dev.1 explicitly installs pinned verifier dependencies in the separate publish job. Its unique tag must rebuild/requalify and verify all five public downloads; GUI visual acceptance remains unverified.",
   "requiredEvidence": "docs/VERIFICATION-0.16.md",
   "manualDesktop": "unverified; desktop control prohibited; presentation-only checks are not claimed"
 }

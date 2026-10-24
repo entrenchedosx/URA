@@ -4,7 +4,7 @@
 
 Ultimate Reverse Engineer
 
-Current development is **0.16.0-dev** on `v0.16-python-plugins`: real CPython3.14.9
+Current development is **0.16.0-dev.1** on `v0.16-python-plugins`: real CPython3.14.9
 workers, a versioned Python SDK, atomic project metadata transactions, installable
 plugins, attributed analyzers, bounded event hooks, custom loader/processor
 foundations and managed batch execution. Desktop, CLI and **69 MCP tools** share

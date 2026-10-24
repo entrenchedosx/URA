@@ -49,3 +49,5 @@ Custom decoder semantic claims cannot be proved by length/CFG validation. Extern
 IR/ABI/stack semantic providers, native visual acceptance and broader third-party
 dependency compatibility remain incomplete. Public download audits are release
 evidence, not a substitute for those limitations.
+
+Publishing integration follow-up: the separate publish runner now explicitly installs the same pinned verification-only dependencies as qualification; it does not rely on the builder job or a preinstalled global psutil. The unique dev.1 tag preserves the earlier unaccepted tag.

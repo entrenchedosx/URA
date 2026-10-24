@@ -53,6 +53,15 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Set up pinned verification-only Python dependencies
+        shell: pwsh
+        run: |
+          $dependencies = Join-Path (Get-Location).Path 'target/release-verification-python'
+          python -m pip install --disable-pip-version-check --target $dependencies -r scripts/requirements-release.txt
+          if ($LASTEXITCODE -ne 0) { throw 'Download verification dependency installation failed' }
+          python -I -S -c 'import sys; sys.path.insert(0,sys.argv[1]); import psutil, unicorn; assert psutil.__version__ == "7.2.2"; assert unicorn.__version__ == "2.1.4"' $dependencies
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned download verification dependencies unavailable' }
+          "PYTHONPATH=$dependencies" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Download this run's qualified artifacts
         shell: pwsh
         env:

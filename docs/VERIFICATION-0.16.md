@@ -1,6 +1,6 @@
 # v0.16 scripting and extension verification
 
-2026-10-24. Source version **0.16.0-dev**, branch `v0.16-python-plugins`.
+2026-10-24. Source version **0.16.0-dev.1**, branch `v0.16-python-plugins`.
 Baseline: accepted `v0.15.0-dev.1`, commit
 `6c6aaf24d9fe4fd04f4a2b1c4afc0c8298560bc3`, clean, **393 passing tests**.
 Main and historical releases/tags are preserved. This report's containing commit
@@ -121,3 +121,15 @@ patching/scripting checks and license packaging. Its61,705,819-byte ZIP passed C
 all715 file hashes, complete288-package license-text audit, extracted CLI/MCP69-tool
 checks and full bundled-Python/plugin/batch tests. See the exact-tag final receipts
 for published hashes; these checkpoint assets are not reused as final release assets.
+
+## Unique dev.1 publishing qualification
+
+The final engine source at `fcb50dbbe90a6676e118fa9c204c534502e62ad2`
+passed its complete exact-tag local build/package/download-style audit with415 tests
+and715 checked package files (`target/v16-exact-tag-qualification`). The initial
+GitHub run40088549367 was proactively cancelled before publication: the separate
+publishing job needed an explicit install of pinned psutil/unicorn verification-only
+dependencies. Dev.1 adds that setup without changing the analysis/scripting engine;
+product ZIPs never contain these verifier dependencies. The earlier dev tag remains
+unchanged and unaccepted, with no published release. The dev.1 tag's workflow and
+independent public receipts establish final acceptance.
