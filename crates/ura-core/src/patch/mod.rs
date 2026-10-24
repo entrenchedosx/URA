@@ -151,7 +151,7 @@ impl PatchDocument {
         if bitness == 32
             && base.is_some_and(|a| {
                 a.checked_add(bytes.len() as u64)
-                    .map_or(true, |end| end > 1u64 << 32)
+                    .is_none_or(|end| end > 1u64 << 32)
             })
         {
             return Err(PatchError(
@@ -334,7 +334,7 @@ impl PatchDocument {
         };
         if offset
             .checked_add(length as u64)
-            .map_or(true, |end| end > self.original.len() as u64)
+            .is_none_or(|end| end > self.original.len() as u64)
         {
             return Err(PatchError("file range is outside original bytes".into()));
         }

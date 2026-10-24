@@ -13,6 +13,7 @@ pub use lift::{lift_function, lift_image};
 pub(crate) use risc::lift_cpu as lift_processor_instruction;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+pub(crate) use verify::signature as operation_signature;
 pub use verify::verify;
 
 pub const IR_VERSION: u32 = 1;

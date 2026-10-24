@@ -106,7 +106,7 @@ impl TypeRef {
         }
         match self {
             Self::Unknown { bits, reason } => {
-                reason.len() <= 4096 && bits.map_or(true, |b| (1..=64).contains(&b))
+                reason.len() <= 4096 && bits.is_none_or(|b| (1..=64).contains(&b))
             }
             Self::Void | Self::Bool => true,
             Self::Int { bits, .. } => (1..=64).contains(bits),
@@ -115,7 +115,7 @@ impl TypeRef {
                 matches!(address_bits, 16 | 32 | 64) && to.valid_at(depth + 1)
             }
             Self::Array { element, count } => {
-                element.valid_at(depth + 1) && count.map_or(true, |count| count > 0)
+                element.valid_at(depth + 1) && count.is_none_or(|count| count > 0)
             }
             Self::Struct { name } | Self::Union { name } | Self::Named { name } => {
                 type_identifier(name)

@@ -936,7 +936,7 @@ fn clang_cpp_corpus_checks_known_behavior_and_honest_partial_classes_at_all_leve
                     matches!(o.op, ir::Operation::Barrier { .. })
                         || matches!(o.op, ir::Operation::Unknown { .. })
                             && o.output
-                                .map_or(true, |v| raw.variables[v].ty == ir::Type::Memory)
+                                .is_none_or(|v| raw.variables[v].ty == ir::Type::Memory)
                 }) {
                     assert!(output.unresolved > 0, "{name} O{level}.{extension}");
                 }

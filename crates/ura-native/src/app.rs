@@ -26,6 +26,7 @@ use ura_project::ProjectSnapshot;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Panel {
+    Deobfuscation,
     Explorer,
     Disassembly,
     Functions,
@@ -57,7 +58,8 @@ pub enum Panel {
     Emulation,
 }
 impl Panel {
-    pub const ALL: [Self; 29] = [
+    pub const ALL: [Self; 30] = [
+        Self::Deobfuscation,
         Self::Explorer,
         Self::Disassembly,
         Self::Functions,
@@ -90,6 +92,7 @@ impl Panel {
     ];
     pub fn title(self) -> &'static str {
         match self {
+            Self::Deobfuscation => "Deobfuscation",
             Self::Explorer => "Project structure",
             Self::Disassembly => "Disassembly",
             Self::Functions => "Functions",
@@ -123,6 +126,7 @@ impl Panel {
     }
     fn legacy(self) -> &'static str {
         match self {
+            Self::Deobfuscation => "deobfuscation",
             Self::Graph => "cfg",
             Self::Hex => "hex",
             Self::Disassembly => "disassembly",
@@ -162,6 +166,7 @@ pub fn default_dock() -> DockState<Panel> {
     let mut dock = DockState::new(vec![
         Panel::Disassembly,
         Panel::HighLevel,
+        Panel::Deobfuscation,
         Panel::Graph,
         Panel::Hex,
         Panel::Strings,
@@ -249,6 +254,8 @@ impl Settings {
 }
 #[derive(Serialize, Deserialize)]
 pub struct NativeView {
+    #[serde(default)]
+    pub symbolic_options: ura_core::symbolic::Options,
     pub dock: DockState<Panel>,
     pub history: History,
     pub location: Location,
@@ -298,6 +305,7 @@ pub enum Action {
     Save,
 }
 pub struct Workspace {
+    pub symbolic: crate::symbolic::SymbolicUi,
     pub debugger: crate::debugger::DebugUi,
     pub dynamic: crate::dynamic::DynamicUi,
     pub patches: Option<ura_core::patch::PatchDocument>,
@@ -427,6 +435,7 @@ impl Workspace {
             decomp: None,
             decomp_key: None,
             decomp_loading: None,
+            symbolic: crate::symbolic::SymbolicUi::default(),
             decomp_error: None,
             pseudocode_scroll_address: None,
             call_graph: None,
@@ -523,6 +532,7 @@ impl Workspace {
             .push(Action::Navigate(self.address_location(address), true));
     }
     fn reset_data(&mut self) {
+        self.symbolic.historical = None;
         self.patches = None;
         self.patch_conflicts.clear();
         self.patch_editor = None;
@@ -728,6 +738,7 @@ impl Workspace {
             });
     }
     fn reset_decomp(&mut self) {
+        self.symbolic.clear();
         if self.decomp_loading.is_some() {
             self.cancel.store(true, Ordering::Relaxed);
         }
@@ -773,7 +784,7 @@ impl Workspace {
                     })
             });
     }
-    fn decomp_context(&self, function: u64) -> DecompContext {
+    pub(crate) fn decomp_context(&self, function: u64) -> DecompContext {
         let address_bits = self
             .binary
             .as_ref()
@@ -966,6 +977,10 @@ impl Workspace {
                             self.decomp = None;
                             self.decomp_error = Some(error.clone());
                         }
+                        TaskKind::Symbolic(key) if self.symbolic.loading == Some(key) => {
+                            self.symbolic.loading = None;
+                            self.symbolic.error = Some(error.clone());
+                        }
                         TaskKind::CallGraph(revision) if revision == self.analysis_revision => {
                             self.call_graph_loading = false;
                             self.call_graph_key = Some(revision);
@@ -1132,6 +1147,21 @@ impl Workspace {
                     self.decomp_key = Some(key);
                     self.decomp_error = None;
                     self.decomp = Some(data);
+                }
+                Ok(Event::Symbolic { key, data }) => {
+                    if self.symbolic.loading != Some(key) {
+                        continue;
+                    }
+                    self.symbolic.loading = None;
+                    if key.0 != self.analysis_revision
+                        || key.1 != self.project_revision
+                        || self.symbolic.cancel.load(Ordering::Acquire)
+                    {
+                        continue;
+                    }
+                    self.symbolic.key = Some(key);
+                    self.symbolic.error = None;
+                    self.symbolic.data = Some(data);
                 }
                 Ok(Event::CallGraph { key, graph }) => {
                     if key != self.analysis_revision || !self.call_graph_loading {
@@ -1374,6 +1404,7 @@ impl NativeApp {
         };
         let w = &self.workspace;
         let native = NativeView {
+            symbolic_options: w.symbolic.options.clone(),
             dock: self.dock.clone(),
             history: w.history.clone(),
             location: w.location,
@@ -1410,9 +1441,38 @@ impl NativeApp {
         }
         let path = path.clone();
         let address = w.location.address;
-        let json = value.to_string();
+        let metadata = w
+            .symbolic
+            .data
+            .as_ref()
+            .filter(|_| {
+                w.symbolic
+                    .key
+                    .is_some_and(|key| key.0 == w.analysis_revision && key.1 == w.project_revision)
+            })
+            .map(|data| data.historical_metadata(None));
         w.worker.submit(w.generation, move || {
-            ura_project::save_view_state(&path, &json).map_err(|e| e.to_string())?;
+            let mut updates = serde_json::Map::new();
+            for key in [
+                "version",
+                "address",
+                "fileOffset",
+                "activePanel",
+                "cfgAddress",
+                "openPanels",
+                "history",
+                "historyIndex",
+                "native",
+            ] {
+                if let Some(update) = value.get(key) {
+                    updates.insert(key.into(), update.clone());
+                }
+            }
+            if let Some(metadata) = metadata {
+                updates.insert("uraSymbolic".into(), metadata);
+            }
+            ura_project::merge_view_state_fields(&path, &serde_json::Value::Object(updates))
+                .map_err(|e| e.to_string())?;
             if let Some(address) = address {
                 ura_project::set_selected_address(&path, &format_address(address))
                     .map_err(|e| e.to_string())?;
@@ -1428,10 +1488,20 @@ impl NativeApp {
         let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
             return;
         };
+        self.workspace.symbolic.historical =
+            value.get("uraSymbolic").cloned().map(|mut history| {
+                if let Some(object) = history.as_object_mut() {
+                    object.insert("authoritative".into(), false.into());
+                }
+                history
+            });
         if let Some(native) = value
             .get("native")
             .and_then(|v| serde_json::from_value::<NativeView>(v.clone()).ok())
         {
+            self.workspace
+                .symbolic
+                .restore_options(native.symbolic_options.clone());
             self.dock = native.dock;
             self.workspace.history = native.history;
             self.workspace.history.normalize();
@@ -2111,6 +2181,116 @@ mod tests {
         );
     }
     #[test]
+    fn symbolic_worker_matches_core_and_clears_cancelled_or_stale_completion() {
+        let mut app = test_app();
+        let function = app.workspace.function().unwrap().address;
+        let key = (
+            app.workspace.analysis_revision,
+            app.workspace.project_revision,
+            function,
+            0,
+        );
+        let context = app.workspace.decomp_context(function);
+        let task = crate::symbolic::SymbolicTask {
+            binary: app.workspace.binary.clone().unwrap(),
+            analysis: app.workspace.analysis.clone().unwrap(),
+            key,
+            context: context.clone(),
+            options: Default::default(),
+        };
+        app.workspace.symbolic.loading = Some(key);
+        app.workspace.worker.submit_typed(
+            app.workspace.generation,
+            TaskKind::Symbolic(key),
+            move || task.run(&ura_core::symbolic::solver::DirectZ3, &()),
+        );
+        pump(&mut app, |a| a.workspace.symbolic.loading.is_none());
+        let actual = app
+            .workspace
+            .symbolic
+            .data
+            .clone()
+            .expect("symbolic worker result");
+        let expected = ura_core::symbolic::deobfuscate(
+            app.workspace.binary.as_ref().unwrap(),
+            app.workspace.analysis.as_ref().unwrap(),
+            function,
+            &context,
+            &Default::default(),
+            &ura_core::symbolic::solver::DirectZ3,
+            &(),
+        )
+        .unwrap();
+        assert_eq!(actual.report.identity, expected.report.identity);
+        assert_eq!(
+            actual.original.pseudocode.text(),
+            expected.original.pseudocode.text()
+        );
+        assert_eq!(
+            actual.simplified.pseudocode.text(),
+            expected.simplified.pseudocode.text()
+        );
+        // A completion already queued before clear/restart must not match a
+        // newer same-function request, even when project revisions are equal.
+        let context_key = (key.0, key.1, key.2);
+        let old_key = app.workspace.symbolic.begin(context_key);
+        let old_data = actual.clone();
+        app.workspace.worker.submit_typed(
+            app.workspace.generation,
+            TaskKind::Symbolic(old_key),
+            move || {
+                Ok(Event::Symbolic {
+                    key: old_key,
+                    data: old_data,
+                })
+            },
+        );
+        let new_key = app.workspace.symbolic.begin(context_key);
+        assert_ne!(old_key, new_key);
+        let mut new_data = (*actual).clone();
+        new_data.report.options.max_paths = 7;
+        app.workspace.worker.submit_typed(
+            app.workspace.generation,
+            TaskKind::Symbolic(new_key),
+            move || {
+                Ok(Event::Symbolic {
+                    key: new_key,
+                    data: Arc::new(new_data),
+                })
+            },
+        );
+        pump(&mut app, |a| a.workspace.symbolic.loading.is_none());
+        assert_eq!(app.workspace.symbolic.key, Some(new_key));
+        assert_eq!(
+            app.workspace
+                .symbolic
+                .data
+                .as_ref()
+                .unwrap()
+                .report
+                .options
+                .max_paths,
+            7
+        );
+
+        for cancelled in [true, false] {
+            app.workspace.symbolic.clear();
+            app.workspace.symbolic.cancel = Arc::new(AtomicBool::new(cancelled));
+            app.workspace.symbolic.loading = Some(key);
+            if !cancelled {
+                app.workspace.project_revision += 1;
+            }
+            let data = actual.clone();
+            app.workspace.worker.submit_typed(
+                app.workspace.generation,
+                TaskKind::Symbolic(key),
+                move || Ok(Event::Symbolic { key, data }),
+            );
+            pump(&mut app, |a| a.workspace.symbolic.loading.is_none());
+            assert!(app.workspace.symbolic.data.is_none());
+        }
+    }
+    #[test]
     fn project_edits_manual_seeds_and_native_state_survive_reopen() {
         let mut app = test_app();
         let dir = tempfile::tempdir().unwrap();
@@ -2173,7 +2353,7 @@ mod tests {
         reopened.restore_project();
         assert_eq!(reopened.workspace.location.address, Some(manual));
         assert_eq!(reopened.workspace.active, Panel::Graph);
-        assert_eq!(reopened.dock.iter_all_tabs().count(), 16);
+        assert_eq!(reopened.dock.iter_all_tabs().count(), 17);
         assert!(reopened.dock.find_tab(&Panel::Ir).is_none());
         assert!(reopened.workspace.history.entries.len() >= 2);
         let destination = dir.path().join("annotations.json");

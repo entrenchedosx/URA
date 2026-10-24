@@ -88,6 +88,18 @@ pub fn analyze_function(
     context: &DecompContext,
     control: &dyn AnalysisControl,
 ) -> Result<FunctionDecompilation, String> {
+    let bundle = inspect::analyze(binary, analysis, address, control)?;
+    analyze_with_bundle(binary, analysis, address, context, control, bundle)
+}
+
+pub(crate) fn analyze_with_bundle(
+    binary: &LoadedBinary,
+    analysis: &ProgramAnalysis,
+    address: u64,
+    context: &DecompContext,
+    control: &dyn AnalysisControl,
+    bundle: inspect::Bundle,
+) -> Result<FunctionDecompilation, String> {
     if context.type_database.address_bits != binary.analysis().bitness as u16 {
         return Err("type database target width differs from the binary".into());
     }
@@ -95,7 +107,6 @@ pub fn analyze_function(
     if !type_errors.is_empty() {
         return Err(format!("invalid type database: {}", type_errors.join("; ")));
     }
-    let bundle = inspect::analyze(binary, analysis, address, control)?;
     if control.is_cancelled() {
         return Err("decompiler analysis cancelled".into());
     }

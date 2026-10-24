@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "version": "0.14.0-dev.2",
+  "version": "0.15.0-dev",
   "publishable": true,
-  "status": "scoped-development-prerelease",
-  "reason": "Scoped v0.14 scalar multi-architecture gates: repaired foreign ordinary-TF/software handoff and new-thread suspension policy; true nested/rearm and uncertain cleanup remain explicitly safe-stopped. WOW64 and new-processor live debugging are unsupported and rejected. Exact-source package/public-download gates remain mandatory.",
-  "requiredEvidence": "docs/VERIFICATION-0.14.md",
+  "status": "scoped-prerelease-qualified",
+  "reason": "Eligible for guarded exact-source publication: 393 tests, strict format/lint, locked Release build, independent symbolic/processor corpus, reviewed fixes and local extracted-package/solver/license audit pass. Public acceptance still requires fresh tagged-source Desktop/CLI/MCP binaries and successful draft/public redownload receipts from the release workflow.",
+  "requiredEvidence": "docs/VERIFICATION-0.15.md",
   "manualDesktop": "unverified; desktop control prohibited; presentation-only checks are not claimed"
 }

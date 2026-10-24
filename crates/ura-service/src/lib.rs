@@ -8,6 +8,7 @@ mod ir;
 mod patch;
 pub mod paths;
 mod service;
+pub mod symbolic;
 pub use ir::{DiagnosticsPage, DominatorPage, IrPage};
 
 pub use dto::{

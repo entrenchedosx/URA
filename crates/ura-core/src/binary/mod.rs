@@ -300,6 +300,7 @@ pub struct BinaryOpenResult {
     pub exports: Vec<ExportView>,
 }
 
+#[derive(Clone)]
 pub struct LoadedBinary {
     path: PathBuf,
     file_name: String,
@@ -435,7 +436,7 @@ pub fn analyze_raw_bytes(
     if !matches!(bitness, 32 | 64)
         || base.is_some_and(|b| {
             b.checked_add(bytes.len() as u64)
-                .map_or(true, |end| bitness == 32 && end > 1u64 << 32)
+                .is_none_or(|end| bitness == 32 && end > 1u64 << 32)
         })
     {
         return Err(UraError::InvalidAddress(

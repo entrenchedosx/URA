@@ -311,7 +311,7 @@ impl Printer<'_> {
         for expr in expressions {
             self.expression_meta(expr, &mut addresses, &mut variables);
         }
-        let synthetic = addresses.is_empty() && statement.map_or(true, |s| s.synthetic);
+        let synthetic = addresses.is_empty() && statement.is_none_or(|s| s.synthetic);
         self.lines.push(Line {
             number: self.lines.len() + 1,
             indent: self.indent,

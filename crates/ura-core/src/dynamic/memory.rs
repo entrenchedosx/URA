@@ -75,7 +75,7 @@ impl Memory {
             || self
                 .allocated
                 .checked_add(size)
-                .map_or(true, |n| n > self.limit)
+                .is_none_or(|n| n > self.limit)
         {
             return Err(Fault::new(
                 "memoryBudget",

@@ -33,6 +33,79 @@ fn setup() -> (TempDir, PathBuf) {
 }
 
 #[test]
+fn externally_edited_oversized_view_state_is_rejected_on_read_and_preserved() {
+    let (_dir, path) = setup();
+    create_project(
+        &path,
+        "untrusted metadata",
+        &identity(&fixture("ura64.exe")),
+    )
+    .unwrap();
+    let text = format!(
+        r#"{{"uraSymbolic":"{}"}}"#,
+        "é".repeat(ura_project::MAX_VIEW_STATE_BYTES / 2 + 1)
+    );
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection
+        .execute(
+            "INSERT INTO view_state(id,state,updated_at) VALUES(1,?1,'test')",
+            [&text],
+        )
+        .unwrap();
+    assert!(matches!(
+        load_view_state_for_path(&path),
+        Err(ProjectError::InvalidViewState(_))
+    ));
+    assert!(matches!(
+        ura_project::read_project(&path),
+        Err(ProjectError::InvalidViewState(_))
+    ));
+    assert!(
+        ura_project::merge_view_state_fields(&path, &serde_json::json!({"uraSymbolic":{}}))
+            .is_err()
+    );
+    let after: String = connection
+        .query_row("SELECT state FROM view_state WHERE id=1", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(after, text);
+}
+
+#[test]
+fn additive_analysis_metadata_preserves_layout_unknown_keys_and_rolls_back_invalid_merges() {
+    let (_dir, path) = setup();
+    create_project(&path, "symbolic metadata", &identity(&fixture("ura64.exe"))).unwrap();
+    save_view_state(
+        &path,
+        r#"{"native":{"panel":"graph"},"foreignKey":{"keep":17}}"#,
+    )
+    .unwrap();
+    ura_project::merge_view_state_fields(
+        &path,
+        &serde_json::json!({"uraSymbolic":{"authoritative":false,"identity":"historical"}}),
+    )
+    .unwrap();
+    let root: serde_json::Value =
+        serde_json::from_str(&load_view_state_for_path(&path).unwrap().unwrap()).unwrap();
+    assert_eq!(root["native"]["panel"], "graph");
+    assert_eq!(root["foreignKey"]["keep"], 17);
+    assert_eq!(root["uraSymbolic"]["authoritative"], false);
+    let before = load_view_state_for_path(&path).unwrap();
+    let oversized = serde_json::json!({"oversized":"x".repeat(ura_project::MAX_VIEW_STATE_BYTES)});
+    assert!(ura_project::merge_view_state_fields(&path, &oversized).is_err());
+    assert_eq!(load_view_state_for_path(&path).unwrap(), before);
+    save_view_state(&path, "[1,2,3]").unwrap();
+    assert!(
+        ura_project::merge_view_state_fields(&path, &serde_json::json!({"native":{}})).is_err()
+    );
+    assert_eq!(
+        load_view_state_for_path(&path).unwrap().as_deref(),
+        Some("[1,2,3]")
+    );
+}
+
+#[test]
 fn v6_debug_definition_migration_is_explicit_bounded_and_preserves_data() {
     let (_dir, path) = setup();
     let sample = fixture("ura64.exe");

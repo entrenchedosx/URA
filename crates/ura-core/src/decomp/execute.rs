@@ -186,9 +186,10 @@ impl State {
                         None
                     }
                     NodeKind::UnknownEffect => {
-                        if node.output.map_or(true, |id| {
-                            function.values[id].storage == crate::ir::Type::Memory
-                        }) {
+                        if node
+                            .output
+                            .is_none_or(|id| function.values[id].storage == crate::ir::Type::Memory)
+                        {
                             return Err(
                                 "unknown memory effects cannot be concretely executed".into()
                             );

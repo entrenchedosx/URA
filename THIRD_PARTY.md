@@ -77,3 +77,18 @@ Unicorn code nor its library is included in the portable release. LLVM Clang
 source and hash manifest are in tests/samples/ and tests/fixtures/processors/.
 Those foreign executables are never launched as Windows processes. They run
 only in isolated virtual machines for semantic comparison.
+
+v0.15 adds the pinned MIT-licensed Z3 Rust bindings 0.21.1, z3-sys 0.13.1 and
+z3-src 501.0.1 (Microsoft Z3 5.1.0). The locked source crate builds the solver
+statically with CMake; normal application use performs no solver download.
+The package notice collector includes the Rust wrapper notices and
+`z3-src-501.0.1/z3/LICENSE.txt`. URA's Windows configuration also selects the
+static Microsoft C/C++ runtime through Rust's `crt-static` feature. Release
+verification inspects actual PE imports and rejects external Z3, MSVCP,
+VCRUNTIME and Concurrency Runtime DLL dependencies. Runtime/toolchain security
+updates therefore require rebuilding and publishing fresh URA executables.
+
+Primary implementation references: [Z3 Rust API](https://docs.rs/z3/0.21.1/z3/),
+[Z3 source binding](https://docs.rs/z3-sys/0.13.1/z3_sys/),
+[Rust C runtime linkage](https://doc.rust-lang.org/reference/linkage.html#static-and-dynamic-c-runtimes),
+and [Microsoft C++ deployment](https://learn.microsoft.com/en-us/cpp/windows/deployment-in-visual-cpp).

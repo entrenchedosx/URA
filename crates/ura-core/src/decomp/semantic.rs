@@ -475,7 +475,7 @@ pub fn page(function: &SemanticFunction, block: Option<Address>) -> Result<Page,
     let blocks: Vec<_> = function
         .blocks
         .iter()
-        .filter(|candidate| block.map_or(true, |address| candidate.address == address))
+        .filter(|candidate| block.is_none_or(|address| candidate.address == address))
         .cloned()
         .collect();
     if blocks.is_empty() {

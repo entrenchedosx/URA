@@ -293,7 +293,7 @@ fn stdio_queries_errors_and_read_only_permissions() {
     let mut client = Client::start(directory.path(), false);
     let tools = client.request("tools/list", json!({}));
     let listed = tools["result"]["tools"].as_array().unwrap();
-    assert_eq!(listed.len(), 67);
+    assert_eq!(listed.len(), 68);
     for tool in listed {
         let expected = !matches!(
             tool["name"].as_str().unwrap(),
@@ -326,6 +326,7 @@ fn stdio_queries_errors_and_read_only_permissions() {
                 | "ura_debug_symbols"
                 | "ura_emulation"
                 | "ura_memory_image"
+                | "ura_symbolic"
         );
         assert_eq!(tool["annotations"]["readOnlyHint"], expected, "{tool}");
     }

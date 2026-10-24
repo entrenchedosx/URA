@@ -54,6 +54,8 @@ Invoke-Checked -Program cargo -Arguments @('clippy','--workspace','--all-targets
 Invoke-Checked -Program cargo -Arguments @('test','--workspace','--locked')
 Invoke-Checked -Program cargo -Arguments @('build','--workspace','--release','--locked')
 Invoke-Checked -Program cargo -Arguments @('build','-p','ura-core','--example','processor-verify','--release','--locked')
+Invoke-Checked -Program cargo -Arguments @('build','-p','ura-core','--example','symbolic-verify','--release','--locked')
+Invoke-Checked -Program python -Arguments @("$root/scripts/verify-symbolic-oracle.py",'--release','--output',"$OutputDirectory/symbolic-oracle")
 Invoke-Checked -Program python -Arguments @("$root/scripts/verify-processor-oracle.py",'--release')
 Confirm-Source
 $buildStart = (Get-Date).ToUniversalTime()
@@ -74,6 +76,7 @@ Confirm-Source
 $receipt = Join-Path $OutputDirectory 'BUILD-INFO.json'
 @{schemaVersion=1;version=$version;sourceCommit=$commit;dirtySource=$dirty;profile='release';target='x86_64-pc-windows-msvc';buildStartedUtc=$buildStart.ToString('o');executableSha256=$hashes;rustc=(rustc --version);qualification=(Get-Content -LiteralPath "$root/release-qualification.json" -Raw | ConvertFrom-Json)} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $receipt -Encoding utf8
 Invoke-Checked -Program python -Arguments @("$root/scripts/verify-dynamic-release.py",'--output',"$OutputDirectory/dynamic")
+Invoke-Checked -Program python -Arguments @("$root/scripts/verify-symbolic-release.py",'--output',"$OutputDirectory/symbolic")
 Invoke-Checked -Program python -Arguments @("$root/scripts/verify-patching-release.py",'--output',"$OutputDirectory/patching")
 Invoke-Checked -Program python -Arguments @("$root/scripts/verify-debugger-release.py",'--output',"$OutputDirectory/debugger")
 Invoke-Checked -Program python -Arguments @("$root/scripts/verify-advanced-debugger-release.py",'--output',"$OutputDirectory/advanced")

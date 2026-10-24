@@ -55,6 +55,22 @@ impl UraServer {
 #[tool_router]
 impl UraServer {
     #[tool(
+        name = "ura_symbolic",
+        annotations(read_only_hint = false),
+        description = "Bounded real Z3 symbolic/deobfuscation sessions on an analyzed static handle. Actions:start,status,cancel,summary,page,proof,model,export,save,load,close. Pages:predicates,queries,paths,dispatchers,targets,edges,expressions,valueSets,original,simplified,cfg. Options enforce node/path/query/time/memory caps. No sample execution or live memory. Export/save require --enable-writes and allowed paths. Loaded metadata is historical, never an enabled proof."
+    )]
+    fn ura_symbolic(
+        &self,
+        Parameters(p): Parameters<crate::params::SymbolicParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let value = serde_json::to_value(p).map_err(serialization)?;
+        respond(
+            self.service()
+                .symbolic_rpc(value)
+                .map(|result| serde_json::json!({"schemaVersion":1,"result":result})),
+        )
+    }
+    #[tool(
         name = "ura_emulation",
         annotations(read_only_hint = false),
         description = "Isolated scalar processor execution (capability scoped). Actions:create,status,step,run,stop,reset,snapshot,restore,removeSnapshot,breakpoint,memory,disassembly,trace,exportTrace,memoryImage,close. Requires separate --enable-emulation. No host program or API execution."

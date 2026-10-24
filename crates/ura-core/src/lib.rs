@@ -10,6 +10,7 @@ pub mod ir;
 mod jumptable;
 pub mod patch;
 pub mod strings;
+pub mod symbolic;
 
 pub use address::{format_address, format_offset, parse_address};
 pub use analysis::{

@@ -2,6 +2,7 @@ use std::path::PathBuf;
 mod debug;
 mod dynamic;
 mod patch;
+mod symbolic;
 use std::process::ExitCode;
 use std::str::FromStr;
 
@@ -41,6 +42,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Interactive bounded symbolic analysis; JSON lines share one static service
+    Symbolic {
+        #[command(flatten)]
+        common: CommonArgs,
+        #[command(flatten)]
+        analysis: AnalysisArgs,
+    },
     /// Interactive local JSON-line debugger; one process owns all sessions until EOF
     Debug,
     /// Interactive isolated CPU emulation, trace replay and captured image analysis
@@ -328,7 +336,7 @@ enum Command {
 impl Command {
     fn json(&self) -> bool {
         match self {
-            Command::Debug | Command::Dynamic => true,
+            Command::Debug | Command::Dynamic | Command::Symbolic { .. } => true,
             Command::Info { common }
             | Command::Patch { common, .. }
             | Command::TypeLibrary { common, .. }
@@ -409,6 +417,9 @@ impl AnalysisArgs {
 }
 
 fn main() -> ExitCode {
+    if ura_core::symbolic::solver::worker_entry() {
+        return ExitCode::SUCCESS;
+    }
     let cli = Cli::parse();
     let json = cli.command.json();
     match run(cli) {
@@ -431,6 +442,11 @@ fn run(cli: Cli) -> Result<(), ServiceError> {
     let policy = PathPolicy::new(cli.allow)?;
     let mut service = Service::new(policy.clone(), cli.enable_writes);
     match cli.command {
+        Command::Symbolic { common, analysis } => {
+            let handle = open(&mut service, &common)?.handle;
+            service.analyze(&handle, &analysis.options())?;
+            symbolic::run(service, handle)
+        }
         Command::Debug => debug::run(policy, cli.debugging, cli.enable_writes),
         Command::Dynamic => dynamic::run(policy, cli.enable_emulation, cli.enable_writes),
         Command::Patch { common, operation } => {

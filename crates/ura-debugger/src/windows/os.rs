@@ -689,18 +689,18 @@ pub fn quote(argument: &str) -> String {
         match ch {
             '\\' => slashes += 1,
             '"' => {
-                out.extend(std::iter::repeat('\\').take(slashes * 2 + 1));
+                out.extend(std::iter::repeat_n('\\', slashes * 2 + 1));
                 out.push('"');
                 slashes = 0;
             }
             _ => {
-                out.extend(std::iter::repeat('\\').take(slashes));
+                out.extend(std::iter::repeat_n('\\', slashes));
                 slashes = 0;
                 out.push(ch);
             }
         }
     }
-    out.extend(std::iter::repeat('\\').take(slashes * 2));
+    out.extend(std::iter::repeat_n('\\', slashes * 2));
     out.push('"');
     out
 }

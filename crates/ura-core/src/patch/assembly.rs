@@ -260,7 +260,7 @@ pub fn assemble(text: &str, bits: u32, origin: u64) -> PatchResult<Vec<u8>> {
         if bits == 32
             && origin
                 .checked_add(output.len() as u64)
-                .map_or(true, |end| end > 1u64 << 32)
+                .is_none_or(|end| end > 1u64 << 32)
         {
             return Err(PatchError(
                 "assembled region crosses the 32-bit address boundary".into(),

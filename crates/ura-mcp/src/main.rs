@@ -49,6 +49,9 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if ura_core::symbolic::solver::worker_entry() {
+        return Ok(());
+    }
     let cli = Cli::parse();
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::new(cli.log))

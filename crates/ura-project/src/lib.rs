@@ -754,6 +754,47 @@ pub fn load_view_state_for_path(project_path: &Path) -> ProjectResult<Option<Str
     load_view_state(&connection)
 }
 
+/// Atomically merge additive metadata without replacing other tools' keys.
+/// Non-object historical values and oversized updates are preserved on failure.
+pub fn merge_view_state_fields(
+    project_path: &Path,
+    updates: &serde_json::Value,
+) -> ProjectResult<()> {
+    let updates = updates.as_object().ok_or_else(|| {
+        ProjectError::InvalidViewState("view-state updates must be an object".into())
+    })?;
+    let mut connection = open_existing(project_path)?;
+    let transaction =
+        connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let previous = load_view_state(&transaction)?;
+    let mut root: serde_json::Value = previous
+        .as_deref()
+        .map(serde_json::from_str)
+        .transpose()
+        .map_err(|e| ProjectError::InvalidViewState(e.to_string()))?
+        .unwrap_or_else(|| serde_json::json!({}));
+    let object = root.as_object_mut().ok_or_else(|| {
+        ProjectError::InvalidViewState("existing view state is not an object; preserving it".into())
+    })?;
+    for (key, value) in updates {
+        object.insert(key.clone(), value.clone());
+    }
+    let text =
+        serde_json::to_string(&root).map_err(|e| ProjectError::InvalidViewState(e.to_string()))?;
+    if text.len() > MAX_VIEW_STATE_BYTES {
+        return Err(ProjectError::InvalidViewState(
+            "merged view state is too large".into(),
+        ));
+    }
+    transaction.execute("INSERT INTO view_state (id,state,updated_at) VALUES (1,?1,strftime('%Y-%m-%dT%H:%M:%fZ','now')) ON CONFLICT(id) DO UPDATE SET state=excluded.state,updated_at=excluded.updated_at",params![text])?;
+    transaction.execute(
+        "UPDATE project SET updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=1",
+        [],
+    )?;
+    transaction.commit()?;
+    Ok(())
+}
+
 pub fn export_annotations(project_path: &Path, destination: &Path) -> ProjectResult<ExportSummary> {
     let connection = open_existing(project_path)?;
     let project = load_project(&connection)?;
@@ -1137,12 +1178,22 @@ fn map_stack_variable(row: &rusqlite::Row<'_>) -> rusqlite::Result<StackVariable
 }
 
 fn load_view_state(connection: &Connection) -> ProjectResult<Option<String>> {
-    connection
-        .query_row("SELECT state FROM view_state WHERE id = 1", [], |row| {
-            row.get(0)
+    // Reject oversized externally edited SQLite values before copying the text
+    // into Rust or parsing JSON. Enforce the same byte limit as the write path.
+    let value: Option<Option<String>> = connection
+        .query_row(
+            "SELECT CASE WHEN length(CAST(state AS BLOB)) > ?1 THEN NULL ELSE state END FROM view_state WHERE id = 1",
+            [MAX_VIEW_STATE_BYTES as i64],
+            |row| row.get(0),
+        )
+        .optional()?;
+    value
+        .map(|text| {
+            text.ok_or_else(|| {
+                ProjectError::InvalidViewState("stored view state is too large".into())
+            })
         })
-        .optional()
-        .map_err(ProjectError::from)
+        .transpose()
 }
 
 fn resolve_path(path: &Path) -> PathBuf {

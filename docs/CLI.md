@@ -1,6 +1,6 @@
 # CLI patching (v0.10)
 
-`ura-cli --version` reports `0.14.0-dev.2`. Existing analysis/decompiler commands
+`ura-cli --version` reports `0.15.0-dev`. Existing analysis/decompiler commands
 remain available. `ura-cli patch --help` lists the shared-engine patch workflows:
 `init`, `list`, `read`, `preview`, `apply`, `instruction`, `history`, `export`,
 `manifest`. The binary is the first positional argument before the subcommand.
@@ -68,3 +68,22 @@ also selects a raw path's processor. Native-image mode must agree with explicit
 configuration. Emulated disassembly uses the selected processor. No new live
 processor debugger or instruction assembler is implied. See
 [MULTI-ARCHITECTURE.md](MULTI-ARCHITECTURE.md) for precise ISA/ABI/loader limits.
+
+## v0.15 bounded symbolic controller
+
+`ura-cli --allow DIR symbolic FILE` opens a static analysis handle and prints a
+JSON ready record. Send newline-delimited JSON actions to start, poll, inspect,
+cancel or close a bounded symbolic job. Normal processor/raw/project selection
+options apply. For example:
+
+```json
+{"action":"start","function":"0x140001000","options":{"maxPaths":32}}
+{"action":"status","session":"sym-1"}
+{"action":"page","session":"sym-1","category":"simplified","limit":32}
+{"action":"proof","session":"sym-1","index":0}
+```
+
+The actual session identifier comes from `start`. The service also provides
+models, original/derived CFG and source pages, and explicit new-file export.
+Export/save require `--write` and allowed paths. See [the complete action and
+scope reference](SYMBOLIC-DEOBFUSCATION.md). No inspected program is executed.

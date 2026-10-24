@@ -324,6 +324,7 @@ impl AnalysisControl for () {
     fn report(&self, _progress: AnalysisProgress) {}
 }
 
+#[derive(Clone)]
 pub struct ProgramAnalysis {
     pub functions: Vec<Function>,
     pub blocks: BTreeMap<u64, BasicBlock>,
@@ -1076,7 +1077,7 @@ fn analyze_images(
                                     .instructions
                                     .range(..=*t)
                                     .next_back()
-                                    .map_or(true, |(a, i)| *a == *t || i.end() <= *t);
+                                    .is_none_or(|(a, i)| *a == *t || i.end() <= *t);
                                 let length = Decoder::with_ip(
                                     bitness as u32,
                                     image.bytes_at(*t).unwrap(),
@@ -1095,7 +1096,7 @@ fn analyze_images(
                                 boundary
                                     && forward
                                     && can_enter(image, *t, seed.address, &function_starts)
-                                    && discovered.owner.get(t).map_or(true, |f| *f == seed.address)
+                                    && discovered.owner.get(t).is_none_or(|f| *f == seed.address)
                             });
                             if valid {
                                 for target in &table.targets {

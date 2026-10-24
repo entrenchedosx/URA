@@ -156,6 +156,7 @@ impl Service {
         session.imports = open.imports;
         session.exports = open.exports;
         session.analysis = None;
+        session.analysis_generation = session.analysis_generation.wrapping_add(1);
         session.analysis_options = None;
         session.ir_cache.clear();
         session.ir_cache_order.clear();

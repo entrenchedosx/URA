@@ -174,7 +174,7 @@ pub fn verify(function: &Function) -> Result<(), Vec<String>> {
             }
             if types
                 .as_ref()
-                .map_or(true, |args| !signature(&statement.op, output, args))
+                .is_none_or(|args| !signature(&statement.op, output, args))
             {
                 errors.push(format!(
                     "operation type invariant at {}: {:?}",

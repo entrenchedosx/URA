@@ -1105,6 +1105,25 @@ impl Builder {
                     self.write(i, result, address)?;
                 }
             }
+            M::Not | M::Neg => {
+                let width = self.width(i, 0)?;
+                let address = if i.op0_kind() == OpKind::Memory {
+                    Some(self.address(i)?)
+                } else {
+                    None
+                };
+                let value = self.read(i, 0, width)?;
+                let result = if i.mnemonic() == M::Not {
+                    // NOT preserves every architectural flag and comparison snapshot.
+                    self.unary(Operation::Not, value, Type::Bits(width))
+                } else {
+                    let zero = self.constant(width, 0);
+                    let result = self.binary(Operation::Sub, zero, value);
+                    self.flags(M::Sub, zero, value, result);
+                    result
+                };
+                self.write(i, result, address)?;
+            }
             M::Inc | M::Dec => {
                 let width = self.width(i, 0)?;
                 let address = if i.op0_kind() == OpKind::Memory {

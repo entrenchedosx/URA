@@ -262,13 +262,13 @@ impl WindowsBackend {
                         let point = self.points.get_mut(&address).unwrap();
                         let matches =
                             hardware::matches_condition(&mut point.view, &registers(tid, &c));
-                        let stop = point.temporary.map_or(true, |(thread, stack)| {
+                        let stop = point.temporary.is_none_or(|(thread, stack)| {
                             thread == tid && (stack == u64::MAX || stack == c.0.Rsp)
                         });
                         let condition_error = matches.as_ref().err().map(|e| e.message.clone());
                         let stop = stop && matches.unwrap_or(true);
                         let control_stop = self.control.as_ref().is_some_and(|(a, t, sp, _)| {
-                            *a == address && *t == tid && sp.map_or(true, |s| s == c.0.Rsp)
+                            *a == address && *t == tid && sp.is_none_or(|s| s == c.0.Rsp)
                         });
                         let stop = stop || control_stop || (trace_inflight && !continue_trace);
                         let owner = point.view.owner.clone();

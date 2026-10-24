@@ -106,7 +106,7 @@ pub(super) fn mappings(bytes: &[u8]) -> PatchResult<(String, u32, Vec<Mapping>)>
             || map
                 .file_offset
                 .checked_add(map.file_size)
-                .map_or(true, |end| end > bytes.len() as u64)
+                .is_none_or(|end| end > bytes.len() as u64)
             || map.address.checked_add(map.memory_size).is_none()
         {
             return Err(PatchError(
@@ -136,7 +136,7 @@ pub(super) fn translate(maps: &[Mapping], address: u64, length: usize) -> PatchR
         .ok_or_else(|| PatchError("virtual range begins outside mapping".into()))?;
     if delta
         .checked_add(length as u64)
-        .map_or(true, |end| end > m.file_size)
+        .is_none_or(|end| end > m.file_size)
     {
         return Err(PatchError(
             "virtual range includes memory without file backing".into(),

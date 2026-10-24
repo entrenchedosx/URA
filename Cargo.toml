@@ -13,10 +13,10 @@ members = [
 default-members = ["crates/ura-native"]
 
 [workspace.package]
-version = "0.14.0-dev.2"
+version = "0.15.0-dev"
 edition = "2021"
 license = "MIT"
-rust-version = "1.80"
+rust-version = "1.85"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -35,3 +35,15 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 capstone = { version = "=0.14.0", default-features = false, features = ["std", "full", "arch_arm64", "arch_arm", "arch_riscv"] }
+
+z3 = { version = "=0.21.1", features = ["vendored"] }
+
+# Z3's Debug C++ configuration opens .z3-trace before main(). Use its
+# non-tracing Release configuration in developer/test binaries as well.
+[profile.dev.package.z3-sys]
+opt-level = 1
+debug = 0
+
+[profile.test.package.z3-sys]
+opt-level = 1
+debug = 0

@@ -69,10 +69,10 @@ impl Replay {
         if !emulated
             && (value["session"]
                 .as_str()
-                .map_or(true, |s| s.is_empty() || s.len() > 128)
+                .is_none_or(|s| s.is_empty() || s.len() > 128)
                 || value["pid"]
                     .as_u64()
-                    .map_or(true, |n| n == 0 || n > u32::MAX as u64))
+                    .is_none_or(|n| n == 0 || n > u32::MAX as u64))
         {
             return Err(err(
                 "bounded nonempty session and positive 32-bit pid required",
@@ -279,7 +279,7 @@ impl Replay {
             .iter()
             .enumerate()
             .skip(offset)
-            .filter(|(_, r)| thread.map_or(true, |t| r.thread == t))
+            .filter(|(_, r)| thread.is_none_or(|t| r.thread == t))
             .take(limit)
             .map(|(i, r)| json!({"index":i,"event":r.raw}))
             .collect::<Vec<_>>();

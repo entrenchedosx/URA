@@ -202,7 +202,7 @@ impl Machine {
                     Operation::Unknown { .. } => {
                         if stmt
                             .output
-                            .map_or(true, |id| function.variables[id].ty == Type::Memory)
+                            .is_none_or(|id| function.variables[id].ty == Type::Memory)
                         {
                             return Err(
                                 "unknown memory effects cannot be concretely executed".into()

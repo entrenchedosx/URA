@@ -4,6 +4,9 @@ use eframe::egui;
 use ura_native::app::NativeApp;
 
 fn main() -> eframe::Result {
+    if ura_core::symbolic::solver::worker_entry() {
+        return Ok(());
+    }
     let started = std::time::Instant::now();
     std::panic::set_hook(Box::new(|info| {
         let path = std::env::temp_dir().join("ura-native-panic.log");

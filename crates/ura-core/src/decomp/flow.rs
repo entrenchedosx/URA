@@ -421,7 +421,7 @@ pub(crate) fn solve(
                             graph.link(key(function, value), formal.clone(), rule);
                             // A demand on only the low ABI bits does not type
                             // the entire native-width caller register.
-                            if formal_bits.map_or(true, |bits| bits == 64) {
+                            if formal_bits.is_none_or(|bits| bits == 64) {
                                 graph.link(formal.clone(), key(function, value), Rule::Identity);
                             }
                         }
@@ -711,7 +711,7 @@ pub(crate) fn solve(
         if inputs.iter().any(|input| {
             facts
                 .get(input)
-                .map_or(true, |fact| fact.claims.is_empty() || fact.unknown)
+                .is_none_or(|fact| fact.claims.is_empty() || fact.unknown)
         }) {
             unknown_seeds.push(output.clone());
         }

@@ -69,15 +69,28 @@ assert checked == actual - {'SHA256SUMS.txt'}
 assert not (extraction / 'licenses/MISSING-TEXTS.txt').read_text().strip()
 for name in ['capstone-0.14.0/LICENSE','capstone-sys-0.18.0/LICENSE','capstone-sys-0.18.0/capstone/LICENSE.TXT','capstone-sys-0.18.0/capstone/LICENSE_LLVM.TXT']:
     assert (extraction/'licenses'/name).is_file(),name
+for name in ['z3-0.21.1/LICENSE.txt','z3-sys-0.13.1/LICENSE.txt','z3-src-501.0.1/z3/LICENSE.txt']:
+    assert (extraction/'licenses'/name).is_file(),name
+
 
 assert digest(extraction / 'icon.webp') == digest(root / 'icon.webp')
 binary_hashes = {}
 for name in ['ura-native.exe', 'ura-cli.exe', 'ura-mcp.exe']:
     binary_hashes[name] = digest(extraction / name)
     assert binary_hashes[name] == digest(root / 'target/release' / name)
+# Launch only after byte-for-byte comparison with the freshly built images.
+# The native executable runs solely its windowless worker entry point.
+subprocess.run([sys.executable,str(root/'scripts/verify-symbolic-release.py'),'--binary-directory',str(extraction),
+                '--output',str(archive.parent/('solver-package-check-'+uuid.uuid4().hex))],cwd=root,check=True,timeout=120,
+               creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
 for name in ['README.md', 'LICENSE', 'THIRD_PARTY.md', 'release-qualification.json', 'docs/AUDIT-0.8.md', 'docs/VERIFICATION-0.8.md',
              'docs/BINARY-PATCHING.md', 'docs/ADVANCED-DEBUGGER.md', 'docs/DEBUGGER.md', 'docs/CLI.md', 'docs/MCP.md', 'docs/VERIFICATION-0.12.md',
              'docs/FEATURE-PARITY.md', 'docs/ROADMAP.md', evidence, 'docs/MULTI-ARCHITECTURE.md',
+             'docs/SYMBOLIC-DEOBFUSCATION.md', 'docs/REVIEW-0.15.md',
+             'docs/benchmarks/0.15-symbolic-baseline-release.json',
+             'docs/benchmarks/0.15-symbolic-headless-release.json',
+             'docs/benchmarks/0.15-processor-oracle.json',
+             'docs/examples/0.15/ura_opaque_even.original.c', 'docs/examples/0.15/ura_opaque_even.simplified.c',
              'docs/benchmarks/0.14-processors-release.json', 'docs/benchmarks/0.14-processor-oracle.json',
              'docs/benchmarks/0.14-dynamic-release.json', 'docs/benchmarks/0.14-baseline-controlled.json',
              'docs/EMULATION-DYNAMIC-ANALYSIS.md', 'docs/RELEASING.md', f'docs/RELEASE-NOTES-{args.version}.md',
@@ -127,7 +140,7 @@ report = {
     'typeLibraryRoundTrip': mcp['typeLibraryRoundTrip'],
     'cDecompileRoundTrip': mcp['cDecompileRoundTrip'],
     'cExportRoundTrip': mcp['cExportRoundTrip'],
-    'nativeStartup': 'Not exercised; matches the freshly compiled executable. Manual desktop acceptance remains unverified.',
+    'nativeStartup': 'Fixed windowless SMT worker exercised; GUI startup/input/DPI acceptance remains unverified.',
 }
 (archive.parent / 'package-verification.json').write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
 print(json.dumps(report, indent=2))

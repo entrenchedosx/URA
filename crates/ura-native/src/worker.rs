@@ -25,6 +25,10 @@ pub struct Opened {
     pub project: Option<(PathBuf, ProjectSnapshot)>,
 }
 pub enum Event {
+    Symbolic {
+        key: SymbolicKey,
+        data: Arc<ura_core::symbolic::Deobfuscation>,
+    },
     PatchExported(String),
     Opened(Box<Opened>),
     Analysis(Arc<ProgramAnalysis>),
@@ -57,6 +61,7 @@ pub struct IrRow {
 type Task = Box<dyn FnOnce() -> Result<Event, String> + Send>;
 #[derive(Clone, Copy)]
 pub enum TaskKind {
+    Symbolic(SymbolicKey),
     Patch,
     Other,
     Open,
@@ -69,6 +74,7 @@ pub enum TaskKind {
     CallGraph(u64),
 }
 pub type DecompKey = (u64, u64, u64);
+pub type SymbolicKey = (u64, u64, u64, u64);
 pub struct Reply {
     pub generation: u64,
     pub kind: TaskKind,

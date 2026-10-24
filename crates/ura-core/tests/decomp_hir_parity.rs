@@ -224,6 +224,9 @@ fn assert_parity(
 
 #[test]
 fn straight_line_arithmetic_output_matches_snapshot() {
+    // v0.15 deliberately replaces the historical NOT barrier with its verified
+    // fixed-width complement. Flag-preservation truth tables and the independent
+    // compiler/Unicorn corpus cover this newly supported instruction.
     assert_parity("straight_line_arithmetic", STRAIGHT_LINE, 64, false, None);
 }
 

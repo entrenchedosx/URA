@@ -1,0 +1,119 @@
+{
+  "version": "0.15.0-dev",
+  "workers": {
+    "ura-native.exe": {
+      "sha256": "c92868cb7c5b2f62e59ada654454862d8cd06b695f239a6b4e3698cfea34994b",
+      "imports": [
+        "advapi32.dll",
+        "api-ms-win-core-synch-l1-2-0.dll",
+        "bcryptprimitives.dll",
+        "combase.dll",
+        "dbghelp.dll",
+        "dwmapi.dll",
+        "gdi32.dll",
+        "imm32.dll",
+        "kernel32.dll",
+        "ntdll.dll",
+        "ole32.dll",
+        "oleaut32.dll",
+        "opengl32.dll",
+        "shell32.dll",
+        "uiautomationcore.dll",
+        "user32.dll",
+        "uxtheme.dll"
+      ],
+      "satMs": 211.0481999698095,
+      "solver": "Z3 5.1.0.0",
+      "malformedStatus": "error",
+      "undefinedStatus": "unsupported"
+    },
+    "ura-cli.exe": {
+      "sha256": "cbbf275650d5b6059092db7e03bd6fd4067c4721ab077bd76ab1a180f9b78f20",
+      "imports": [
+        "api-ms-win-core-synch-l1-2-0.dll",
+        "bcryptprimitives.dll",
+        "dbghelp.dll",
+        "kernel32.dll",
+        "ntdll.dll"
+      ],
+      "satMs": 511.18319999659434,
+      "solver": "Z3 5.1.0.0",
+      "malformedStatus": "error",
+      "undefinedStatus": "unsupported"
+    },
+    "ura-mcp.exe": {
+      "sha256": "56267064608888d4ed4a8ac1ef98ec2c333efb12b98411697312144ad355c0b9",
+      "imports": [
+        "api-ms-win-core-synch-l1-2-0.dll",
+        "bcryptprimitives.dll",
+        "dbghelp.dll",
+        "kernel32.dll",
+        "ntdll.dll"
+      ],
+      "satMs": 304.3296000105329,
+      "solver": "Z3 5.1.0.0",
+      "malformedStatus": "error",
+      "undefinedStatus": "unsupported"
+    }
+  },
+  "cli": {
+    "assumptions": [
+      "intraprocedural verified scalar IR; external calls/unknown effects stop paths",
+      "entry registers and unspecified bytes arbitrary; configured concrete inputs/bytes apply only to path exploration",
+      "byte-array memory, little endian; accessibility constrained only by supplied regions; no operating-system fault model",
+      "universal local predicate proofs ignore user assumptions and overapproximate SSA joins; path-only facts never prune global CFG"
+    ],
+    "complete": true,
+    "diagnostics": [],
+    "dispatchers": 0,
+    "effectiveSha256": "74078633325d63d15f326e0cdbee089b6b3154173ccfe1daa140640c387ce08a",
+    "elapsedUs": 2301824,
+    "exploredStates": 2,
+    "function": "0x1000",
+    "identity": "cfde6143285d7bc2e4a936f2da7b4476839bf0b0b2c7e4b3b622f7a91e42c970",
+    "indirectTransfers": 0,
+    "operations": 70,
+    "paths": 2,
+    "peakStateBytes": 15176,
+    "predicates": 1,
+    "processor": "x86-64",
+    "proofQueries": 8,
+    "prunedEdges": 1,
+    "session": "sym-1",
+    "solver": "Z3 5.1.0.0"
+  },
+  "mcp": {
+    "summary": {
+      "assumptions": [
+        "intraprocedural verified scalar IR; external calls/unknown effects stop paths",
+        "entry registers and unspecified bytes arbitrary; configured concrete inputs/bytes apply only to path exploration",
+        "byte-array memory, little endian; accessibility constrained only by supplied regions; no operating-system fault model",
+        "universal local predicate proofs ignore user assumptions and overapproximate SSA joins; path-only facts never prune global CFG"
+      ],
+      "complete": true,
+      "diagnostics": [],
+      "dispatchers": 0,
+      "effectiveSha256": "74078633325d63d15f326e0cdbee089b6b3154173ccfe1daa140640c387ce08a",
+      "elapsedUs": 1738021,
+      "exploredStates": 2,
+      "function": "0x1000",
+      "identity": "cfde6143285d7bc2e4a936f2da7b4476839bf0b0b2c7e4b3b622f7a91e42c970",
+      "indirectTransfers": 0,
+      "operations": 70,
+      "paths": 2,
+      "peakStateBytes": 15176,
+      "predicates": 1,
+      "processor": "x86-64",
+      "proofQueries": 8,
+      "prunedEdges": 1,
+      "session": "sym-1",
+      "solver": "Z3 5.1.0.0"
+    },
+    "cancellationMs": 10.672500007785857,
+    "cancelledWhileRunning": true,
+    "historicalSaveMs": 1127.7039000415243,
+    "historicalLoadMs": 4.871000011917204,
+    "historicalMetadata": true,
+    "staleGenerationRejected": true
+  }
+}

@@ -148,7 +148,7 @@ impl WindowsBackend {
                         .captures
                         .bytes
                         .checked_add(length)
-                        .map_or(true, |size| size > 4 * 1024 * 1024)
+                        .is_none_or(|size| size > 4 * 1024 * 1024)
                 {
                     return Err(DebugError::new("limit","retain at most4 snapshots and4MiB requested bytes; remove an earlier capture first"));
                 }

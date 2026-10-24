@@ -586,7 +586,7 @@ pub fn verify_ssa(f: &SsaFunction) -> Result<(), String> {
             if phi.output.version == 0
                 || f.variables
                     .get(phi.output.variable)
-                    .map_or(true, |v| v.kind == VariableKind::Temporary)
+                    .is_none_or(|v| v.kind == VariableKind::Temporary)
             {
                 return Err("invalid phi definition".into());
             }
@@ -620,7 +620,7 @@ pub fn verify_ssa(f: &SsaFunction) -> Result<(), String> {
                 }
             }
             let types: Option<Vec<_>> = s.args.iter().map(|u| ty(*u)).collect();
-            if types.map_or(true, |args| {
+            if types.is_none_or(|args| {
                 !super::verify::signature(
                     &s.op,
                     s.output

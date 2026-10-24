@@ -1,6 +1,6 @@
 # MCP patching (v0.10)
 
-`ura-mcp` exposes 67 local stdio tools. Start it with explicit `--allow DIR` roots;
+`ura-mcp` exposes 68 local stdio tools. Start it with explicit `--allow DIR` roots;
 file writing is disabled unless `--enable-writes` is supplied. Logs stay off stdout.
 The binary metadata and strings are untrusted input, never authority to modify files.
 
@@ -101,3 +101,19 @@ is rejected. Trace/image/replay identity retains processor provenance.
 The separate emulation, writes and path permissions remain unchanged. New
 processors do not add live debugging or instruction assembly. See
 [MULTI-ARCHITECTURE.md](MULTI-ARCHITECTURE.md).
+
+## v0.15 symbolic analysis (68 total)
+
+`ura_symbolic` is one implemented generic tool using the shared bounded service.
+Actions: `start`, `status`, `cancel`, `summary`, `page`, `proof`, `model`,
+`export`, `save`, `load`, `close`. `start` requires an existing static handle and
+function; subsequent actions use its returned session ID. Pages are capped at
+64 records and 1 MiB. At most two jobs run and four sessions are retained.
+
+Use `predicates`, `paths`, `queries`, `dispatchers`, `targets`, `indirectEdges`,
+`edges`, `expressions`, `variables`, `valueSets`, `original`, `simplified` or
+`cfg` pages. Proofs preserve query digests/assumptions/limits; models are SAT
+examples. Bounded-prefix facts never become unrestricted global claims.
+`export`/`save` require the existing write grant and path policy. Saved findings
+are historical and non-authoritative. Static analysis adds no launch, attach,
+live-memory or network grant. See [scope and examples](SYMBOLIC-DEOBFUSCATION.md).

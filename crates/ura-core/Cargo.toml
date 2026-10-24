@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "ura-core"
 version.workspace = true
 edition.workspace = true
@@ -12,9 +12,13 @@ sha2.workspace = true
 object.workspace = true
 iced-x86.workspace = true
 capstone.workspace = true
+z3.workspace = true
 tempfile.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
 serde_json.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }

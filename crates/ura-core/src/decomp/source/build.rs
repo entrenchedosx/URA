@@ -388,7 +388,7 @@ pub fn build_with_facts(
                     };
                     let memory = node
                         .output
-                        .map_or(true, |v| hir.values[v].storage == Type::Memory);
+                        .is_none_or(|v| hir.values[v].storage == Type::Memory);
                     b.unresolved += 1;
                     statements.push(Statement {
                         source: Some(node.source),
@@ -607,7 +607,7 @@ impl Builder<'_> {
             ) || matches!(node.kind, NodeKind::UnknownEffect)
                 && node
                     .output
-                    .map_or(true, |v| self.hir.values[v].storage == Type::Memory)
+                    .is_none_or(|v| self.hir.values[v].storage == Type::Memory)
             {
                 roots.extend(node.inputs.iter().filter_map(|input| match input {
                     Input::Value(id) => Some(*id),

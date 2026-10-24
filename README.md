@@ -4,10 +4,14 @@
 
 Ultimate Reverse Engineer
 
-Current development is **0.14.0-dev.2** on `v0.14-multi-architecture`:
-real scalar AArch64 analysis, IR/SSA, ABI/stack evidence, C-like pseudocode and
-isolated execution, plus verified ARM/Thumb and RV32I/RV64I subsets. Desktop,
-CLI and the existing 67 MCP tools share the engine. See the
+Current development is **0.15.0-dev** on `v0.15-symbolic-deobfuscation`:
+real Z3 bitvector reasoning, bounded symbolic execution, proof-validated branch
+pruning and original/derived C-like pseudocode. Dispatcher transitions and finite
+indirect targets carry explicit prefix scope and evidence. Desktop, CLI and
+**68 MCP tools** share the engine. Scalar AArch64, ARM/Thumb and RV32I/RV64I
+analysis remains supported within its documented subsets. See the
+[symbolic scope](docs/SYMBOLIC-DEOBFUSCATION.md),
+[v0.15 verification](docs/VERIFICATION-0.15.md),
 [processor scope](docs/MULTI-ARCHITECTURE.md),
 [v0.14 verification](docs/VERIFICATION-0.14.md) and
 [binary release policy](docs/RELEASING.md).
@@ -79,11 +83,14 @@ analysis limits; it is not a replacement for the full feature sets of IDA or Ghi
 - Dominators/frontiers, phi nodes, def-use counts, conservative constants and dead definitions.
 - Narrow guarded absolute/relative jump-table patterns and tail/thunk candidates.
 - Evidence-based ABI/signature recovery, physical stack frames and conservative types.
+- Fixed-width symbolic DAGs, persistent byte-array memory, bounded value sets and solver-backed alias queries.
+- Isolated, statically packaged Z3 with time/memory limits, cancellation, proof provenance and historical project metadata.
+- Optional validated branch pruning through the existing C-like decompiler; original instructions and CFG remain available.
 - Bounded interprocedural call graph and experimental C-like high-level rendering.
 - Native Windows x64 debugger with explicit launch/attach, software/hardware breakpoints, conditions, stepping and runtime inspection.
 - Bounded event/instruction traces, register changes, region queries, memory snapshots/compare/export and matched local PDB lookup.
 - Transactional byte/instruction patches, project history, undo/redo and verified new-file export.
-- Native CLI with text/JSON output and a local stdio MCP server with 67 tools.
+- Native CLI with text/JSON output and a local stdio MCP server with 68 tools.
 
 CLI `decompile` and MCP `ura_decompile_function` reconstruct a separate C-like AST from semantic HIR: bounded expressions, edge-specific phi copies, proved nested regions/loops, ordered memory operations and explicit unknowns. The legacy `highlevel` view remains a diagnostic SSA representation. Reconstructed pseudocode uses explicit machine helpers and is not guaranteed to compile; see [decompiler scope](docs/C-DECOMPILER-0.9.md). Local main-image PDB names/lines are supported within a GUID/age-checked subset.
 There is no remote/kernel debugger, general C++ debug-type loader or public plugin API. Indirect transfers remain open, including transfers with heuristic

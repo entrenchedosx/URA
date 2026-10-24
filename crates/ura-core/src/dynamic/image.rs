@@ -236,7 +236,7 @@ impl Image {
             let total = segments
                 .iter()
                 .try_fold(0u64, |n, s| n.checked_add(s.size()));
-            if segments.len() > 256 || total.map_or(true, |n| n > 16 * 1024 * 1024) {
+            if segments.len() > 256 || total.is_none_or(|n| n > 16 * 1024 * 1024) {
                 return Err(Fault::new(
                     "memoryBudget",
                     0,
@@ -281,7 +281,7 @@ impl Image {
             .iter()
             .filter(|s| s.readable || s.writable || s.executable)
             .try_fold(0u64, |sum, s| sum.checked_add(s.size));
-        if allocated.map_or(true, |n| n > 16 * 1024 * 1024) || a.sections.len() > 256 {
+        if allocated.is_none_or(|n| n > 16 * 1024 * 1024) || a.sections.len() > 256 {
             return Err(Fault::new(
                 "memoryBudget",
                 0,

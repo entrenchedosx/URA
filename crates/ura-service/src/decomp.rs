@@ -771,7 +771,7 @@ impl Service {
     }
 }
 
-fn decomp_context(
+pub(crate) fn decomp_context(
     session: &Session,
     analysis: &ProgramAnalysis,
     function: u64,

@@ -1,0 +1,4 @@
+[target.x86_64-pc-windows-msvc]
+# Keep each downloadable EXE self-contained, including Z3's C++ runtime.
+# z3-src reads CARGO_CFG_TARGET_FEATURE and selects the matching /MT runtime.
+rustflags = ["-C", "target-feature=+crt-static"]

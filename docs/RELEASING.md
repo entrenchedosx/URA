@@ -13,10 +13,11 @@ overwrite an old asset or alter main automatically.
 `release-qualification.json` is a checked-in publication gate. Set its version
 to the Cargo version, document evidence and set `publishable:true` only after
 critical correctness/safety/package gates pass for the stated release scope.
-v0.14 targets a scoped scalar development prerelease: the foreign-step and
+The v0.14 scoped scalar development prerelease repaired the foreign-step and
 new-thread ownership regressions are repaired, while genuinely nested/rearm
 steps and uncertain cleanup remain explicitly blocked. WOW64 is unsupported and
-rejected; it is not mandatory for this owner-approved scoped v0.14 definition.
+rejected; it is outside that scoped definition. v0.15 adds the documented bounded
+symbolic/deobfuscation scope and its semantic, isolation and packaging gates.
 Earlier v0.13 publication eligibility remains historically false. Manual desktop restrictions are recorded separately;
 headless rendering must not be called live desktop acceptance.
 
@@ -85,6 +86,19 @@ CLI/MCP tools, including raw metadata, disassembly, IR/SSA, pseudocode and bound
 execution. CI disables development/test debug info and incremental caches to
 avoid excessive Windows linker/PDB disk usage; Release optimisation is unchanged.
 The independent oracle is installed under target/ only and never packaged.
+
+v0.15 also builds the symbolic verification adapter, runs original/derived IR and
+C-like AST comparisons against Unicorn, and exercises actual CLI/MCP symbolic
+sessions, permissions, stale identities and cancellation. All three EXEs must
+answer SAT/malformed/undefined-state queries through their fixed early SMT-worker
+entry in an empty directory. The native EXE takes that windowless path before
+GUI initialization; this is not desktop interaction or visual acceptance.
+
+Z3 5.1.0.0 is statically compiled from locked `z3-src` 501.0.1. The committed
+Windows `+crt-static` target setting also selects the static C/C++ runtime.
+PE import inspection rejects external Z3/MSVCP/VCRUNTIME dependencies. The ZIP
+audit requires the Z3 wrapper and native-source license texts, then repeats the
+solver/transport checks after extraction. No runtime solver download is used.
 
 The helper requires Python 3.11+ and installs `scripts/requirements-release.txt`
 into `target/release-verification-python`. It checks pinned psutil and Unicorn

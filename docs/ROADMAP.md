@@ -1,5 +1,24 @@
 # Roadmap
 
+## v0.15 — symbolic analysis and proof-backed deobfuscation
+
+- [x] Typed 1–64-bit expression DAGs, poison and persistent byte-array memory.
+- [x] Locked source-built Z3, isolated workers, explicit solver outcomes and bounded cleanup.
+- [x] Bounded SSA paths, simultaneous phis, concrete entry inputs, faults and conservative boundaries.
+- [x] Real opaque-predicate queries and separate validation before derived branch pruning.
+- [x] Prefix-scoped dispatcher transitions and finite indirect branch/call target evidence.
+- [x] Finite overapproximating value sets and bounded solver-based alias queries.
+- [x] Existing decompiler reuse with original/derived C-like output and source mapping.
+- [x] Native background controls, shared CLI/MCP, stale-result guards and compatible historical persistence.
+- [x] Owned compiler corpus, independent execution oracle and reviewed symbolic foundations.
+- [ ] General flattened-function restructuring, invariant synthesis and interprocedural symbolic calls.
+- [ ] Comprehensive taint, general heap/OS models and whole-program equivalence.
+- [ ] Full ISA/ABI coverage and real native interaction/DPI/GPU acceptance.
+
+See [scope](SYMBOLIC-DEOBFUSCATION.md), [review](REVIEW-0.15.md) and
+[qualification](VERIFICATION-0.15.md). Exact-source packaging and public downloads
+determine release acceptance; the version number does not establish parity.
+
 ## v0.14 — verified scalar multi-architecture foundation
 
 - [x] Mature typed ARM64/ARM/Thumb/RISC-V decoders and explicit processor metadata.

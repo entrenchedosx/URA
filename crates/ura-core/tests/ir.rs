@@ -37,6 +37,66 @@ fn machine() -> Machine {
 }
 
 #[test]
+fn not_preserves_flags_and_neg_matches_width_and_flag_truth_tables() {
+    let names = ["cf", "pf", "af", "zf", "sf", "of"];
+    for (width, not, neg) in [
+        (8, vec![0xf6, 0xd0], vec![0xf6, 0xd8]),
+        (16, vec![0x66, 0xf7, 0xd0], vec![0x66, 0xf7, 0xd8]),
+        (32, vec![0xf7, 0xd0], vec![0xf7, 0xd8]),
+        (64, vec![0x48, 0xf7, 0xd0], vec![0x48, 0xf7, 0xd8]),
+    ] {
+        let not = lift(&[not, vec![0xc3]].concat(), 64);
+        let neg = lift(&[neg, vec![0xc3]].concat(), 64);
+        let mask = ir::mask(width);
+        for input in [0, 1, 15, 16, 1u64 << (width - 1), mask] {
+            let base = input | (!mask & 0xabcd_ef01_2345_6789);
+            for flags in 0..64 {
+                let mut original = machine();
+                original.values.insert("rax".into(), base);
+                for (index, name) in names.iter().enumerate() {
+                    original.values.insert((*name).into(), (flags >> index) & 1);
+                }
+                let mut inverted = original.clone();
+                inverted.run(&not, 2).unwrap();
+                let expected = if width == 32 {
+                    !input & mask
+                } else {
+                    (base & !mask) | (!input & mask)
+                };
+                assert_eq!(inverted.values["rax"], expected);
+                for name in names {
+                    assert_eq!(inverted.values[name], original.values[name]);
+                }
+                let mut negative = original;
+                negative.run(&neg, 2).unwrap();
+                let result = 0u64.wrapping_sub(input) & mask;
+                let expected = if width == 32 {
+                    result
+                } else {
+                    (base & !mask) | result
+                };
+                assert_eq!(negative.values["rax"], expected);
+                let expected_flags = [
+                    input != 0,
+                    (result as u8).count_ones() % 2 == 0,
+                    input & 15 != 0,
+                    result == 0,
+                    result & (1u64 << (width - 1)) != 0,
+                    input == 1u64 << (width - 1),
+                ];
+                for (name, expected) in names.iter().zip(expected_flags) {
+                    assert_eq!(
+                        negative.values[*name],
+                        u64::from(expected),
+                        "width {width}, input {input:#x}, flag {name}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn all_sixteen_conditions_match_boolean_truth_tables() {
     for bits in 0u8..32 {
         let (cf, pf, zf, sf, of) = (

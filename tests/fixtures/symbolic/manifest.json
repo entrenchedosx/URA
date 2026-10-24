@@ -1,0 +1,42 @@
+{
+  "dispatcherSourceSha256": "b882a5091fed39e2f038faae7c79b3a2a3df1dc0dee9bd15d5eab30fda892ae4",
+  "source": "tests/samples/symbolic.c",
+  "foreignImagesNeverHostExecuted": true,
+  "compiler": "clang version 22.1.8 (https://github.com/llvm/llvm-project ca7933e47d3a3451d81e72ac174dcb5aa28b59d1)",
+  "sourceSha256": "b5b61384eac8102ae32d5c286722d66e0227376db946b21b5e04de5fb098d769",
+  "files": [
+    {
+      "sha256": "d558d5c383a66cb43c940e156f8119f039c8da4ed3256060f8554d8fa8f1efe0",
+      "name": "x64-O0.elf"
+    },
+    {
+      "sha256": "dcccde3e7f77781bb60130cc58f9f3a9ecd774098bb2883f821d9ec98f18a4a6",
+      "name": "x64-O0.exe"
+    },
+    {
+      "sha256": "02bbe54b7f622561aba66a18983a5b1e4e10cb6c4ece5333ff9ee5c47539ed58",
+      "name": "x64-O1.elf"
+    },
+    {
+      "sha256": "85844b4bb3c564887729d8534e1e5dc456f23814e8ff381abc959a333e2788cd",
+      "name": "x64-O1.exe"
+    },
+    {
+      "sha256": "81d8fc786b0014ce46f6fb76799452f27617c35771b9032297a296e03cf46b81",
+      "name": "x64-O2.elf"
+    },
+    {
+      "sha256": "f9196896997c48df89d8f742ce71bb93a7a313f7fdffffd602f3bce80de4d949",
+      "name": "x64-O2.exe"
+    },
+    {
+      "sha256": "81d8fc786b0014ce46f6fb76799452f27617c35771b9032297a296e03cf46b81",
+      "name": "x64-O3.elf"
+    },
+    {
+      "sha256": "6eed6e9f8d937674b756a4484d00c5ef6223a6a15a5fa4e6c5a76f66f7e5e227",
+      "name": "x64-O3.exe"
+    }
+  ],
+  "generator": "scripts/build-symbolic-fixtures.ps1"
+}

@@ -26,6 +26,7 @@ use crate::RESPONSE_SCHEMA_VERSION;
 const MAX_FUNCTION_REFS: usize = 1_000;
 
 pub struct Service {
+    pub(crate) symbolic: crate::symbolic::SymbolicJobs,
     pub debugger: crate::DebugService,
     pub dynamic: crate::dynamic::DynamicService,
     pub(crate) policy: PathPolicy,
@@ -37,6 +38,7 @@ pub struct Service {
 pub(crate) type StackOverrides = BTreeMap<u64, BTreeMap<String, (Option<String>, Option<TypeRef>)>>;
 
 pub(crate) struct Session {
+    pub(crate) analysis_generation: u64,
     pub(crate) patches: Option<ura_core::patch::PatchDocument>,
     pub(crate) binary: LoadedBinary,
     pub(crate) info: BinaryView,
@@ -45,7 +47,7 @@ pub(crate) struct Session {
     pub(crate) exports: Vec<ExportView>,
     pub(crate) project: Option<PathBuf>,
     pub(crate) names: BTreeMap<u64, String>,
-    manual: Vec<u64>,
+    pub(crate) manual: Vec<u64>,
     pub(crate) analysis: Option<ProgramAnalysis>,
     pub(crate) analysis_options: Option<AnalysisOptions>,
     pub(crate) ir_cache: BTreeMap<u64, Arc<ura_core::ir::inspect::Bundle>>,
@@ -60,6 +62,7 @@ pub(crate) struct Session {
 impl Service {
     pub fn new(policy: PathPolicy, writes_enabled: bool) -> Self {
         Self {
+            symbolic: crate::symbolic::SymbolicJobs::default(),
             dynamic: crate::dynamic::DynamicService::new(policy.clone(), writes_enabled),
             debugger: crate::DebugService::new(policy.clone(), crate::DebugPermissions::default())
                 .expect("empty debug policy")
@@ -250,6 +253,7 @@ impl Service {
                 names,
                 manual,
                 analysis: None,
+                analysis_generation: 0,
                 analysis_options: None,
                 ir_cache: BTreeMap::new(),
                 ir_cache_order: VecDeque::new(),
@@ -283,6 +287,7 @@ impl Service {
     }
 
     pub fn close_binary(&mut self, handle: &str) -> ServiceResult<CloseBinaryResponse> {
+        self.symbolic.invalidate_handle(handle);
         let closed = self.sessions.remove(handle).is_some();
         if !closed {
             return Err(ServiceError::UnknownHandle(handle.to_string()));
@@ -299,6 +304,7 @@ impl Service {
         handle: &str,
         options: &AnalysisOptions,
     ) -> ServiceResult<AnalyzeResponse> {
+        self.symbolic.invalidate_handle(handle);
         let session = self
             .sessions
             .get_mut(handle)
@@ -316,6 +322,7 @@ impl Service {
         let analysis = analyze_binary_with_seeds(&session.binary, &normalized, &seeds, &());
         let report = analysis.report.clone();
         session.analysis = Some(analysis);
+        session.analysis_generation = session.analysis_generation.wrapping_add(1);
         session.analysis_options = Some(normalized.clone());
         session.ir_cache.clear();
         session.ir_cache_order.clear();
@@ -852,6 +859,7 @@ impl Service {
         }
         if effective_changed {
             session.analysis = None;
+            session.analysis_generation = session.analysis_generation.wrapping_add(1);
             session.analysis_options = None;
             session.ir_cache.clear();
             session.ir_cache_order.clear();
