@@ -7,3 +7,7 @@ tests/samples/symbolic.c text eol=lf
 tests/samples/symbolic-flat.S text eol=lf
 tests/fixtures/symbolic/*.elf -text
 tests/fixtures/symbolic/*.exe -text
+
+# SDK sources and runtime lock are packaged and embedded exactly.
+sdk/** text eol=lf
+scripts/python-runtime.lock.json text eol=lf

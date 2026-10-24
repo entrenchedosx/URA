@@ -8,7 +8,7 @@ use object::{Object, ObjectSection, ObjectSegment, ObjectSymbol, SectionFlags, S
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 mod mapping;
 
@@ -302,6 +302,7 @@ pub struct BinaryOpenResult {
 
 #[derive(Clone)]
 pub struct LoadedBinary {
+    sha256: Arc<OnceLock<String>>,
     path: PathBuf,
     file_name: String,
     bytes: Arc<Vec<u8>>,
@@ -309,6 +310,10 @@ pub struct LoadedBinary {
 }
 
 impl LoadedBinary {
+    /// Bytes are immutable; snapshots share the digest, overlays get a fresh cache.
+    pub fn content_sha256(&self) -> &str {
+        self.sha256.get_or_init(|| sha256_hex(&self.bytes))
+    }
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -334,7 +339,7 @@ impl LoadedBinary {
             path: self.path.to_string_lossy().to_string(),
             file_name: self.file_name.clone(),
             file_size: self.bytes.len() as u64,
-            sha256: sha256_hex(&self.bytes),
+            sha256: self.content_sha256().to_owned(),
             format: self.analysis.format.clone(),
             architecture: self.analysis.architecture.name().to_string(),
             processor: crate::processor::Processor::for_analysis(&self.analysis)
@@ -460,6 +465,7 @@ pub fn analyze_raw_bytes(
         .unwrap_or_default();
     let analysis=Analysis {format:"raw".into(),architecture:if bitness==32 {CpuArchitecture::X86} else {CpuArchitecture::X86_64},bitness:bitness as u8,endianness:Endianness::Little,image_base:base.unwrap_or(0),entry_point:base,object_kind:"explicit raw image".into(),has_symbols:false,has_debug_symbols:false,sections,symbols:vec![],imports:vec![],exports:vec![],warnings:vec!["Raw image: processor mode/base are user-supplied; no loader metadata or execution is verified.".into()]};
     Ok(LoadedBinary {
+        sha256: Default::default(),
         path: path.to_path_buf(),
         file_name: path
             .file_name()
@@ -735,6 +741,7 @@ pub fn analyze_bytes(path: &Path, bytes: Vec<u8>) -> Result<LoadedBinary> {
         .unwrap_or_else(|| path.to_string_lossy().to_string());
 
     Ok(LoadedBinary {
+        sha256: Default::default(),
         path: path.to_path_buf(),
         file_name,
         bytes: Arc::new(bytes),

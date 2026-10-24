@@ -92,3 +92,19 @@ Primary implementation references: [Z3 Rust API](https://docs.rs/z3/0.21.1/z3/),
 [Z3 source binding](https://docs.rs/z3-sys/0.13.1/z3_sys/),
 [Rust C runtime linkage](https://doc.rust-lang.org/reference/linkage.html#static-and-dynamic-c-runtimes),
 and [Microsoft C++ deployment](https://learn.microsoft.com/en-us/cpp/windows/deployment-in-visual-cpp).
+
+## Bundled scripting runtime and package reader (v0.16)
+
+The complete Windows ZIP includes the official CPython3.14.9 amd64 embeddable
+runtime (Python Software Foundation license and bundled dependency notices in its
+original runtime/python/LICENSE.txt). `scripts/python-runtime.lock.json` pins the
+HTTPS source, 12,609,248-byte archive SHA256 and every distribution member. The
+runtime's OpenSSL/libffi/libtommath/SQLite/expat and standard-library artifacts
+retain their original notices. No system Python, pip installation or startup
+network download is required by the product. See the official [release](https://www.python.org/downloads/release/python-3149/)
+and [Windows embeddable documentation](https://docs.python.org/3/using/windows.html#the-embeddable-package).
+
+Rust ZIP6.0.0, zopfli0.8.4 and semver1.0.28 implement bounded package parsing and
+compatibility checks. Their complete license texts are collected with every locked
+build dependency; the release gate fails on missing texts. SDK examples use URA's
+MIT license. No IDA/Ghidra proprietary implementation was copied.

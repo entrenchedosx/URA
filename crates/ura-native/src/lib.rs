@@ -9,6 +9,7 @@ mod graph_view;
 mod menus;
 pub mod navigation;
 mod patches;
+mod scripting;
 mod symbolic;
 mod views;
 mod window_placement;

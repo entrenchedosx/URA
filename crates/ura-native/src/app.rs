@@ -26,6 +26,8 @@ use ura_project::ProjectSnapshot;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Panel {
+    Python,
+    Plugins,
     Deobfuscation,
     Explorer,
     Disassembly,
@@ -58,7 +60,9 @@ pub enum Panel {
     Emulation,
 }
 impl Panel {
-    pub const ALL: [Self; 30] = [
+    pub const ALL: [Self; 32] = [
+        Self::Python,
+        Self::Plugins,
         Self::Deobfuscation,
         Self::Explorer,
         Self::Disassembly,
@@ -92,6 +96,8 @@ impl Panel {
     ];
     pub fn title(self) -> &'static str {
         match self {
+            Self::Python => "Python console",
+            Self::Plugins => "Plugins",
             Self::Deobfuscation => "Deobfuscation",
             Self::Explorer => "Project structure",
             Self::Disassembly => "Disassembly",
@@ -126,6 +132,8 @@ impl Panel {
     }
     fn legacy(self) -> &'static str {
         match self {
+            Self::Python => "python",
+            Self::Plugins => "plugins",
             Self::Deobfuscation => "deobfuscation",
             Self::Graph => "cfg",
             Self::Hex => "hex",
@@ -305,6 +313,7 @@ pub enum Action {
     Save,
 }
 pub struct Workspace {
+    pub scripting: crate::scripting::ScriptUi,
     pub symbolic: crate::symbolic::SymbolicUi,
     pub debugger: crate::debugger::DebugUi,
     pub dynamic: crate::dynamic::DynamicUi,
@@ -403,6 +412,7 @@ impl Workspace {
             Default::default(),
         );
         Self {
+            scripting: Default::default(),
             debugger: Default::default(),
             dynamic: Default::default(),
             patches: None,
@@ -937,6 +947,25 @@ impl Workspace {
             });
     }
     fn poll(&mut self) {
+        self.scripting.poll(
+            &self.ctx,
+            (
+                self.generation,
+                self.analysis_revision,
+                self.project_revision,
+            ),
+        );
+        if std::mem::take(&mut self.scripting.refresh_project)
+            && let Some((path, _)) = &self.project
+        {
+            let path = path.clone();
+            self.worker.submit(self.generation, move || {
+                ura_project::read_project(&path)
+                    .map(|p| Event::ScriptProject(path, Box::new(p)))
+                    .map_err(|e| e.to_string())
+            });
+        }
+
         self.debugger.poll(&self.ctx);
         self.dynamic.poll(&self.ctx);
         while let Ok(reply) = self.worker.receiver.try_recv() {
@@ -1172,6 +1201,14 @@ impl Workspace {
                     self.call_graph_error = None;
                     self.call_graph = Some(graph);
                 }
+                Ok(Event::ScriptProject(path, snapshot)) => {
+                    self.update_project(path, *snapshot);
+                    self.scripting.synchronize((
+                        self.generation,
+                        self.analysis_revision,
+                        self.project_revision,
+                    ));
+                }
                 Ok(Event::Project(path, snapshot, reanalyze)) => {
                     self.update_project(path, *snapshot);
                     self.log(false, "Project updated");
@@ -1376,6 +1413,14 @@ impl NativeApp {
             idle_metrics: crate::diagnostics::IdleMetrics::from_env(),
             window_placement: Default::default(),
         };
+        app.workspace.scripting.history = cc
+            .storage
+            .and_then(|s| eframe::get_value::<Vec<String>>(s, "ura.python-history.v1"))
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|s| s.len() <= 65536)
+            .take(64)
+            .collect();
         if let Some(path) = startup {
             app.workspace.actions.push(Action::Open(path));
         }
@@ -1937,6 +1982,11 @@ impl eframe::App for NativeApp {
     }
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, "ura.settings.v1", &self.workspace.settings);
+        eframe::set_value(
+            storage,
+            "ura.python-history.v1",
+            &self.workspace.scripting.history,
+        );
         eframe::set_value(storage, "ura.recent.v1", &self.workspace.recent);
         eframe::set_value(storage, "ura.dock.v2", &self.dock);
         self.persist_project();

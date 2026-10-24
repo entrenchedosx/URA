@@ -8,12 +8,13 @@ members = [
     "crates/ura-service",
     "crates/ura-cli",
     "crates/ura-mcp",
+    "crates/ura-extensions",
     "src-tauri",
 ]
 default-members = ["crates/ura-native"]
 
 [workspace.package]
-version = "0.15.0-dev.1"
+version = "0.16.0-dev"
 edition = "2021"
 license = "MIT"
 rust-version = "1.85"

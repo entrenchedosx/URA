@@ -7,6 +7,10 @@ use crate::RESPONSE_SCHEMA_VERSION;
 
 #[derive(Debug, Error)]
 pub enum ServiceError {
+    #[error("extension execution {state}: {message}")]
+    ExtensionFailure { state: String, message: String },
+    #[error("extension execution permission denied: {0}")]
+    ExtensionDenied(String),
     #[error("{0}")]
     InvalidArgument(String),
     #[error("unknown binary handle: {0}")]
@@ -38,6 +42,8 @@ pub enum ServiceError {
 impl ServiceError {
     pub fn code(&self) -> &'static str {
         match self {
+            ServiceError::ExtensionFailure { .. } => "extension_failed",
+            ServiceError::ExtensionDenied(_) => "extension_permission_denied",
             ServiceError::InvalidArgument(_) => "invalid_argument",
             ServiceError::UnknownHandle(_) => "unknown_handle",
             ServiceError::AnalysisRequired => "analysis_required",

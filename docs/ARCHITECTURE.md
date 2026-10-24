@@ -1,6 +1,23 @@
 # Architecture
 
-## Native desktop (v0.8 development)
+## Current extension architecture (v0.16)
+
+The product remains native Rust/egui. `ura-extensions` owns a stable JSON protocol,
+trusted CPython worker sessions, bounded supervisor/writer/API tasks, registry and
+private plugin snapshots, ordered events, typed metadata transactions and managed
+batch jobs. `sdk/python/ura` wraps the real shared Service; CLI/MCP/native use that
+same host. SDK capabilities are separate from OS isolation. The package includes
+locked CPython3.14.9 amd64; runtime downloads occur only in the build helper.
+
+Native console/plugin controls queue work off paint and attach the exact immutable
+effective snapshot (including patch overlay). MCP shares its Service mutex; CLI
+owns one for each interactive process. Batches use isolated read-only Services.
+Loader descriptions feed validated file-backed memory images into the existing
+analysis pipeline. Custom decoder descriptions reuse core CFG finalization with
+explicit absence of external IR/lifting/execution capabilities. See
+[PYTHON-SDK.md](PYTHON-SDK.md) for contracts, bounds, permission and cancellation limits.
+
+## Native desktop foundations
 
 `crates/ura-native` is the default workspace member. Its eframe entry point
 renders egui directly through OpenGL and winit; no browser engine or IPC is

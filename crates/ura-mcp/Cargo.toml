@@ -8,6 +8,7 @@ rust-version.workspace = true
 [dependencies]
 ura-core = { path = "../ura-core" }
 ura-service = { path = "../ura-service" }
+ura-extensions = { path = "../ura-extensions" }
 clap.workspace = true
 tokio.workspace = true
 rmcp.workspace = true

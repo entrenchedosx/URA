@@ -31,6 +31,8 @@ foreach ($name in @('ura-native.exe', 'ura-cli.exe', 'ura-mcp.exe')) {
 foreach ($name in @('LICENSE', 'README.md', 'THIRD_PARTY.md', 'icon.webp', 'Cargo.lock', 'release-qualification.json')) {
     Copy-Item -LiteralPath "$root/$name" -Destination $package -Force
 }
+Copy-Item -LiteralPath "$root/target/release/runtime" -Destination "$package/runtime" -Recurse -Force
+Copy-Item -LiteralPath "$root/sdk" -Destination "$package/sdk" -Recurse -Force
 Copy-Item -LiteralPath $licenseOutput -Destination "$package/licenses" -Recurse -Force
 if ($BuildReceipt) { Copy-Item -LiteralPath $BuildReceipt -Destination "$package/BUILD-INFO.json" }
 Copy-Item -LiteralPath "$root/docs" -Destination "$package/docs" -Recurse -Force

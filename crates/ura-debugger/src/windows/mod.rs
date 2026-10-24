@@ -506,7 +506,11 @@ impl WindowsBackend {
                 self.view.state = State::Running;
                 return Err(e);
             }
-            self.close_event_handles();
+            // DebugActiveProcessStop releases the system-managed debug event
+            // handles. Their numeric values can already have been reused by
+            // another thread. Only our independent duplicates are RAII-owned.
+            self.event_process = None;
+            self.event_threads.clear();
             self.hardware.clear();
             self.owned_traps.clear();
             self.process = None;
@@ -522,24 +526,6 @@ impl WindowsBackend {
                 "target left running; debugger-owned bytes restored",
             );
             Ok(())
-        }
-    }
-    fn close_event_handles(&mut self) {
-        unsafe {
-            if let Some(h) = self.event_process.take() {
-                if CloseHandle(h) == 0 {
-                    self.event(
-                        0,
-                        "cleanupError",
-                        error("CloseHandle event process").message,
-                    );
-                }
-            }
-            for (_, h) in std::mem::take(&mut self.event_threads) {
-                if CloseHandle(h) == 0 {
-                    self.event(0, "cleanupError", error("CloseHandle event thread").message);
-                }
-            }
         }
     }
     fn execute(

@@ -1,4 +1,5 @@
 mod debugger;
+pub mod scripting;
 pub use debugger::{load_debug_breakpoints_for_path, save_debug_breakpoints, DebugBreakpoint};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};

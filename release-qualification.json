@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "version": "0.15.0-dev.1",
-  "publishable": true,
-  "status": "scoped-prerelease-qualified",
-  "reason": "Corrected checkout hashes, optimized-Python rejection, 393 tests, strict format/lint, locked Release build and actual dev.1 worker/CLI/MCP checks pass. Engine semantics and successful extracted-package/license audit are unchanged. Eligible only for guarded fresh tagged-source compilation and draft/public redownload verification; initial v0.15.0-dev remains unaccepted and immutable.",
-  "requiredEvidence": "docs/VERIFICATION-0.15.md",
+  "version": "0.16.0-dev",
+  "publishable": false,
+  "status": "engineering-in-progress",
+  "reason": "Python runtime, SDK, plugins, extension validation and exact-source publication require qualification. No v0.16 release is accepted yet.",
+  "requiredEvidence": "docs/VERIFICATION-0.16.md",
   "manualDesktop": "unverified; desktop control prohibited; presentation-only checks are not claimed"
 }

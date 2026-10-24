@@ -10,6 +10,7 @@ default-run = "ura-native"
 ura-core = { path = "../ura-core" }
 ura-project = { path = "../ura-project" }
 ura-service = { path = "../ura-service" }
+ura-extensions = { path = "../ura-extensions" }
 ura-debugger = { path = "../ura-debugger" }
 eframe = { version = "0.36.2", default-features = false, features = ["default_fonts", "glow", "persistence", "accesskit", "x11", "wayland"] }
 egui_dock = { version = "0.21.1", features = ["serde"] }

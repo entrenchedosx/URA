@@ -34,15 +34,22 @@ server was started with --enable-writes.";
 #[derive(Clone)]
 pub struct UraServer {
     service: Arc<Mutex<Service>>,
+    extensions: Arc<ura_extensions::ExtensionHost>,
     tool_router: ToolRouter<Self>,
 }
 
 impl UraServer {
-    pub fn new(service: Service) -> Self {
-        Self {
-            service: Arc::new(Mutex::new(service)),
+    pub fn with_extensions(
+        service: Service,
+        config: ura_extensions::ExecutionConfig,
+    ) -> Result<Self, String> {
+        let service = Arc::new(Mutex::new(service));
+        let extensions = Arc::new(ura_extensions::ExtensionHost::new(service.clone(), config)?);
+        Ok(Self {
+            service,
+            extensions,
             tool_router: Self::tool_router(),
-        }
+        })
     }
 
     fn service(&self) -> MutexGuard<'_, Service> {
@@ -54,6 +61,23 @@ impl UraServer {
 
 #[tool_router]
 impl UraServer {
+    #[tool(
+        name = "ura_extensions",
+        annotations(read_only_hint = false),
+        description = "Managed Python scripts, plugin metadata/lifecycle, ordered events, loader/processor extensions and batch jobs. request is a bounded object with operation/actions. Execution is OFF unless local --enable-scripting; files require --trust-script SHA256 pinning, snippets require --allow-script-snippets. Plugin management requires --enable-plugin-management and explicit declared/startup capabilities. Python runs trusted code with the user's OS permissions, NOT a sandbox. stdout/stderr are captured in job results. See SDK protocol docs."
+    )]
+    fn ura_extensions(
+        &self,
+        Parameters(p): Parameters<crate::params::ExtensionParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        respond(
+            self.extensions
+                .rpc(p.request)
+                .map(|result| serde_json::json!({"schemaVersion":1,"result":result}))
+                .map_err(ServiceError::InvalidArgument),
+        )
+    }
+
     #[tool(
         name = "ura_symbolic",
         annotations(read_only_hint = false),

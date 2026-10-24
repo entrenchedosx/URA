@@ -516,3 +516,9 @@ pub struct DynamicParams {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
 }
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExtensionParams {
+    pub request: serde_json::Value,
+}

@@ -83,7 +83,11 @@ for name in ['ura-native.exe', 'ura-cli.exe', 'ura-mcp.exe']:
 subprocess.run([sys.executable,str(root/'scripts/verify-symbolic-release.py'),'--binary-directory',str(extraction),
                 '--output',str(archive.parent/('solver-package-check-'+uuid.uuid4().hex))],cwd=root,check=True,timeout=120,
                creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
-for name in ['README.md', 'LICENSE', 'THIRD_PARTY.md', 'release-qualification.json', 'docs/AUDIT-0.8.md', 'docs/VERIFICATION-0.8.md',
+subprocess.run([sys.executable,str(root/'scripts/verify-scripting-release.py'),'--binary-directory',str(extraction),
+                '--output',str(archive.parent/('scripting-package-check-'+uuid.uuid4().hex))],cwd=root,check=True,timeout=180,
+               creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+for name in ['README.md','docs/PYTHON-SDK.md','docs/REVIEW-0.16.md',
+ 'LICENSE', 'THIRD_PARTY.md', 'release-qualification.json', 'docs/AUDIT-0.8.md', 'docs/VERIFICATION-0.8.md',
              'docs/BINARY-PATCHING.md', 'docs/ADVANCED-DEBUGGER.md', 'docs/DEBUGGER.md', 'docs/CLI.md', 'docs/MCP.md', 'docs/VERIFICATION-0.12.md',
              'docs/FEATURE-PARITY.md', 'docs/ROADMAP.md', evidence, 'docs/MULTI-ARCHITECTURE.md',
              'docs/SYMBOLIC-DEOBFUSCATION.md', 'docs/REVIEW-0.15.md',

@@ -4,17 +4,15 @@
 
 Ultimate Reverse Engineer
 
-Current development is **0.15.0-dev.1** on `v0.15-symbolic-deobfuscation`:
-real Z3 bitvector reasoning, bounded symbolic execution, proof-validated branch
-pruning and original/derived C-like pseudocode. Dispatcher transitions and finite
-indirect targets carry explicit prefix scope and evidence. Desktop, CLI and
-**68 MCP tools** share the engine. Scalar AArch64, ARM/Thumb and RV32I/RV64I
-analysis remains supported within its documented subsets. See the
-[symbolic scope](docs/SYMBOLIC-DEOBFUSCATION.md),
-[v0.15 verification](docs/VERIFICATION-0.15.md),
-[processor scope](docs/MULTI-ARCHITECTURE.md),
-[v0.14 verification](docs/VERIFICATION-0.14.md) and
-[binary release policy](docs/RELEASING.md).
+Current development is **0.16.0-dev** on `v0.16-python-plugins`: real CPython3.14.9
+workers, a versioned Python SDK, atomic project metadata transactions, installable
+plugins, attributed analyzers, bounded event hooks, custom loader/processor
+foundations and managed batch execution. Desktop, CLI and **69 MCP tools** share
+this service. The complete Windows ZIP includes the locked runtime and SDK examples.
+**Trusted Python retains the user's OS permissions; the worker is not a sandbox.**
+See the [Python SDK](docs/PYTHON-SDK.md), [v0.16 verification](docs/VERIFICATION-0.16.md),
+[independent review](docs/REVIEW-0.16.md), [symbolic scope](docs/SYMBOLIC-DEOBFUSCATION.md),
+[processor scope](docs/MULTI-ARCHITECTURE.md) and [release policy](docs/RELEASING.md).
 
 The scoped development prerelease requires fresh Desktop/CLI/MCP EXEs, a complete
 ZIP, checksums and public download verification. Refer to the

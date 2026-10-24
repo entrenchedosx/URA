@@ -1,0 +1,38 @@
+{
+  "id": "org.ura.event-observer",
+  "name": "Event Observer",
+  "version": "1.0.0",
+  "author": "URA contributors",
+  "description": "Executable SDK example; trusted code, not an OS sandbox.",
+  "license": "MIT",
+  "entrypoint": "plugin.py",
+  "apiVersion": 1,
+  "minimumUraVersion": "0.16.0",
+  "requiredCapabilities": [
+    "project.read",
+    "events.subscribe"
+  ],
+  "optionalCapabilities": [],
+  "platforms": [
+    "windows-x64"
+  ],
+  "architectures": [
+    "x86",
+    "x86-64",
+    "aarch64",
+    "arm",
+    "thumb",
+    "riscv32",
+    "riscv64",
+    "toy8"
+  ],
+  "dependencies": [],
+  "events": {
+    "binary.loaded": "observe",
+    "analysis.started": "observe",
+    "analysis.completed": "observe",
+    "function.renamed": "observe",
+    "comment.changed": "observe",
+    "project.closed": "observe"
+  }
+}

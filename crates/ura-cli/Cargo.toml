@@ -8,6 +8,7 @@ rust-version.workspace = true
 [dependencies]
 ura-core = { path = "../ura-core" }
 ura-service = { path = "../ura-service" }
+ura-extensions = { path = "../ura-extensions" }
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true

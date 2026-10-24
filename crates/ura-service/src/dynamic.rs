@@ -601,7 +601,15 @@ impl DynamicService {
                     "disassembly" => {
                         use ura_core::InstructionDecoder;
                         let address = address(a, "address")?;
-                        let bytes = engine(image.read(address, length.unwrap_or(64)))?;
+                        let default_length = image
+                            .segments
+                            .iter()
+                            .find(|s| {
+                                address >= s.base.0 && address < s.base.0 + s.bytes.len() as u64
+                            })
+                            .map(|s| (s.base.0 + s.bytes.len() as u64 - address).min(64) as usize)
+                            .unwrap_or(64);
+                        let bytes = engine(image.read(address, length.unwrap_or(default_length)))?;
                         let page = if let Some(p) = image.processor.filter(|p| !p.x86()) {
                             ura_core::disasm::RiscDecoder(p).decode(
                                 &bytes,

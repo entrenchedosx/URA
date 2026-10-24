@@ -1,0 +1,30 @@
+{
+  "id": "org.ura.container-loader",
+  "name": "Container Loader",
+  "version": "1.0.0",
+  "author": "URA contributors",
+  "description": "Executable SDK example; trusted code, not an OS sandbox.",
+  "license": "MIT",
+  "entrypoint": "plugin.py",
+  "apiVersion": 1,
+  "minimumUraVersion": "0.16.0",
+  "requiredCapabilities": [
+    "loader.register"
+  ],
+  "optionalCapabilities": [],
+  "platforms": [
+    "windows-x64"
+  ],
+  "architectures": [
+    "x86",
+    "x86-64",
+    "aarch64",
+    "arm",
+    "thumb",
+    "riscv32",
+    "riscv64",
+    "toy8"
+  ],
+  "dependencies": [],
+  "loader": "load"
+}

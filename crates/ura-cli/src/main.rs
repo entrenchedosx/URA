@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 mod debug;
 mod dynamic;
+mod extensions;
 mod patch;
 mod symbolic;
 use std::process::ExitCode;
@@ -27,6 +28,8 @@ use ura_service::{
 )]
 struct Cli {
     #[command(flatten)]
+    extensions: ura_extensions::options::Options,
+    #[command(flatten)]
     debugging: debug::DebugOptions,
     #[arg(long, global = true)]
     enable_emulation: bool,
@@ -42,6 +45,26 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Managed Python/plugin/batch JSON lines; project can be opened via RPC.
+    Extensions {
+        #[arg(long)]
+        binary: Option<PathBuf>,
+        #[arg(long)]
+        project: Option<PathBuf>,
+    },
+    /// Run an explicitly content-trusted Python file against real analysis.
+    Script {
+        #[command(flatten)]
+        common: CommonArgs,
+        #[command(flatten)]
+        analysis: AnalysisArgs,
+        #[arg(long)]
+        script: PathBuf,
+        #[arg(long = "script-arg")]
+        args: Vec<String>,
+        #[arg(long, default_value_t = 30000)]
+        timeout_ms: u64,
+    },
     /// Interactive bounded symbolic analysis; JSON lines share one static service
     Symbolic {
         #[command(flatten)]
@@ -336,6 +359,7 @@ enum Command {
 impl Command {
     fn json(&self) -> bool {
         match self {
+            Command::Extensions { .. } | Command::Script { .. } => true,
             Command::Debug | Command::Dynamic | Command::Symbolic { .. } => true,
             Command::Info { common }
             | Command::Patch { common, .. }
@@ -425,7 +449,7 @@ fn main() -> ExitCode {
     match run(cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            if json {
+            if json && !matches!(&error, ServiceError::ExtensionFailure { .. }) {
                 match serde_json::to_string_pretty(&ErrorView::new(&error)) {
                     Ok(text) => println!("{text}"),
                     Err(_) => eprintln!("error: {error}"),
@@ -433,7 +457,18 @@ fn main() -> ExitCode {
             } else {
                 eprintln!("error: {error}");
             }
-            ExitCode::from(1)
+            ExitCode::from(match &error {
+                ServiceError::ExtensionFailure { state, .. } => match state.as_str() {
+                    "pythonError" => 3,
+                    "timeout" | "timeoutOrCancelled" => 4,
+                    "cancelled" => 5,
+                    "crashed" | "protocolError" | "workerError" => 6,
+                    "stale" => 7,
+                    _ => 8,
+                },
+                ServiceError::ExtensionDenied(_) => 9,
+                _ => 1,
+            })
         }
     }
 }
@@ -441,7 +476,45 @@ fn main() -> ExitCode {
 fn run(cli: Cli) -> Result<(), ServiceError> {
     let policy = PathPolicy::new(cli.allow)?;
     let mut service = Service::new(policy.clone(), cli.enable_writes);
+    service.dynamic = ura_service::dynamic::DynamicService::new(policy.clone(), cli.enable_writes)
+        .with_emulation(cli.enable_emulation);
     match cli.command {
+        Command::Extensions { binary, project } => {
+            let handle = if let Some(path) = binary {
+                let h = service.open_binary(&path, project.as_deref())?.handle;
+                service.analyze(&h, &Default::default())?;
+                Some(h)
+            } else {
+                None
+            };
+            extensions::interactive(
+                service,
+                cli.extensions
+                    .configuration()
+                    .map_err(ServiceError::InvalidArgument)?,
+                handle,
+            )
+        }
+        Command::Script {
+            common,
+            analysis,
+            script,
+            args,
+            timeout_ms,
+        } => {
+            let h = open(&mut service, &common)?.handle;
+            service.analyze(&h, &analysis.options())?;
+            extensions::script(
+                service,
+                cli.extensions
+                    .configuration()
+                    .map_err(ServiceError::InvalidArgument)?,
+                h,
+                &script,
+                args,
+                timeout_ms,
+            )
+        }
         Command::Symbolic { common, analysis } => {
             let handle = open(&mut service, &common)?.handle;
             service.analyze(&handle, &analysis.options())?;

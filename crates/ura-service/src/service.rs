@@ -26,12 +26,14 @@ use crate::RESPONSE_SCHEMA_VERSION;
 const MAX_FUNCTION_REFS: usize = 1_000;
 
 pub struct Service {
+    pub events: crate::events::EventBus,
+    pub(crate) event_origin: Option<String>,
     pub(crate) symbolic: crate::symbolic::SymbolicJobs,
     pub debugger: crate::DebugService,
     pub dynamic: crate::dynamic::DynamicService,
     pub(crate) policy: PathPolicy,
-    writes_enabled: bool,
-    next_handle: u64,
+    pub(crate) writes_enabled: bool,
+    pub(crate) next_handle: u64,
     pub(crate) sessions: BTreeMap<String, Session>,
 }
 
@@ -62,6 +64,8 @@ pub(crate) struct Session {
 impl Service {
     pub fn new(policy: PathPolicy, writes_enabled: bool) -> Self {
         Self {
+            events: Default::default(),
+            event_origin: None,
             symbolic: crate::symbolic::SymbolicJobs::default(),
             dynamic: crate::dynamic::DynamicService::new(policy.clone(), writes_enabled),
             debugger: crate::DebugService::new(policy.clone(), crate::DebugPermissions::default())
@@ -265,6 +269,13 @@ impl Service {
             },
         );
 
+        self.events.emit(
+            "binary.loaded",
+            &response.handle,
+            0,
+            self.event_origin.as_deref(),
+            serde_json::json!({"project":response.attached_project}),
+        );
         Ok(response)
     }
 
@@ -288,10 +299,20 @@ impl Service {
 
     pub fn close_binary(&mut self, handle: &str) -> ServiceResult<CloseBinaryResponse> {
         self.symbolic.invalidate_handle(handle);
+        let s = self.session(handle)?;
+        let metadata = serde_json::json!({"handle":handle,"binarySha256":s.info.sha256,"project":s.project,"generation":s.analysis_generation});
+        let generation = self.session(handle)?.analysis_generation;
         let closed = self.sessions.remove(handle).is_some();
         if !closed {
             return Err(ServiceError::UnknownHandle(handle.to_string()));
         }
+        self.events.emit(
+            "project.closed",
+            handle,
+            generation,
+            self.event_origin.as_deref(),
+            metadata,
+        );
         Ok(CloseBinaryResponse {
             schema_version: RESPONSE_SCHEMA_VERSION,
             handle: handle.to_string(),
@@ -310,6 +331,13 @@ impl Service {
             .get_mut(handle)
             .ok_or_else(|| ServiceError::UnknownHandle(handle.to_string()))?;
         let normalized = options.normalized();
+        self.events.emit(
+            "analysis.started",
+            handle,
+            session.analysis_generation,
+            self.event_origin.as_deref(),
+            serde_json::json!({}),
+        );
         let seeds: Vec<AnalysisSeed> = session
             .manual
             .iter()
@@ -328,6 +356,13 @@ impl Service {
         session.ir_cache_order.clear();
         session.decomp_cache.clear();
         session.decomp_cache_order.clear();
+        self.events.emit(
+            "analysis.completed",
+            handle,
+            session.analysis_generation,
+            self.event_origin.as_deref(),
+            serde_json::json!({"functions":session.analysis.as_ref().map(|a|a.functions.len())}),
+        );
         Ok(AnalyzeResponse {
             schema_version: RESPONSE_SCHEMA_VERSION,
             handle: handle.to_string(),
@@ -927,6 +962,13 @@ impl Service {
             function_summary(session, function)
         };
 
+        self.events.emit(
+            "function.renamed",
+            handle,
+            session.analysis_generation,
+            self.event_origin.as_deref(),
+            serde_json::json!({"address":format_address(function_address),"name":name}),
+        );
         Ok(RenameFunctionResponse {
             schema_version: RESPONSE_SCHEMA_VERSION,
             handle: handle.to_string(),
@@ -953,6 +995,13 @@ impl Service {
         }
         let annotation =
             ura_project::save_annotation(&resolved, &format_address(address), label, note)?;
+        self.events.emit(
+            "comment.changed",
+            handle,
+            self.session(handle)?.analysis_generation,
+            self.event_origin.as_deref(),
+            serde_json::json!({"address":format_address(address),"label":label,"note":note}),
+        );
         Ok(CommentResponse {
             schema_version: RESPONSE_SCHEMA_VERSION,
             handle: handle.to_string(),
@@ -1100,7 +1149,7 @@ fn validate_limit(
     }
 }
 
-fn names_from_snapshot(snapshot: &ProjectSnapshot) -> BTreeMap<u64, String> {
+pub(crate) fn names_from_snapshot(snapshot: &ProjectSnapshot) -> BTreeMap<u64, String> {
     snapshot
         .function_names
         .iter()
@@ -1112,7 +1161,7 @@ fn names_from_snapshot(snapshot: &ProjectSnapshot) -> BTreeMap<u64, String> {
         .collect()
 }
 
-fn manual_from_snapshot(snapshot: &ProjectSnapshot) -> Vec<u64> {
+pub(crate) fn manual_from_snapshot(snapshot: &ProjectSnapshot) -> Vec<u64> {
     snapshot
         .manual_functions
         .iter()
@@ -1120,7 +1169,7 @@ fn manual_from_snapshot(snapshot: &ProjectSnapshot) -> Vec<u64> {
         .collect()
 }
 
-fn signature_overrides_from_snapshot(
+pub(crate) fn signature_overrides_from_snapshot(
     snapshot: &ProjectSnapshot,
 ) -> BTreeMap<u64, SignatureOverride> {
     snapshot
@@ -1134,7 +1183,7 @@ fn signature_overrides_from_snapshot(
         .collect()
 }
 
-fn stack_overrides_from_snapshot(snapshot: &ProjectSnapshot) -> StackOverrides {
+pub(crate) fn stack_overrides_from_snapshot(snapshot: &ProjectSnapshot) -> StackOverrides {
     let mut overrides: StackOverrides = BTreeMap::new();
     for entry in &snapshot.stack_variables {
         let Ok(function) = parse_address(&entry.function) else {

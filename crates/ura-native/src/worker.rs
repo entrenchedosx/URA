@@ -49,6 +49,7 @@ pub enum Event {
         graph: Arc<CallGraph>,
     },
     Project(PathBuf, Box<ProjectSnapshot>, bool),
+    ScriptProject(PathBuf, Box<ProjectSnapshot>),
     Message(String),
     Done,
 }

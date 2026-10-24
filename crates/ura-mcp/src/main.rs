@@ -21,6 +21,8 @@ use crate::server::UraServer;
                   directory). Project and export writes stay disabled unless --enable-writes is set."
 )]
 struct Cli {
+    #[command(flatten)]
+    extensions: ura_extensions::options::Options,
     /// Permit isolated virtual CPU sessions; does not grant native execution
     #[arg(long)]
     enable_emulation: bool,
@@ -75,7 +77,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?
     .with_project_writes(cli.enable_writes)
     .with_memory_capture(cli.enable_debug_capture);
-    let server = UraServer::new(service);
+    let server = UraServer::with_extensions(service, cli.extensions.configuration()?)?;
 
     tracing::info!(
         writes = cli.enable_writes,

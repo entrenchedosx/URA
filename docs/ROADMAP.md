@@ -1,5 +1,23 @@
 # Roadmap
 
+## v0.16 — scripting and extension foundations
+
+- [x] Bundled maintained CPython, isolated protocol, bounded worker lifecycle.
+- [x] Real project/disassembly/CFG/IR/SSA/source/type APIs and atomic metadata edits.
+- [x] Native console, explicit plugin install/grants/lifecycle and attributed findings.
+- [x] Ordered finite event hooks, loader/Toy8 decoder/CFG examples, managed batch/resume.
+- [x] Shared CLI/MCP controller, versioned SDK/docs, real adversarial tests and review.
+- [ ] Full external processor IR/ABI/stack/effect providers and generic loaders.
+- [ ] Strong OS sandbox, signed/reviewed plugin ecosystem and cross-process registry locking.
+- [ ] Full Python debugger parity, arbitrary custom panels and general parallel batches.
+- [ ] Native visual/input/DPI acceptance and broad external wheel compatibility.
+
+See [SDK scope](PYTHON-SDK.md), [review](REVIEW-0.16.md) and
+[qualification](VERIFICATION-0.16.md). Next milestones remain v0.17 symbols/types/C++,
+v0.18 semantic binary comparison/identification, v0.19 collaboration/authorized remote
+and kernel-debugger backends, then remaining full IDA/Hex-Rays/Ghidra feature gaps.
+
+
 ## v0.15 — symbolic analysis and proof-backed deobfuscation
 
 - [x] Typed 1–64-bit expression DAGs, poison and persistent byte-array memory.

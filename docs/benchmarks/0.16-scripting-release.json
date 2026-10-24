@@ -1,0 +1,40 @@
+{
+  "version": "0.16.0-dev",
+  "runtime": "3.14.9",
+  "runtimeArchiveSha256": "3c01d7cfc666f746a6f064f60fb2156ab0ec464d3d738ab796371a46a9bb24a2",
+  "checks": {
+    "realEnginePseudocode": true,
+    "pythonSymbolicSession": true,
+    "persistentVariables": true,
+    "metadataWritesAndExport": true,
+    "exceptions": true,
+    "deadline": true,
+    "externalPluginFindings": true,
+    "customLoaderCoreAnalysisAndNavigation": true,
+    "toyProcessorSharedCfgAndNavigation": true,
+    "orderedEventHooks": true,
+    "batch": true,
+    "uninstall": true
+  },
+  "timings": {
+    "interpreterStartupMs": 72,
+    "apiJobMedianMs": 15.526050003245473,
+    "timeoutAndReapObservedMs": 106.52019997360185,
+    "candidate_analyzerInstallMs": 15.976900001987815,
+    "candidate_analyzerEnableMs": 6.9552999921143055,
+    "container_loaderInstallMs": 10.339099972043186,
+    "container_loaderEnableMs": 2.5496999733150005,
+    "toy_processorInstallMs": 15.181199996732175,
+    "toy_processorEnableMs": 3.1141999643296003,
+    "event_observerInstallMs": 21.729699976276606,
+    "event_observerEnableMs": 7.3874000227078795,
+    "discoveryMs": 3.648200014140457,
+    "analyzerMs": 112.72639996604994,
+    "analysisPlusEventDeliveryMs": 250.00230001751333,
+    "singleInputBatchMs": 272.2275999840349
+  },
+  "peakAggregateWorkingSetBytes": 115359744,
+  "memoryMethod": "Maximum sampled sum of host and owned child RSS at20ms intervals; may miss short peaks",
+  "elapsedSeconds": 2.47202919999836,
+  "security": "Trusted Python with user OS permissions; process/JobObject resource containment is not an OS sandbox. No UI or debugger/sample native execution."
+}

@@ -4,6 +4,8 @@ pub mod dynamic;
 pub use debugger::{DebugPermissions, DebugService};
 pub mod dto;
 pub mod error;
+pub mod events;
+pub mod extensions;
 mod ir;
 mod patch;
 pub mod paths;

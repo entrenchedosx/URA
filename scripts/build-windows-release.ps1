@@ -50,6 +50,8 @@ Invoke-Checked -Program python -Arguments @('-m','pip','install','--disable-pip-
 Invoke-Checked -Program python -Arguments @('-I','-S','-c','import sys; sys.path.insert(0,sys.argv[1]); import psutil, unicorn; assert psutil.__version__ == "7.2.2"; assert unicorn.__version__ == "2.1.4"',$verificationPython)
 $env:PYTHONPATH = if ($env:PYTHONPATH) { $verificationPython + [IO.Path]::PathSeparator + $env:PYTHONPATH } else { $verificationPython }
 if ($ApprovedTag -or -not $AllowDirty) { Invoke-Checked -Program python -Arguments @("$root/scripts/verify-symbolic-checkout.py") }
+Invoke-Checked -Program python -Arguments @("$root/scripts/prepare-python-runtime.py")
+Invoke-Checked -Program python -Arguments @("$root/scripts/prepare-python-runtime.py",'--output',"$root/target/release/runtime/python")
 Invoke-Checked -Program cargo -Arguments @('fmt','--all','--','--check')
 Invoke-Checked -Program cargo -Arguments @('clippy','--workspace','--all-targets','--locked','--','-D','warnings')
 Invoke-Checked -Program cargo -Arguments @('test','--workspace','--locked')
@@ -81,6 +83,7 @@ Invoke-Checked -Program python -Arguments @("$root/scripts/verify-symbolic-relea
 Invoke-Checked -Program python -Arguments @("$root/scripts/verify-patching-release.py",'--output',"$OutputDirectory/patching")
 Invoke-Checked -Program python -Arguments @("$root/scripts/verify-debugger-release.py",'--output',"$OutputDirectory/debugger")
 Invoke-Checked -Program python -Arguments @("$root/scripts/verify-advanced-debugger-release.py",'--output',"$OutputDirectory/advanced")
+Invoke-Checked -Program python -Arguments @("$root/scripts/verify-scripting-release.py",'--output',"$OutputDirectory/scripting")
 Confirm-Source
 & "$root/scripts/package-windows.ps1" -Version $version -OutputDirectory $OutputDirectory -BuildReceipt $receipt
 $archive = Join-Path $OutputDirectory "URA-$version-windows-x64.zip"

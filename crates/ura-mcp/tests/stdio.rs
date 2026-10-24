@@ -109,6 +109,76 @@ fn fixture() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/ura64.exe")
 }
 
+#[cfg(windows)]
+#[test]
+fn python_mcp_requires_local_execution_and_file_content_grants() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let script = root.join("sdk/examples/inventory.py");
+    let mut denied = Client::start_options(
+        &root,
+        false,
+        &[
+            "--extensions-dir".into(),
+            dir.path().join("denied").to_string_lossy().into_owned(),
+        ],
+    );
+    let r = denied.tool_result(
+        "ura_extensions",
+        json!({"request":{"operation":"scripts","action":"open","handle":"bin1"}}),
+    );
+    assert_eq!(r["isError"], true);
+    assert!(r.to_string().contains("disabled"));
+    let mut client = Client::start_options(
+        &root,
+        false,
+        &[
+            "--enable-scripting".into(),
+            "--trust-script".into(),
+            script.to_string_lossy().into_owned(),
+            "--python-runtime".into(),
+            root.join("target/python-runtime-3.14.9")
+                .to_string_lossy()
+                .into_owned(),
+            "--extensions-dir".into(),
+            dir.path().join("enabled").to_string_lossy().into_owned(),
+        ],
+    );
+    let opened = client.tool("ura_open_binary", json!({"binary":fixture()}));
+    let handle = opened["handle"].clone();
+    client.tool("ura_analyze", json!({"handle":handle}));
+    let session = client.tool(
+        "ura_extensions",
+        json!({"request":{"operation":"scripts","action":"open","handle":handle}}),
+    )["result"]["session"]
+        .clone();
+    let r=client.tool_result("ura_extensions",json!({"request":{"operation":"scripts","action":"run","session":session,"code":"print('not allowed')"}}));
+    assert_eq!(r["isError"], true);
+    let job = client.tool(
+        "ura_extensions",
+        json!({"request":{"operation":"scripts","action":"run","session":session,"path":script}}),
+    )["result"]["job"]
+        .clone();
+    let start = std::time::Instant::now();
+    loop {
+        let r = client.tool(
+            "ura_extensions",
+            json!({"request":{"operation":"scripts","action":"status","job":job}}),
+        )["result"]
+            .clone();
+        if r["state"] != "running" {
+            assert_eq!(r["state"], "complete", "{r}");
+            assert!(r["stdout"].as_str().unwrap().contains("functions"));
+            break;
+        }
+        assert!(start.elapsed() < Duration::from_secs(15));
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 #[cfg(all(windows, target_arch = "x86_64"))]
 #[test]
 fn stdio_debugger_launch_step_and_separate_permission_boundary() {
@@ -293,11 +363,12 @@ fn stdio_queries_errors_and_read_only_permissions() {
     let mut client = Client::start(directory.path(), false);
     let tools = client.request("tools/list", json!({}));
     let listed = tools["result"]["tools"].as_array().unwrap();
-    assert_eq!(listed.len(), 68);
+    assert_eq!(listed.len(), 69);
     for tool in listed {
         let expected = !matches!(
             tool["name"].as_str().unwrap(),
-            "ura_rename_function"
+            "ura_extensions"
+                | "ura_rename_function"
                 | "ura_add_comment"
                 | "ura_save_project"
                 | "ura_export_analysis"

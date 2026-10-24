@@ -1672,6 +1672,95 @@ struct Discovery {
     jump_tables: BTreeMap<u64, JumpTable>,
 }
 
+/// Build a real single-entry CFG from validated third-party decoder output.
+/// The host must validate instruction bytes/ranges against its immutable input.
+/// This does not provide processor IR, decompilation or execution semantics.
+pub fn analyze_extension_instructions(
+    instructions: Vec<DecodedInstruction>,
+    entry: u64,
+) -> std::result::Result<ProgramAnalysis, String> {
+    if instructions.is_empty() || instructions.len() > 8192 {
+        return Err("Extension decoder requires1..8192 instructions".into());
+    }
+    let mut decoded = BTreeMap::new();
+    let mut previous = 0;
+    for (index, instruction) in instructions.into_iter().enumerate() {
+        if instruction.length == 0
+            || instruction.length > 32
+            || instruction
+                .address
+                .checked_add(u64::from(instruction.length))
+                .is_none()
+            || (index > 0 && instruction.address < previous)
+            || instruction.mnemonic.len() > 64
+            || instruction.operands.len() > 512
+            || !instruction.data_references.is_empty()
+        {
+            return Err("Invalid/overlapping extension instruction".into());
+        }
+        previous = instruction.end();
+        if decoded.insert(instruction.address, instruction).is_some() {
+            return Err("Duplicate decoder address".into());
+        }
+    }
+    if !decoded.contains_key(&entry) {
+        return Err("Entry does not identify an instruction".into());
+    }
+    let mut discovery = Discovery::default();
+    let mut pending = vec![entry];
+    let mut leaders = BTreeSet::from([entry]);
+    while let Some(address) = pending.pop() {
+        if discovery.instructions.contains_key(&address) {
+            continue;
+        }
+        let Some(i) = decoded.get(&address).cloned() else {
+            continue;
+        };
+        if !i.invalid {
+            match i.flow {
+                InstructionFlow::Next | InstructionFlow::Call | InstructionFlow::IndirectCall => {
+                    pending.push(i.end())
+                }
+                InstructionFlow::Jump | InstructionFlow::ConditionalJump => {
+                    let target = i.target.ok_or("Direct branch requires a target")?;
+                    if !decoded.contains_key(&target) {
+                        return Err("Branch target is not a decoded instruction boundary".into());
+                    }
+                    leaders.insert(target);
+                    pending.push(target);
+                    if i.flow == InstructionFlow::ConditionalJump {
+                        leaders.insert(i.end());
+                        pending.push(i.end());
+                    }
+                }
+                _ => {}
+            }
+        }
+        discovery.owner.insert(address, entry);
+        discovery.instructions.insert(address, i);
+    }
+    discovery.functions.insert(
+        entry,
+        FunctionBuilder {
+            seed: AnalysisSeed {
+                address: entry,
+                name: None,
+                origin: FunctionOrigin::UserDefined,
+            },
+            leaders,
+        },
+    );
+    Ok(finalize(
+        discovery,
+        Diagnostics::default(),
+        &(),
+        Instant::now(),
+        &AnalysisOptions::default(),
+        64,
+        &[],
+    ))
+}
+
 struct FunctionBuilder {
     seed: AnalysisSeed,
     leaders: BTreeSet<u64>,
