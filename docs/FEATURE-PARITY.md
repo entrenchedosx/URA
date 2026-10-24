@@ -1,6 +1,6 @@
 # Feature parity ledger
 
-Audited 2026-10-24 for the v0.15 bounded symbolic/deobfuscation prerelease candidate. Full feature-set parity with IDA Pro, relevant Hex-Rays components and Ghidra is a permanent multi-release objective. This ledger must be reviewed on every milestone; v0.15 does not establish product parity.
+Audited 2026-10-24 for the v0.16 scripting and extension prerelease candidate. Full feature-set parity with IDA Pro, relevant Hex-Rays components and Ghidra is a permanent multi-release objective. This ledger must be reviewed on every milestone; v0.16 does not establish product parity.
 
 Each row is one auditable capability. **Supported** means verified within the stated scope, **Partial** means meaningful but incomplete implementation, **Missing** means no product implementation, and **Unverified** means insufficient acceptance evidence. Counts describe this ledger, not a percentage of either competitor's entire feature set. Add rows as research reveals further capabilities; never hide a gap by merging categories.
 

@@ -192,7 +192,10 @@ impl ExtensionHost {
             if !segments.iter().any(|s| {
                 s.permissions.execute
                     && entry >= s.base.0
-                    && entry < s.base.0 + s.bytes.len() as u64
+                    && s.base
+                        .0
+                        .checked_add(s.bytes.len() as u64)
+                        .is_some_and(|end| entry < end)
             }) {
                 return invalid("Loader entry must be inside executable known bytes");
             }

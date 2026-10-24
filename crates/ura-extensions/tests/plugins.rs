@@ -134,6 +134,23 @@ fn loader_uses_custom_container_and_shared_analysis() {
     assert!(accepted["analysis"].to_string().contains("1000"));
     let bytes=h.rpc(json!({"operation":"image","action":"memory","handle":accepted["image"],"address":"0x1000","length":6})).unwrap();
     assert!(bytes.to_string().contains("184"));
+    let disassembly=h.rpc(json!({"operation":"image","action":"disassembly","handle":accepted["image"],"address":"0x1000"})).unwrap();
+    assert_eq!(disassembly["instructions"][0]["mnemonic"], "mov");
+    let mut malformed = b"URA0".to_vec();
+    malformed.extend(u64::MAX.to_le_bytes());
+    malformed.extend(0u32.to_le_bytes());
+    malformed.extend([0x90, 0xc3]);
+    std::fs::write(&path, malformed).unwrap();
+    let job = h
+        .rpc(json!({"operation":"plugins","action":"run","id":id,"kind":"loader","path":path}))
+        .unwrap();
+    assert_eq!(wait(&h, &job)["state"], "complete");
+    assert!(h
+        .rpc(json!({"operation":"plugins","action":"accept","job":job["job"]}))
+        .is_err());
+    assert!(h
+        .rpc(json!({"operation":"plugins","action":"list"}))
+        .is_ok());
 }
 #[test]
 fn toy_processor_has_core_cfg_and_real_navigation_without_fake_ir() {

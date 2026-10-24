@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "version": "0.16.0-dev",
-  "publishable": false,
-  "status": "engineering-in-progress",
-  "reason": "Python runtime, SDK, plugins, extension validation and exact-source publication require qualification. No v0.16 release is accepted yet.",
+  "publishable": true,
+  "status": "headless-development-qualified-exact-tag-publication-pending",
+  "reason": "Clean checkpoint passed415 tests, strict formatting/clippy, Release/oracles, all fresh EXEs, complete715-file package/288-license audit and extracted Python/plugin/batch checks. Final overflow guard has regression coverage. Exact-tag workflow must rebuild/requalify and verify all five public downloads; native visual acceptance remains unverified.",
   "requiredEvidence": "docs/VERIFICATION-0.16.md",
   "manualDesktop": "unverified; desktop control prohibited; presentation-only checks are not claimed"
 }

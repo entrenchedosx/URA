@@ -35,10 +35,10 @@ x64 is the qualified distribution. Generic wheel compatibility is unverified.
 ## Actual checks
 
 - Baseline full workspace:393 passed (`target/v16-baseline.log`).
-- Later complete workspace:414 passed after the debugger detach cleanup correction
-  (`target/v16-qualified-tests.log`), then the additional real virtual-emulation and
-  denied-write SDK test passed, bringing the combined current test inventory to415.
-  Exact-source qualification reruns the entire415-test suite before packaging.
+- Complete clean-source qualification: **415 passed**, preserving all393 baseline
+  tests (`target/v16-clean-qualification.log`). A final checked-overflow loader
+  guard has its malformed-container regression; exact-tag qualification reruns all
+  gates before publication.
 - Strict workspace formatting and all-target clippy with warnings denied passed.
 - `cargo build --workspace --release --locked` passed. All three final EXE roots
   are rebuilt with unique metadata by the clean qualification helper; stale EXEs
@@ -68,8 +68,8 @@ x64 is the qualified distribution. Generic wheel compatibility is unverified.
   events, batch and uninstall. Full extracted-ZIP audits rerun it from actual assets.
 
 One later full run exposed a genuine intermittent debugger double-close after detach;
-it was repaired, not waived. The narrow detach test and complete13-test debugger
-unit suite pass after correction. See [independent review](REVIEW-0.16.md) for the
+it was repaired, not waived. The narrow detach test and three full13-test debugger
+unit-suite repetitions pass after correction. See [independent review](REVIEW-0.16.md) for the
 failure evidence, three reviewer scopes, repaired findings and review limitations.
 
 ## Measurements
@@ -111,3 +111,13 @@ MCP EXEs, full runtime+SDK ZIP, checksums, complete license/text audit, real cle
 CLI/MCP/Python/plugin checks and independent redownload of all five public assets.
 The final engineering receipt records completion or failure of those gates without
 changing historical releases or replacing an existing tag.
+
+## Clean checkpoint package evidence
+
+The clean pre-tag checkpoint `ba9101c60705d44a66850f0a949c21b2db5b5469`
+completed the full build helper:415 tests, strict formatting/clippy, Release workspace,
+independent symbolic/processor oracles, unique fresh EXE roots, real debugger/dynamic/
+patching/scripting checks and license packaging. Its61,705,819-byte ZIP passed CRC,
+all715 file hashes, complete288-package license-text audit, extracted CLI/MCP69-tool
+checks and full bundled-Python/plugin/batch tests. See the exact-tag final receipts
+for published hashes; these checkpoint assets are not reused as final release assets.

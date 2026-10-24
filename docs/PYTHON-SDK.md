@@ -112,7 +112,9 @@ Debugger launch/attach/live-memory writes are unavailable through this SDK. A sc
 emulator grant cannot launch a native target. Native scripting uses its own static
 snapshot Service; it does not acquire the native debugger's separate session. MCP
 shares the existing debugger Service and can inspect sessions created through that
-server's separately authorized debugger tools. No generic Python debugger callback
+server's separately authorized debugger tools. Native Python's static snapshot does
+not currently enable its own emulator Service; use the explicit CLI/MCP emulator
+permissions for SDK emulation workflows. No generic Python debugger callback
 blocks Windows event continuation.
 
 ## Atomic project mutations
